@@ -450,5 +450,7 @@ dialog .acts{display:flex;gap:1.2rem;justify-content:flex-end;align-items:baseli
 .fsb form+form{margin-top:1.2rem}
 .env{list-style:none;margin:0;padding:0}
 .env li{display:grid;grid-template-columns:16em minmax(0,1fr);gap:1rem;padding:.55rem 0;border-bottom:1px solid var(--hair);align-items:baseline}
+.env li>*{min-width:0;overflow-wrap:anywhere}
 .env small{display:block;color:var(--dim);font-weight:400;margin-top:.2rem}
+@media (max-width:900px){.env li{grid-template-columns:minmax(0,1fr);gap:.2rem}}
 #work .empty{color:var(--dim);max-width:44ch;margin:4rem 0 0}
