@@ -10,9 +10,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
@@ -357,5 +359,228 @@ func TestCORSRules(t *testing.T) {
 	}
 	if strings.Join(r2[0].Methods, ",") != "GET,HEAD,PUT" || strings.Join(r2[0].Expose, ",") != "ETag" || r2[0].MaxAge != 3600 {
 		t.Errorf("r2 rule = %+v", r2[0])
+	}
+}
+
+// counting wraps the fake so a test can prove a call was rejected before it
+// reached the wire, or that a particular request was made.
+type counting struct {
+	inner   http.Handler
+	mu      sync.Mutex
+	methods []string
+	paths   []string
+	failed  string
+}
+
+func (c *counting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	c.methods = append(c.methods, r.Method)
+	c.paths = append(c.paths, r.URL.Path)
+	fail := c.failed
+	c.mu.Unlock()
+	if r.Method == fail {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	c.inner.ServeHTTP(w, r)
+}
+
+func (c *counting) seen() ([]string, []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string{}, c.methods...), append([]string{}, c.paths...)
+}
+
+// countingFake is fake with the request log in front of it.
+func countingFake(t *testing.T, failMethod string) (*Client, *counting) {
+	t.Helper()
+	backend := s3mem.New()
+	log := &counting{inner: gofakes3.New(backend).Server(), failed: failMethod}
+	srv := httptest.NewServer(log)
+	t.Cleanup(srv.Close)
+	if err := backend.CreateBucket("theses"); err != nil {
+		t.Fatalf("create bucket: %v", err)
+	}
+	c, err := New(Config{Provider: "s3", Endpoint: srv.URL, Region: "us-east-1", Bucket: "theses", AccessKey: "k", SecretKey: "s"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c, log
+}
+
+func TestEveryEntryPointRejectsAnUnsafeKey(t *testing.T) {
+	c, log := countingFake(t, "")
+	ctx := context.Background()
+	for _, key := range []string{"", "/1-slug/f/x", "1-slug//x", "1-slug/../backups/db.age", "1-slug/./x", "..", "1-slug/\x00/x", "1-slug/a\nb"} {
+		calls := map[string]error{
+			"PresignPut":        second(c.PresignPut(ctx, key, "text/plain", 1, ttl)),
+			"PresignGet":        first(c.PresignGet(ctx, key, "", ttl)),
+			"Head":              third(c.Head(ctx, key)),
+			"Delete":            c.Delete(ctx, key),
+			"Copy from":         c.Copy(ctx, key, "ok/x"),
+			"Copy to":           c.Copy(ctx, "ok/x", key),
+			"StartMultipart":    first(c.StartMultipart(ctx, key, "text/plain")),
+			"PresignParts":      firstSlice(c.PresignParts(ctx, key, "u", []int{1}, ttl)),
+			"ListParts":         partsErr(c.ListParts(ctx, key, "u")),
+			"CompleteMultipart": c.CompleteMultipart(ctx, key, "u", []Part{{Number: 1, ETag: "e"}}),
+			"AbortMultipart":    c.AbortMultipart(ctx, key, "u"),
+		}
+		for name, err := range calls {
+			if err == nil {
+				t.Errorf("%s(%q): want an error, got nil", name, key)
+			}
+		}
+	}
+	if methods, _ := log.seen(); len(methods) != 0 {
+		t.Errorf("an unsafe key reached the bucket: %v", methods)
+	}
+}
+
+// The presign and multipart calls return different shapes; these keep the
+// table above to one line each.
+func first(_ string, err error) error                       { return err }
+func firstSlice(_ []string, err error) error                { return err }
+func second(_ string, _ map[string]string, err error) error { return err }
+func third(_ int64, _ string, err error) error              { return err }
+func partsErr(_ []Part, err error) error                    { return err }
+
+func TestPresignRejectsATTLOutsideTheSigV4Limit(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	for _, bad := range []time.Duration{0, -time.Minute, 8 * 24 * time.Hour} {
+		if _, _, err := c.PresignPut(ctx, "k", "text/plain", 1, bad); err == nil {
+			t.Errorf("PresignPut with ttl %s: want an error, got nil", bad)
+		}
+		if _, err := c.PresignGet(ctx, "k", "", bad); err == nil {
+			t.Errorf("PresignGet with ttl %s: want an error, got nil", bad)
+		}
+		if _, err := c.PresignParts(ctx, "k", "u", []int{1}, bad); err == nil {
+			t.Errorf("PresignParts with ttl %s: want an error, got nil", bad)
+		}
+	}
+	if _, _, err := c.PresignPut(ctx, "k", "text/plain", 1, 7*24*time.Hour); err != nil {
+		t.Errorf("PresignPut with ttl at the limit: %v", err)
+	}
+}
+
+func TestPresignPutSizeAndContentType(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	// An empty object is legitimate: a zero byte upload still has a key.
+	if _, _, err := c.PresignPut(ctx, "k", "text/plain", 0, ttl); err != nil {
+		t.Errorf("PresignPut with size 0: %v", err)
+	}
+	if _, _, err := c.PresignPut(ctx, "k", "text/plain", (5<<30)+1, ttl); err == nil {
+		t.Error("PresignPut above the single PUT limit: want an error, got nil")
+	}
+	if _, _, err := c.PresignPut(ctx, "k", "text/plain", -1, ttl); err == nil {
+		t.Error("PresignPut with a negative size: want an error, got nil")
+	}
+	_, headers, err := c.PresignPut(ctx, "k", "", 10, ttl)
+	if err != nil {
+		t.Fatalf("PresignPut with no content type: %v", err)
+	}
+	if got := headers["Content-Type"]; got != "application/octet-stream" {
+		t.Errorf("signed Content-Type for an empty content type = %q, want application/octet-stream", got)
+	}
+}
+
+func TestNewBoundsEveryRequest(t *testing.T) {
+	c := fake(t)
+	hc, ok := c.s3.Options().HTTPClient.(*awshttp.BuildableClient)
+	if !ok {
+		t.Fatalf("HTTPClient is %T, want a BuildableClient with a timeout", c.s3.Options().HTTPClient)
+	}
+	if hc.GetTimeout() != requestTimeout {
+		t.Errorf("HTTP client timeout = %s, want %s", hc.GetTimeout(), requestTimeout)
+	}
+}
+
+func TestProbeDeletesTheObjectWhenHeadFails(t *testing.T) {
+	c, log := countingFake(t, http.MethodHead)
+	err := c.Probe(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "probe head") {
+		t.Fatalf("Probe with a failing head = %v, want an error naming the head step", err)
+	}
+	methods, paths := log.seen()
+	var put, del string
+	for i, m := range methods {
+		switch m {
+		case http.MethodPut:
+			put = paths[i]
+		case http.MethodDelete:
+			del = paths[i]
+		}
+	}
+	if put == "" {
+		t.Fatal("Probe made no PUT")
+	}
+	if del != put {
+		t.Errorf("probe object %q was not deleted after the head failed, deletes saw %q", put, del)
+	}
+}
+
+func TestCompleteMultipartRejectsAGap(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	const key = "5-z/f5/gappy.wav"
+	uploadID, err := c.StartMultipart(ctx, key, "audio/wav")
+	if err != nil {
+		t.Fatalf("StartMultipart: %v", err)
+	}
+	if err := c.CompleteMultipart(ctx, key, uploadID, []Part{{Number: 1, ETag: "a"}, {Number: 3, ETag: "c"}}); err == nil {
+		t.Error("CompleteMultipart with part 2 missing: want an error, got nil")
+	}
+	if err := c.CompleteMultipart(ctx, key, uploadID, []Part{{Number: 2, ETag: "b"}}); err == nil {
+		t.Error("CompleteMultipart starting at part 2: want an error, got nil")
+	}
+	if err := c.CompleteMultipart(ctx, key, uploadID, []Part{{Number: 1, ETag: "a"}, {Number: 1, ETag: "a"}}); err == nil {
+		t.Error("CompleteMultipart with part 1 twice: want an error, got nil")
+	}
+	if _, err := c.ListParts(ctx, key, uploadID); err != nil {
+		t.Errorf("the upload should still be open after the rejections: %v", err)
+	}
+}
+
+// The listing is capped at 1000 parts a page and an upload runs to 10,000, so
+// a resume that read one page would silently lose every part past the cap.
+func TestListPartsReadsPastTheFirstPage(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	const key = "6-w/f6/long.wav"
+	const count = 1001
+	uploadID, err := c.StartMultipart(ctx, key, "audio/wav")
+	if err != nil {
+		t.Fatalf("StartMultipart: %v", err)
+	}
+	numbers := make([]int, count)
+	for i := range numbers {
+		numbers[i] = i + 1
+	}
+	urls, err := c.PresignParts(ctx, key, uploadID, numbers, ttl)
+	if err != nil {
+		t.Fatalf("PresignParts: %v", err)
+	}
+	for _, u := range urls {
+		putSigned(t, u, nil, []byte("x"))
+	}
+	parts, err := c.ListParts(ctx, key, uploadID)
+	if err != nil {
+		t.Fatalf("ListParts: %v", err)
+	}
+	if len(parts) != count {
+		t.Fatalf("ListParts returned %d parts, want %d: the second page was not read", len(parts), count)
+	}
+	// gofakes3 numbers the parts on a page after the first relative to the
+	// marker instead of absolutely, so the count is what proves the second
+	// page was read and only the first page's numbers can be checked.
+	seen := make(map[int]bool, count)
+	for _, p := range parts {
+		seen[p.Number] = true
+	}
+	for n := 1; n <= 1000; n++ {
+		if !seen[n] {
+			t.Fatalf("part %d is missing from the listing", n)
+		}
 	}
 }

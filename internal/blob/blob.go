@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -24,6 +25,54 @@ import (
 // PartSize is the multipart part size. B2 allows 5 MiB to 5 GiB parts and
 // 10,000 parts, so 64 MiB covers a 640 GiB object.
 const PartSize = 64 << 20
+
+// maxPutSize is the S3 limit on a single PutObject; anything larger is a
+// multipart upload.
+const maxPutSize = 5 << 30
+
+// maxTTL is the SigV4 limit on how long a presigned URL can live. A longer one
+// is signed without complaint and fails when the browser uses it.
+const maxTTL = 7 * 24 * time.Hour
+
+// requestTimeout bounds one server side call. Without it a caller holding
+// context.Background waits forever on an endpoint that accepts the connection
+// and then stops talking.
+const requestTimeout = 30 * time.Second
+
+// validKey rejects keys the bucket would not see the way they were signed. A
+// browser collapses dot segments before it sends the request, so the signature
+// no longer matches, and an endpoint that normalises the path could resolve
+// such a key out of the caller's prefix and into the backups/ prefix the file
+// key must never reach.
+func validKey(key string) error {
+	if key == "" {
+		return errors.New("blob: key is empty")
+	}
+	if strings.HasPrefix(key, "/") {
+		return fmt.Errorf("blob: key %q starts with a slash", key)
+	}
+	if strings.Contains(key, "//") {
+		return fmt.Errorf("blob: key %q has an empty path segment", key)
+	}
+	for _, seg := range strings.Split(key, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("blob: key %q has a %q segment", key, seg)
+		}
+	}
+	for _, r := range key {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("blob: key %q has a control character", key)
+		}
+	}
+	return nil
+}
+
+func validTTL(ttl time.Duration) error {
+	if ttl <= 0 || ttl > maxTTL {
+		return fmt.Errorf("blob: ttl %s is outside 0 to %s", ttl, maxTTL)
+	}
+	return nil
+}
 
 // Config is one bucket. Provider is b2, r2 or s3.
 type Config struct {
@@ -91,6 +140,7 @@ func New(cfg Config) (*Client, error) {
 		// B2, R2 and gofakes3 all serve path style; only AWS needs virtual
 		// hosted addressing and it accepts path style too.
 		UsePathStyle: true,
+		HTTPClient:   awshttp.NewBuildableClient().WithTimeout(requestTimeout),
 	}
 	if cfg.Endpoint != "" {
 		u, err := url.Parse(cfg.Endpoint)
@@ -113,11 +163,17 @@ func New(cfg Config) (*Client, error) {
 // they are signed, but a browser fills those in itself and refuses to have
 // them set.
 func (c *Client) PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, map[string]string, error) {
-	if key == "" {
-		return "", nil, errors.New("blob: key is empty")
+	if err := validKey(key); err != nil {
+		return "", nil, err
 	}
-	if size <= 0 {
-		return "", nil, fmt.Errorf("blob: size %d is not positive", size)
+	if err := validTTL(ttl); err != nil {
+		return "", nil, err
+	}
+	if size < 0 || size > maxPutSize {
+		return "", nil, fmt.Errorf("blob: size %d is outside 0 to %d", size, int64(maxPutSize))
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
 	req, err := c.presign.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket:        aws.String(c.bucket),
@@ -135,8 +191,11 @@ func (c *Client) PresignPut(ctx context.Context, key, contentType string, size i
 // Content-Disposition attachment through response-content-disposition, so the
 // browser saves the object under its original name rather than its key.
 func (c *Client) PresignGet(ctx context.Context, key, filename string, ttl time.Duration) (string, error) {
-	if key == "" {
-		return "", errors.New("blob: key is empty")
+	if err := validKey(key); err != nil {
+		return "", err
+	}
+	if err := validTTL(ttl); err != nil {
+		return "", err
 	}
 	in := &s3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key)}
 	if filename != "" {
@@ -157,6 +216,9 @@ func (c *Client) PresignGet(ctx context.Context, key, filename string, ttl time.
 // gives it, quotes included, because that is the form CompleteMultipart wants
 // back. ErrNotFound is wrapped when the object is not there.
 func (c *Client) Head(ctx context.Context, key string) (int64, string, error) {
+	if err := validKey(key); err != nil {
+		return 0, "", err
+	}
 	out, err := c.s3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key)})
 	if err != nil {
 		var nf *types.NotFound
@@ -174,6 +236,9 @@ var ErrNotFound = errors.New("object not found")
 
 // Delete removes the object. Deleting something that is not there succeeds.
 func (c *Client) Delete(ctx context.Context, key string) error {
+	if err := validKey(key); err != nil {
+		return err
+	}
 	if _, err := c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key)}); err != nil {
 		return fmt.Errorf("blob: delete %q: %w", key, err)
 	}
@@ -186,6 +251,12 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 // folder to another bucket adds a source bucket parameter, and objects over
 // 5 GiB need UploadPartCopy instead.
 func (c *Client) Copy(ctx context.Context, from, to string) error {
+	if err := validKey(from); err != nil {
+		return err
+	}
+	if err := validKey(to); err != nil {
+		return err
+	}
 	src := (&url.URL{Path: c.bucket + "/" + from}).EscapedPath()
 	if _, err := c.s3.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     aws.String(c.bucket),
@@ -199,7 +270,7 @@ func (c *Client) Copy(ctx context.Context, from, to string) error {
 
 // Probe writes, heads and deletes a small object so the settings page can say
 // which of the three failed. It is the "Test connection" button.
-func (c *Client) Probe(ctx context.Context) error {
+func (c *Client) Probe(ctx context.Context) (err error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return fmt.Errorf("blob: probe: %w", err)
@@ -215,11 +286,19 @@ func (c *Client) Probe(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("blob: probe put %q: %w", key, err)
 	}
-	if _, _, err := c.Head(ctx, key); err != nil {
-		return fmt.Errorf("blob: probe head %q: %w", key, err)
+	// The object exists from here on, so it is removed whichever step fails.
+	// Only the delete on the success path reports its own error, because that
+	// is the capability the settings page is testing.
+	defer func() {
+		if err != nil {
+			_ = c.Delete(ctx, key)
+		}
+	}()
+	if _, _, headErr := c.Head(ctx, key); headErr != nil {
+		return fmt.Errorf("blob: probe head %q: %w", key, headErr)
 	}
-	if err := c.Delete(ctx, key); err != nil {
-		return fmt.Errorf("blob: probe delete %q: %w", key, err)
+	if delErr := c.Delete(ctx, key); delErr != nil {
+		return fmt.Errorf("blob: probe delete %q: %w", key, delErr)
 	}
 	return nil
 }
