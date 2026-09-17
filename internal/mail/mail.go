@@ -49,6 +49,12 @@ type SMTP struct {
 }
 
 func (s SMTP) Send(ctx context.Context, m Message) error {
+	switch s.TLS {
+	case "starttls", "tls", "none":
+	default:
+		// A typo must not quietly become an unencrypted session.
+		return fmt.Errorf("mail: unknown tls mode %q", s.TLS)
+	}
 	from, err := netmail.ParseAddress(s.From)
 	if err != nil {
 		return fmt.Errorf("mail: from address %q: %w", s.From, err)

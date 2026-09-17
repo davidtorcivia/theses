@@ -93,7 +93,7 @@ type Digest struct {
 }
 
 func (d Digest) Message() Message {
-	lines := []string{fmt.Sprintf("%d things happened in THESES today.", len(d.Items)), ""}
+	lines := []string{plural(len(d.Items), "thing") + " happened in THESES today.", ""}
 	for _, it := range d.Items {
 		lines = append(lines, it.Text, it.URL, "")
 	}

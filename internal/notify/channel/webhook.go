@@ -62,8 +62,10 @@ func (w Webhook) Send(ctx context.Context, n Note) error {
 
 // checkURL refuses anything but http and https and anything that resolves into
 // a range the workspace should not be able to reach from the inside.
+// Redirects are refused by the shared client, so this runs on the only address
+// that is dialled.
 // ponytail: replace with safehttp.Client once merged, which also closes the gap
-// between this lookup and the dial and caps the redirects.
+// between this lookup and the dial.
 func (w Webhook) checkURL() error {
 	u, err := url.Parse(w.URL)
 	if err != nil {

@@ -18,8 +18,13 @@ type Note struct {
 	Priority int
 }
 
-// client is shared by every HTTP channel.
-var client = &http.Client{Timeout: 10 * time.Second}
+// client is shared by every HTTP channel. Redirects are not followed: a
+// webhook that is checked once and then redirected would walk straight past
+// the address check, and a redirect off an ntfy server would carry its token.
+var client = &http.Client{
+	Timeout:       10 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // check consumes the response and turns anything outside 2xx into an error
 // carrying the status and the first 200 bytes of the body.

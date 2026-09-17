@@ -183,6 +183,11 @@ func TestSMTPSendMultipart(t *testing.T) {
 
 func TestSMTPRejectsBadAddresses(t *testing.T) {
 	s := SMTP{Host: "127.0.0.1", Port: 1, TLS: "none", From: "theses@example.org"}
+	bad := s
+	bad.TLS = "ssl"
+	if err := bad.Send(context.Background(), Message{To: []string{"a@example.com"}, Text: "x"}); err == nil {
+		t.Error("unknown tls mode: want error")
+	}
 	for _, m := range []Message{
 		{Subject: "no recipients", Text: "x"},
 		{To: []string{"alice@example.com\r\nRCPT TO:<eve@example.com>"}, Subject: "injection", Text: "x"},

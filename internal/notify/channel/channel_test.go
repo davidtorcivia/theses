@@ -163,6 +163,17 @@ func TestWebhookWithoutSecretIsUnsigned(t *testing.T) {
 	}
 }
 
+func TestRedirectIsNotFollowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	err := (Webhook{URL: srv.URL, allowPrivate: true}).Send(context.Background(), note)
+	if err == nil || !strings.Contains(err.Error(), "302") {
+		t.Errorf("error = %v, want a 302", err)
+	}
+}
+
 func TestWebhookRefusesPrivateAddresses(t *testing.T) {
 	for _, u := range []string{
 		"http://127.0.0.1:9000/hook",
