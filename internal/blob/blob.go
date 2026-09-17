@@ -107,8 +107,11 @@ func New(cfg Config) (*Client, error) {
 }
 
 // PresignPut returns a URL the browser PUTs the whole object to, and the
-// headers it must send with it. The signature pins the content type and the
-// length, so an upload of a different size is rejected by the bucket.
+// headers that were signed into it. The signature pins the content type and
+// the length, so an upload of a different size is rejected by the bucket. The
+// caller sets Content-Type; Host and Content-Length are on the list because
+// they are signed, but a browser fills those in itself and refuses to have
+// them set.
 func (c *Client) PresignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, map[string]string, error) {
 	if key == "" {
 		return "", nil, errors.New("blob: key is empty")
@@ -157,8 +160,7 @@ func (c *Client) Head(ctx context.Context, key string) (int64, string, error) {
 	out, err := c.s3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key)})
 	if err != nil {
 		var nf *types.NotFound
-		var nsk *types.NoSuchKey
-		if errors.As(err, &nf) || errors.As(err, &nsk) {
+		if errors.As(err, &nf) {
 			return 0, "", fmt.Errorf("blob: head %q: %w", key, ErrNotFound)
 		}
 		return 0, "", fmt.Errorf("blob: head %q: %w", key, err)
@@ -274,8 +276,8 @@ func marshal(v any) string {
 
 func flatten(h http.Header) map[string]string {
 	m := make(map[string]string, len(h))
-	for k := range h {
-		m[k] = h.Get(k)
+	for k, v := range h {
+		m[k] = strings.Join(v, ", ")
 	}
 	return m
 }

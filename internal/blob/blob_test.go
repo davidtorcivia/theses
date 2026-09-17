@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,6 +179,22 @@ func TestPresignPutSignsOnlyBrowserHeaders(t *testing.T) {
 	if got := headers["Content-Type"]; got != "audio/wav" {
 		t.Errorf("signed Content-Type = %q, want audio/wav", got)
 	}
+
+	// The part URL is the path every raw WAV takes, so check its shape too.
+	part, err := c.PresignParts(context.Background(), "k", "upload", []int{1}, ttl)
+	if err != nil {
+		t.Fatalf("PresignParts: %v", err)
+	}
+	pu, err := url.Parse(part[0])
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := pu.Query().Get("X-Amz-SignedHeaders"); got != "host" {
+		t.Errorf("part X-Amz-SignedHeaders = %q, want host", got)
+	}
+	if strings.Contains(strings.ToLower(part[0]), "checksum") {
+		t.Errorf("presigned part URL carries a checksum parameter: %s", part[0])
+	}
 }
 
 func TestMultipartRoundTrip(t *testing.T) {
@@ -273,8 +290,8 @@ func TestCopyAndDelete(t *testing.T) {
 	if err := c.Delete(ctx, "4-y/f4/paper.pdf"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, _, err := c.Head(ctx, "4-y/f4/paper.pdf"); err == nil {
-		t.Error("Head after delete: want error, got nil")
+	if _, _, err := c.Head(ctx, "4-y/f4/paper.pdf"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Head after delete = %v, want ErrNotFound", err)
 	}
 }
 
