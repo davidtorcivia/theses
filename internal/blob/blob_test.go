@@ -180,6 +180,80 @@ func TestPresignPutSignsOnlyBrowserHeaders(t *testing.T) {
 	}
 }
 
+func TestMultipartRoundTrip(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	const key = "2-other/f2/take.wav"
+	// gofakes3 does not enforce the 5 MiB minimum, so the parts are small;
+	// PartSize is a constant the caller slices with, not a client setting.
+	parts := [][]byte{bytes.Repeat([]byte("a"), 1024), bytes.Repeat([]byte("b"), 512)}
+
+	uploadID, err := c.StartMultipart(ctx, key, "audio/wav")
+	if err != nil {
+		t.Fatalf("StartMultipart: %v", err)
+	}
+	urls, err := c.PresignParts(ctx, key, uploadID, []int{1, 2}, ttl)
+	if err != nil {
+		t.Fatalf("PresignParts: %v", err)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("PresignParts returned %d urls, want 2", len(urls))
+	}
+	var uploaded []Part
+	for i, u := range urls {
+		resp := putSigned(t, u, nil, parts[i])
+		uploaded = append(uploaded, Part{Number: i + 1, ETag: resp.Header.Get("ETag")})
+	}
+
+	listed, err := c.ListParts(ctx, key, uploadID)
+	if err != nil {
+		t.Fatalf("ListParts: %v", err)
+	}
+	if len(listed) != 2 || listed[0].Number != 1 || listed[1].Number != 2 {
+		t.Fatalf("ListParts = %+v, want parts 1 and 2", listed)
+	}
+
+	// Out of order on purpose: CompleteMultipart sorts.
+	if err := c.CompleteMultipart(ctx, key, uploadID, []Part{uploaded[1], uploaded[0]}); err != nil {
+		t.Fatalf("CompleteMultipart: %v", err)
+	}
+	size, _, err := c.Head(ctx, key)
+	if err != nil {
+		t.Fatalf("Head: %v", err)
+	}
+	if want := int64(len(parts[0]) + len(parts[1])); size != want {
+		t.Errorf("assembled size = %d, want %d", size, want)
+	}
+	get, err := c.PresignGet(ctx, key, "", ttl)
+	if err != nil {
+		t.Fatalf("PresignGet: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodGet, get, nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	_, got := do(t, req)
+	if want := append(append([]byte{}, parts[0]...), parts[1]...); !bytes.Equal(got, want) {
+		t.Errorf("assembled object is %d bytes, want the two parts concatenated", len(got))
+	}
+}
+
+func TestAbortMultipart(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	const key = "3-x/f3/dropped.wav"
+	uploadID, err := c.StartMultipart(ctx, key, "audio/wav")
+	if err != nil {
+		t.Fatalf("StartMultipart: %v", err)
+	}
+	if err := c.AbortMultipart(ctx, key, uploadID); err != nil {
+		t.Fatalf("AbortMultipart: %v", err)
+	}
+	if _, err := c.ListParts(ctx, key, uploadID); err == nil {
+		t.Error("ListParts after abort: want error, got nil")
+	}
+}
+
 func TestCopyAndDelete(t *testing.T) {
 	c := fake(t)
 	ctx := context.Background()
