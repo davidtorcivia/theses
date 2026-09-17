@@ -1,0 +1,10 @@
+/data/
+/.env
+/theses
+/theses.exe
+*.db
+*.db-wal
+*.db-shm
+/docs/internal/
+/CLAUDE.md
+.DS_Store
