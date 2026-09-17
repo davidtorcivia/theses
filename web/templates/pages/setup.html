@@ -1,0 +1,22 @@
+{{define "content"}}<div class="split">
+  {{template "art" .ArtFrames}}
+  <div class="panel">
+    <div class="top"><span class="brand">THESES</span><span class="sm dim">First run</span></div>
+    <form class="mid" method="post" action="/setup">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <h1>Make the owner.</h1>
+      <p class="lead">One account, everything unlocked. You enrol an authenticator on the next screen; there is no way in without it.</p>
+      {{template "notice" .}}
+      <label class="f"><span class="l sm">Account name</span><input name="handle" value="{{.Form.handle}}" spellcheck="false" autocomplete="username" autofocus required></label>
+      <div class="row3">
+        <label class="f"><span class="l sm">Name</span><input name="name" value="{{.Form.name}}" autocomplete="name" required></label>
+        <label class="f"><span class="l sm">Initials</span><input name="initials" value="{{.Form.initials}}" maxlength="2" required></label>
+      </div>
+      <div class="f"><span class="l sm">Colour</span>{{template "swatches" .Swatches}}</div>
+      <label class="f"><span class="l sm">Email</span><input type="email" name="email" value="{{.Form.email}}" autocomplete="email" required></label>
+      <label class="f"><span class="l sm">Password</span><input type="password" name="password" placeholder="At least twelve characters" autocomplete="new-password" required></label>
+      <button class="btn" type="submit" data-busy="One moment">Continue</button>
+    </form>
+    <div class="bot"></div>
+  </div>
+</div>{{end}}

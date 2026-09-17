@@ -1,0 +1,9 @@
+{{define "art"}}<div class="art" data-base="{{asset "art/"}}" data-frames="{{join . ","}}">
+  <img src="{{asset (printf "art/%s.jpg" (index . 0))}}" alt="">{{if gt (len .) 1}}<img class="out" src="{{asset (printf "art/%s.jpg" (index . 1))}}" alt="">{{end}}
+</div>{{end}}
+
+{{define "initials"}}<span class="u {{colour .Colour}}" title="{{.Name}}">{{.Initials}}</span>{{end}}
+
+{{define "swatches"}}<div class="swatches">{{$sel := .Selected}}{{range $i, $c := .Colours}}<input type="radio" id="c{{$i}}" name="colour" value="{{$c}}"{{if eq $c $sel}} checked{{end}}><label class="{{colour $c}}" for="c{{$i}}" title="{{$c}}"></label>{{end}}</div>{{end}}
+
+{{define "notice"}}{{if .Error}}<p class="notice bad">{{.Error}}</p>{{end}}{{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}{{end}}

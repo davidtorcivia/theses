@@ -1,0 +1,72 @@
+{{define "content"}}<section id="admin">
+  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#danger">Danger</a><a href="/" class="back">← Back to work</a></nav>
+  <div class="apane">
+    <h2>Profile</h2>
+    {{template "notice" .}}
+
+    <form class="form" method="post" action="/profile" id="you">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>You</h3><p>How you appear on cards, in the document margin and in activity.</p></div>
+        <div class="fsb">
+          <div class="row3">
+            <label class="f"><span class="l">Account name</span><input name="handle" value="{{.User.Handle}}" spellcheck="false"><small>How you sign in.</small></label>
+            <label class="f"><span class="l">Name</span><input name="name" value="{{.User.Name}}"></label>
+            <label class="f"><span class="l">Initials</span><input name="initials" value="{{.User.Initials}}" maxlength="2"></label>
+          </div>
+          <label class="f"><span class="l">Email</span><input type="email" name="email" value="{{.User.Email}}"><small>For mail and recovery, not for signing in.</small></label>
+          <div class="f"><span class="l">Colour</span>{{template "swatches" .Swatches}}</div>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+
+    <section class="fs" id="security">
+      <div class="fsh"><h3>Security</h3><p>Your password, your authenticator and every browser you are signed in on.</p></div>
+      <div class="fsb">
+        <form class="form" method="post" action="/profile/password">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <div class="row3">
+            <label class="f"><span class="l">Current password</span><input type="password" name="current" autocomplete="current-password" required></label>
+            <label class="f"><span class="l">New password</span><input type="password" name="password" placeholder="At least twelve characters" autocomplete="new-password" required></label>
+            <label class="f"><span class="l">Authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label>
+          </div>
+          <button class="save" type="submit">Change password</button>
+        </form>
+        <form class="form" method="post" action="/profile/totp">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <div class="row3">
+            <label class="f"><span class="l">Two-factor</span><span class="mono {{if .User.TOTPSecret}}ok{{else}}dim{{end}}">{{if .User.TOTPSecret}}On · authenticator app{{else}}Not enrolled{{end}}</span></label>
+          </div>
+          <button class="lnk" type="submit">{{if .User.TOTPSecret}}Enrol a new authenticator{{else}}Enrol an authenticator{{end}}</button>
+        </form>
+        <button class="lnk" type="button" data-dialog="signout-all">Sign out everywhere</button>
+      </div>
+    </section>
+
+    <section class="fs last" id="danger">
+      <div class="fsh"><h3>Danger</h3><p>This is not undoable from here.</p></div>
+      <div class="fsb"><div class="danger"><button class="lnk del" type="button" data-dialog="delete-account">Delete my account</button></div></div>
+    </section>
+  </div>
+
+  <dialog id="signout-all">
+    <h3>Sign out everywhere</h3>
+    <p>Every browser signed in as {{.User.Handle}}, including this one, is signed out. Your password and authenticator are unchanged.</p>
+    <form method="post" action="/profile/signout-everywhere" class="acts">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="lnk plain" type="button" data-close>Keep them</button>
+      <button class="lnk del" type="submit">Sign out everywhere</button>
+    </form>
+  </dialog>
+
+  <dialog id="delete-account">
+    <h3>Delete this account</h3>
+    <p>{{.User.Name}} ({{.User.Handle}}) is removed along with every session and API token. Cards, documents and files stay, with the author left blank.</p>
+    <form method="post" action="/profile/delete" class="acts">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="lnk plain" type="button" data-close>Keep it</button>
+      <button class="lnk del" type="submit">Delete it</button>
+    </form>
+  </dialog>
+</section>{{end}}

@@ -1,0 +1,6 @@
+{{define "content"}}<div class="bleed">
+  {{template "art" .ArtFrames}}
+  <div class="top"><span class="brand">THESES</span></div>
+  <div class="mid">{{if .Code}}<p class="code">{{.Code}}</p>{{end}}<h1>{{.Headline}}</h1>{{if .Lead}}<p class="lead">{{.Lead}}</p>{{end}}<div class="acts"><a href="{{.ActionHref}}">{{.ActionText}}</a></div></div>
+  <div class="bot"></div>
+</div>{{end}}

@@ -1,0 +1,17 @@
+{{define "content"}}<div class="split">
+  {{template "art" .ArtFrames}}
+  <div class="panel">
+    <div class="top"><span class="brand">THESES</span><span class="sm dim">{{.Workspace}}</span></div>
+    <form class="mid" method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <h1>Enrol an authenticator.</h1>
+      <p class="lead">Scan this with the authenticator app on your phone, then type the six digits it shows.</p>
+      {{template "notice" .}}
+      <img class="qr" src="{{.QR}}" width="240" height="240" alt="Authenticator QR code">
+      <p class="secret">Or type the key: {{.Secret}}</p>
+      <label class="f"><span class="l sm">Authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digits" maxlength="6" autofocus required></label>
+      <button class="btn" type="submit" data-busy="Checking">Confirm</button>
+    </form>
+    <div class="bot"></div>
+  </div>
+</div>{{end}}

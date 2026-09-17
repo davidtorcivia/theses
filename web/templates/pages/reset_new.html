@@ -1,0 +1,15 @@
+{{define "content"}}<div class="split">
+  {{template "art" .ArtFrames}}
+  <div class="panel">
+    <div class="top"><span class="brand">THESES</span><span class="sm dim">{{.Workspace}}</span></div>
+    <form class="mid" method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <h1>Choose a password.</h1>
+      <p class="lead">This link works once. Signing in still needs your authenticator.</p>
+      {{template "notice" .}}
+      <label class="f"><span class="l sm">New password</span><input type="password" name="password" placeholder="At least twelve characters" autocomplete="new-password" autofocus required></label>
+      <button class="btn" type="submit" data-busy="Saving">Save it</button>
+    </form>
+    <div class="bot"></div>
+  </div>
+</div>{{end}}

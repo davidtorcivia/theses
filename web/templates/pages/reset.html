@@ -1,0 +1,16 @@
+{{define "content"}}<div class="split">
+  {{template "art" .ArtFrames}}
+  <div class="panel">
+    <div class="top"><span class="brand">THESES</span><span class="sm dim">{{.Workspace}}</span></div>
+    <form class="mid" method="post" action="/reset">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <h1>Reset your password.</h1>
+      <p class="lead">Your account name or the address the invitation went to. A link that lasts an hour comes back by mail.</p>
+      {{template "notice" .}}
+      <label class="f"><span class="l sm">Account name or email</span><input name="who" spellcheck="false" autocomplete="username" autofocus required></label>
+      <button class="btn" type="submit" data-busy="Sending">Send the link</button>
+      <a class="btn ghost" href="/login">Back to sign in</a>
+    </form>
+    <div class="bot"></div>
+  </div>
+</div>{{end}}

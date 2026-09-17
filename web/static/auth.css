@@ -1,0 +1,103 @@
+/* Sign-in, invitation, enrolment and error pages. AUTH_CSS from
+   docs/mockup/_build/gen.js, with the Google Fonts link replaced by
+   self-hosted faces and the mockup's style attributes turned into classes. */
+/* Self-hosted, because the CSP names no third party. Archivo is the variable
+   face with both the wdth and wght axes the mockup uses; DM Mono is the 400. */
+@font-face{font-family:"Archivo";font-style:normal;font-weight:400 900;font-stretch:62% 125%;font-display:swap;src:url(fonts/archivo-latin.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Archivo";font-style:normal;font-weight:400 900;font-stretch:62% 125%;font-display:swap;src:url(fonts/archivo-latin-ext.woff2) format("woff2");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:"DM Mono";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/dmmono-latin.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"DM Mono";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/dmmono-latin-ext.woff2) format("woff2");unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
+
+*{box-sizing:border-box}
+:root{--y:#FFD400;--k:#111;--p:#F4F1EA;--hair:rgba(244,241,234,.22);--dim:rgba(244,241,234,.55);--monof:"DM Mono",ui-monospace,Menlo,Consolas,monospace}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;font-size:15px;line-height:1.3}
+a{color:inherit;text-decoration:none}
+button{all:unset;cursor:pointer;font:inherit;color:inherit}
+input{font:inherit;color:inherit;background:transparent;border:0;outline:0;width:100%;padding:0;margin:0}
+.mono{font-family:var(--monof);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+.sm{font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:500;font-stretch:80%}
+.lnk{color:var(--y);font-weight:600}
+.lnk:hover{text-decoration:underline;text-underline-offset:.15em}
+/* the picture */
+.art{position:relative;overflow:hidden;background:#000}
+.art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:grayscale(1) contrast(1.25) sepia(1) hue-rotate(195deg) saturate(2.6) brightness(.72);transition:opacity 1.2s ease}
+.art img.out{opacity:0}
+.art::before,.art::after{content:"";position:absolute;inset:0;background:var(--img) center/cover no-repeat;opacity:0;pointer-events:none}
+.art.live::before{opacity:1;animation:tearA .9s steps(1) infinite}
+.art.live::after{opacity:1;animation:tearB 1.3s steps(1) infinite;mix-blend-mode:screen;filter:hue-rotate(160deg) saturate(1.6)}
+@keyframes tearA{0%{clip-path:inset(12% 0 80% 0);transform:translateX(-5%)}17%{clip-path:inset(42% 0 50% 0);transform:translateX(4%)}34%{clip-path:inset(66% 0 22% 0);transform:translateX(-3%)}51%{clip-path:inset(5% 0 90% 0);transform:translateX(6%)}68%{clip-path:inset(81% 0 9% 0);transform:translateX(-6%)}85%{clip-path:inset(30% 0 62% 0);transform:translateX(3%)}100%{clip-path:inset(55% 0 38% 0);transform:translateX(-4%)}}
+@keyframes tearB{0%{clip-path:inset(70% 0 24% 0);transform:translateX(3%)}25%{clip-path:inset(20% 0 74% 0);transform:translateX(-4%)}50%{clip-path:inset(48% 0 46% 0);transform:translateX(5%)}75%{clip-path:inset(8% 0 86% 0);transform:translateX(-2%)}100%{clip-path:inset(60% 0 30% 0);transform:translateX(2%)}}
+@media (prefers-reduced-motion:reduce){.art::before,.art::after{animation:none!important;opacity:0!important}}
+.art .cap{position:absolute;left:1.4rem;bottom:1.2rem;right:1.4rem;display:flex;justify-content:space-between;gap:1rem;color:var(--p);mix-blend-mode:difference;z-index:2}
+.art .cap b{font-weight:800;letter-spacing:-.02em;font-size:16px}
+/* split layout */
+.split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(360px,.85fr);min-height:100vh}
+.split .art{min-height:100vh}
+.panel{display:grid;grid-template-rows:auto 1fr auto;padding:1.2rem 3rem 1.4rem;min-width:0}
+.panel .top{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
+.brand{font-weight:800;letter-spacing:-.02em;font-size:22px;color:var(--y)}
+.panel .mid{align-self:center;max-width:420px;width:100%;padding:3rem 0}
+h1{margin:0 0 .6rem;font-weight:800;font-size:clamp(30px,3.4vw,44px);line-height:.98;letter-spacing:-.03em}
+.lead{margin:0 0 2rem;color:var(--dim);font-size:15px;line-height:1.35;max-width:38ch}
+.f{display:block;margin-bottom:1rem}
+.f .l{display:block;color:var(--dim);margin-bottom:.35rem}
+.f input{border:1px solid var(--hair);padding:.6rem .7rem;font-weight:500;font-size:16px}
+.f input:focus{border-color:var(--y)}
+.f .row{display:flex;justify-content:space-between;align-items:baseline}
+.btn{display:block;box-sizing:border-box;width:100%;text-align:center;background:var(--y);color:var(--k);font-weight:800;padding:.8rem 1rem;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%;font-size:14px;margin-top:1.4rem}
+.btn:hover{background:var(--p)}
+.btn.ghost{background:transparent;color:var(--p);border:1px solid var(--p);margin-top:.7rem}
+.btn.ghost:hover{border-color:var(--y);color:var(--y)}
+.or{display:flex;align-items:center;gap:1rem;color:var(--dim);margin:1.4rem 0 0}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--hair)}
+.panel .bot{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;color:var(--dim)}
+.who{display:flex;align-items:center;gap:.6rem;margin-bottom:1.4rem}
+.u{display:inline-flex;align-items:center;justify-content:center;font-family:var(--monof);font-size:10px;letter-spacing:.04em;width:1.9em;height:1.9em;background:var(--uc);color:#fff;font-weight:500}
+.swatches{display:flex;gap:.5rem;flex-wrap:wrap}
+.swatches button{width:24px;height:24px;border:2px solid var(--k)}
+.swatches button.on{outline:2px solid var(--y);outline-offset:1px}
+.row3{display:grid;grid-template-columns:2fr 1fr;gap:1rem}
+/* full-bleed error pages */
+.bleed{position:relative;min-height:100vh;display:grid;grid-template-rows:auto 1fr auto}
+.bleed .art{position:absolute;inset:0}
+.bleed .art img{filter:grayscale(1) contrast(1.3) sepia(1) hue-rotate(195deg) saturate(2.6) brightness(.38)}
+.bleed .art .cap{display:none}
+.bleed .mid{padding-top:7rem}
+.bleed h1{font-size:clamp(34px,5vw,64px)}
+.bleed .lead{max-width:36ch}
+.bleed .bot{background:rgba(17,17,17,.75)}
+.bleed .bot:empty,.panel .bot:empty{display:none}
+.bleed>*:not(.art){position:relative;z-index:2}
+.bleed .top{display:flex;justify-content:space-between;align-items:baseline;padding:1.2rem 1.6rem;gap:1rem}
+.bleed .mid{align-self:end;padding:2rem 1.6rem 1rem;max-width:760px}
+.code{font-weight:800;font-size:clamp(96px,22vw,280px);line-height:.85;letter-spacing:-.05em;color:var(--y);margin:0 0 .2em;mix-blend-mode:normal}
+.bleed h1{font-size:clamp(24px,3vw,40px);max-width:20ch;text-wrap:balance}
+.bleed .lead{color:var(--p);opacity:.85;max-width:44ch}
+.bleed .acts{display:flex;gap:1.6rem;flex-wrap:wrap;margin-top:1.2rem}
+.bleed .acts a{font-weight:700;border-bottom:2px solid var(--y);padding-bottom:.1em}
+.bleed .bot{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;padding:1rem 1.6rem 1.2rem;color:var(--dim)}
+@media (max-width:900px){.split{grid-template-columns:1fr}.split .art{min-height:38vh;order:-1}.panel{padding:1.2rem 1.2rem 1.4rem}.panel .mid{padding:2rem 0}.bleed .top,.bleed .bot,.bleed .mid{padding-left:1rem;padding-right:1rem}.art .cap{left:1rem;right:1rem}}
+/* The mockup put these on style attributes. The CSP has no 'unsafe-inline' in
+   style-src and the palette is a fixed list of eight, so they are classes.
+   The swatch picker is radio inputs so it needs no script. */
+.c1{--uc:#1100ff}
+.c2{--uc:#d0021b}
+.c3{--uc:#0a8a3a}
+.c4{--uc:#b35c00}
+.c5{--uc:#7b2cbf}
+.c6{--uc:#008b8b}
+.c7{--uc:#c2185b}
+.c8{--uc:#111}
+.swatches input{position:absolute;width:1px;height:1px;opacity:0;margin:0}
+.swatches label{display:inline-block;width:22px;height:22px;background:var(--uc);border:2px solid var(--k);cursor:pointer}
+.swatches input:checked+label{outline:2px solid var(--y);outline-offset:1px}
+.swatches input:focus-visible+label{outline:2px solid var(--p);outline-offset:2px}
+.dim{color:var(--dim)}
+.lnk.quiet{font-weight:500;font-size:12px}
+/* Enrolment, notices and the reset page: parts of the flow the mockup drew
+   only as a signed-in state. */
+.qr{display:block;width:240px;height:240px;background:#fff;padding:.5rem;margin:0 0 1rem}
+.secret{font-family:var(--monof);font-size:13px;letter-spacing:.06em;word-break:break-all;color:var(--dim);margin:0 0 1.6rem}
+.notice{border-left:2px solid var(--y);padding:.4rem 0 .4rem .8rem;margin:0 0 1.4rem;color:var(--dim)}
+.f select{font:inherit;color:inherit;background:transparent;border:1px solid var(--hair);padding:.6rem .7rem;width:100%}
