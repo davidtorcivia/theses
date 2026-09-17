@@ -168,6 +168,19 @@ func (s *Server) postInvite(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
+	// The address comes from the invitation, not the form, so it is checked here
+	// rather than in accountFromForm.
+	if _, err := store.UserByEmail(r.Context(), s.db, inv.Email); err == nil {
+		s.render(w, r, http.StatusUnprocessableEntity, "invite.html", s.page(r, "Join", map[string]any{
+			"ArtFrames": inviteArt, "Invitation": inv, "Action": "/invite/" + token,
+			"Form": form, "Swatches": swatches(form["colour"]),
+			"Error": "An account already uses that email address. Sign in instead.",
+		}))
+		return
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, err)
+		return
+	}
 	p.Kind = "invite"
 	p.Role = inv.Role
 	p.Email = inv.Email
@@ -219,6 +232,13 @@ func (s *Server) accountFromForm(r *http.Request) (map[string]string, *pending, 
 		return form, nil, errors.New("that account name is taken")
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return form, nil, err
+	}
+	if form["email"] != "" {
+		if _, err := store.UserByEmail(r.Context(), s.db, form["email"]); err == nil {
+			return form, nil, errors.New("an account already uses that email address")
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return form, nil, err
+		}
 	}
 
 	hash, err := auth.HashPassword(r.PostFormValue("password"))
@@ -293,6 +313,17 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if p.Kind == "reenrol" {
+		// The cookie says whose secret this replaces; the session has to agree,
+		// or a stale cookie in a shared browser would rewrite someone else's.
+		if u := userOf(r); u == nil || u.ID != p.UserID {
+			s.pending.clear(w, s.cfg.CookieSecure)
+			s.errorPage(w, r, http.StatusForbidden)
+			return
+		}
+		if err := s.activity(r.Context(), p.UserID, "user", itoa(p.UserID), "totp", "", ""); err != nil {
+			s.fail(w, r, err)
+			return
+		}
 		if err := store.SetTOTPSecret(r.Context(), s.db, p.UserID, p.Secret); err != nil {
 			s.fail(w, r, err)
 			return
@@ -430,6 +461,10 @@ func (s *Server) postResetToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := store.SetPasswordHash(r.Context(), s.db, u.ID, hash); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.activity(r.Context(), u.ID, "user", itoa(u.ID), "password-reset", "", ""); err != nil {
 		s.fail(w, r, err)
 		return
 	}

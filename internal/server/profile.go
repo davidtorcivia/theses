@@ -36,6 +36,10 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
+	if min := settings.Get[int](s.settings, "signin.handle_min_length"); len(handle) < min {
+		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": errShort(min).Error()})
+		return
+	}
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	initials := strings.ToUpper(strings.TrimSpace(r.PostFormValue("initials")))
 	email := strings.TrimSpace(r.PostFormValue("email"))
@@ -58,6 +62,13 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if other, err := store.UserByEmail(r.Context(), s.db, email); err == nil && other.ID != u.ID {
+		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "Another account already uses that email address."})
+		return
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, err)
+		return
+	}
 	if err := s.write(r, "user", itoa(u.ID), "update", u.Handle, handle, func(q store.Querier) error {
 		return store.UpdateProfile(r.Context(), q, u.ID, handle, name, initials, colour, email)
 	}); err != nil {
@@ -73,16 +84,17 @@ func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "That is not your current password."})
 		return
 	}
+	hash, err := auth.HashPassword(r.PostFormValue("password"))
+	if err != nil {
+		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		return
+	}
+	// The code is claimed last, so a password the rules refuse does not use one up.
 	if u.TOTPSecret != "" {
 		if err := s.auth.CheckTOTP(r.Context(), u, r.PostFormValue("code")); err != nil {
 			s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "That authenticator code did not match."})
 			return
 		}
-	}
-	hash, err := auth.HashPassword(r.PostFormValue("password"))
-	if err != nil {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
-		return
 	}
 	if err := s.write(r, "user", itoa(u.ID), "password", "", "", func(q store.Querier) error {
 		return store.SetPasswordHash(r.Context(), q, u.ID, hash)
@@ -112,7 +124,9 @@ func (s *Server) postReenrol(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postSignOutEverywhere(w http.ResponseWriter, r *http.Request) {
-	if err := s.auth.SignOutEverywhere(r.Context(), userOf(r).ID); err != nil {
+	if err := s.write(r, "user", itoa(userOf(r).ID), "signout-everywhere", "", "", func(q store.Querier) error {
+		return store.BumpSessionEpoch(r.Context(), q, userOf(r).ID)
+	}); err != nil {
 		s.fail(w, r, err)
 		return
 	}

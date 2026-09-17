@@ -58,6 +58,10 @@ func UserByHandle(ctx context.Context, q Querier, handle string) (*User, error) 
 	return scanUser(q.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE handle = ?`, handle))
 }
 
+func UserByEmail(ctx context.Context, q Querier, email string) (*User, error) {
+	return scanUser(q.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE lower(email) = lower(?)`, email))
+}
+
 // UserByHandleOrEmail backs password reset, where the person may type either.
 func UserByHandleOrEmail(ctx context.Context, q Querier, v string) (*User, error) {
 	return scanUser(q.QueryRowContext(ctx,
@@ -188,14 +192,16 @@ func DeleteSession(ctx context.Context, q Querier, hmac []byte) error {
 }
 
 type Invitation struct {
-	ID          int64
-	Email       string
-	Role        string
-	InvitedBy   sql.NullInt64
-	CreatedAt   int64
-	ExpiresAt   int64
-	AcceptedAt  sql.NullInt64
-	InviterName string
+	ID              int64
+	Email           string
+	Role            string
+	InvitedBy       sql.NullInt64
+	CreatedAt       int64
+	ExpiresAt       int64
+	AcceptedAt      sql.NullInt64
+	InviterName     string
+	InviterInitials string
+	InviterColour   string
 }
 
 func CreateInvitation(ctx context.Context, q Querier, email, role string, invitedBy int64, tokenHash []byte, expiresAt int64) (int64, error) {
@@ -210,16 +216,15 @@ func CreateInvitation(ctx context.Context, q Querier, email, role string, invite
 
 func InvitationByTokenHash(ctx context.Context, q Querier, tokenHash []byte) (*Invitation, error) {
 	var i Invitation
-	var inviter sql.NullString
 	err := q.QueryRowContext(ctx, `SELECT i.id, i.email, i.role, i.invited_by, i.created_at,
-		i.expires_at, i.accepted_at, u.name
+		i.expires_at, i.accepted_at, coalesce(u.name, ''), coalesce(u.initials, ''), coalesce(u.colour, '')
 		FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
 		WHERE i.token_hash = ?`, tokenHash).
-		Scan(&i.ID, &i.Email, &i.Role, &i.InvitedBy, &i.CreatedAt, &i.ExpiresAt, &i.AcceptedAt, &inviter)
+		Scan(&i.ID, &i.Email, &i.Role, &i.InvitedBy, &i.CreatedAt, &i.ExpiresAt, &i.AcceptedAt,
+			&i.InviterName, &i.InviterInitials, &i.InviterColour)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	i.InviterName = inviter.String
 	return &i, err
 }
 

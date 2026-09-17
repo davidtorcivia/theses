@@ -186,6 +186,9 @@ func (s *Settings) Set(ctx context.Context, key string, values []string, actorID
 		if def.Secret {
 			before = `{"set":true}`
 		} else {
+			if old.ValueJSON == stored {
+				return nil // saving a form leaves most fields as they were
+			}
 			before = old.ValueJSON
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {

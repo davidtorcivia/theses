@@ -144,63 +144,75 @@ func colourClass(hex string) string {
 	return "c8"
 }
 
-// render writes a page. In dev the templates are reparsed first, so editing one
-// needs no restart.
-func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page string, data map[string]any) {
+// renderTo returns a rendered page. It renders to memory so that a template
+// error never lands half a page with a 200, and so that fail can try the error
+// template without risking a second partial write. In dev the templates are
+// reparsed first, so editing one needs no restart.
+func (s *Server) renderTo(page string, data map[string]any) (string, error) {
 	set := s.templates
 	if s.dev {
 		fresh, err := parseTemplates(s.templateFS, s.funcs())
 		if err != nil {
-			s.fail(w, r, fmt.Errorf("reparse templates: %w", err))
-			return
+			return "", fmt.Errorf("reparse templates: %w", err)
 		}
 		set = fresh
 	}
 	t, ok := set[page]
 	if !ok {
-		s.fail(w, r, fmt.Errorf("no template %s", page))
-		return
+		return "", fmt.Errorf("no template %s", page)
 	}
-
-	// Render to memory so a template error does not land half a page with a 200.
 	var buf strings.Builder
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
-		s.fail(w, r, fmt.Errorf("render %s: %w", page, err))
+		return "", fmt.Errorf("render %s: %w", page, err)
+	}
+	return buf.String(), nil
+}
+
+func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page string, data map[string]any) {
+	body, err := s.renderTo(page, data)
+	if err != nil {
+		s.fail(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	io.WriteString(w, buf.String())
+	io.WriteString(w, body)
 }
 
 // Error pages, as the plan wants them: the code, one line, one action, and no
-// link to anything internal.
-var errorPages = map[int]struct{ code, headline, lead, actText, actHref string }{
-	http.StatusNotFound:            {"404", "Not found.", "", "Sign in", "/login"},
-	http.StatusForbidden:           {"403", "No access.", "", "Sign in as someone else", "/login"},
-	http.StatusInternalServerError: {"500", "Something broke.", "", "Try again", "/"},
+// link to anything internal. 500 and offline offer the same page again rather
+// than a route the viewer may not be allowed to see.
+var errorPages = map[int]struct {
+	code, headline, actText string
+	art                     []string
+	retry                   bool
+}{
+	http.StatusNotFound:            {code: "404", headline: "Not found.", actText: "Sign in", art: []string{"22"}},
+	http.StatusForbidden:           {code: "403", headline: "No access.", actText: "Sign in as someone else", art: []string{"04"}},
+	http.StatusInternalServerError: {code: "500", headline: "Something broke.", actText: "Try again", art: []string{"10"}, retry: true},
 }
 
-var errorArt = map[int][]string{
-	http.StatusNotFound:            {"22"},
-	http.StatusForbidden:           {"04"},
-	http.StatusInternalServerError: {"10"},
-}
-
-func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int) {
+func errorData(status int, r *http.Request) map[string]any {
 	p, ok := errorPages[status]
 	if !ok {
 		p = errorPages[http.StatusInternalServerError]
 	}
-	s.render(w, r, status, "error.html", map[string]any{
+	href := "/login"
+	if p.retry {
+		href = r.URL.RequestURI()
+	}
+	return map[string]any{
 		"Title":      p.code,
 		"Code":       p.code,
 		"Headline":   p.headline,
-		"Lead":       p.lead,
 		"ActionText": p.actText,
-		"ActionHref": p.actHref,
-		"ArtFrames":  errorArt[status],
-	})
+		"ActionHref": href,
+		"ArtFrames":  p.art,
+	}
+}
+
+func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int) {
+	s.render(w, r, status, "error.html", errorData(status, r))
 }
 
 func (s *Server) offlinePage(w http.ResponseWriter, r *http.Request) {
@@ -209,18 +221,24 @@ func (s *Server) offlinePage(w http.ResponseWriter, r *http.Request) {
 		"Headline":   "You’re offline.",
 		"Lead":       "Your changes are kept on this device and sync when the connection is back.",
 		"ActionText": "Retry",
-		"ActionHref": "/",
+		"ActionHref": r.URL.RequestURI(),
 		"ArtFrames":  []string{"19"},
 	})
 }
 
-// fail is the one place a handler's error becomes a response. The fallback is
-// plain text, so a broken template still gets an answer out.
+// fail is the one place a handler's error becomes a response. It renders the
+// same 500 page as any other error page, and falls back to a static string only
+// when that template will not render either.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	body, rerr := s.renderTo("error.html", errorData(http.StatusInternalServerError, r))
+	if rerr != nil {
+		s.log.Error("the error page will not render either", "err", rerr)
+		body = brokenPage
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusInternalServerError)
-	io.WriteString(w, brokenPage)
+	io.WriteString(w, body)
 }
 
 // brokenPage is what 500 falls back to when even the error template will not

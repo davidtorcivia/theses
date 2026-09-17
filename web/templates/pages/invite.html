@@ -4,7 +4,7 @@
     <div class="top"><span class="brand">THESES</span><span class="sm dim">{{.Workspace}}</span></div>
     <form class="mid" method="post" action="{{.Action}}">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <div class="who"><span class="sm dim">{{.Invitation.InviterName}} invited you as {{.Invitation.Role}}</span></div>
+      <div class="who">{{if .Invitation.InviterInitials}}<span class="u {{colour .Invitation.InviterColour}}">{{.Invitation.InviterInitials}}</span>{{end}}<span class="sm dim">{{.Invitation.InviterName}} invited you as {{.Invitation.Role}}</span></div>
       <h1>Join {{.Workspace}}.</h1>
       {{template "notice" .}}
       <label class="f"><span class="l sm">Account name</span><input name="handle" value="{{.Form.handle}}" spellcheck="false" autocomplete="username" autofocus required></label>

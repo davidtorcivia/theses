@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -247,19 +248,9 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if u.Role == auth.RoleOwner && role != auth.RoleOwner {
-		owners, err := store.CountOwners(r.Context(), s.db)
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		if owners < 2 {
-			s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
-				"Error": "That is the last owner. Make someone else an owner first.",
-			})
-			return
-		}
-	}
+	// The last owner is safe without a count here: only an owner reaches this
+	// handler and the case above refuses changing your own role, so any other
+	// owner being demoted means there are at least two.
 	if err := s.write(r, "user", itoa(id), "role", u.Role, role, func(q store.Querier) error {
 		return store.SetUserRole(r.Context(), q, id, role)
 	}); err != nil {
@@ -280,6 +271,10 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
+	if err := s.activity(r.Context(), userOf(r).ID, "invitation", email, "create", "", r.PostFormValue("role")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	s.logInvite(email, token)
 	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
 }
@@ -292,6 +287,10 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := s.auth.ReissueInvitation(r.Context(), id)
 	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.activity(r.Context(), userOf(r).ID, "invitation", itoa(id), "resend", "", ""); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -326,6 +325,10 @@ func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
+	if err := s.activity(r.Context(), userOf(r).ID, "api_token", r.PostFormValue("name"), "create", "", r.PostFormValue("scopes")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	// Rendered rather than redirected: the token is shown once and nowhere else.
 	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewToken": token})
 }
@@ -343,6 +346,12 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+}
+
+// activity records a mutation that could not share a transaction with its
+// change, because the change went through a package holding its own handle.
+func (s *Server) activity(ctx context.Context, actorID int64, entity, entityID, action, before, after string) error {
+	return store.InsertActivity(ctx, s.db, "user", itoa(actorID), entity, entityID, action, before, after)
 }
 
 // write applies a mutation and its activity row in one transaction.

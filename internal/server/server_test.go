@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/pquerna/otp/totp"
@@ -94,6 +95,7 @@ var (
 	csrfRe   = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 	secretRe = regexp.MustCompile(`type the key: ([A-Z2-7]+)`)
 	hrefRe   = regexp.MustCompile(`<a [^>]*href="([^"]*)"`)
+	tokenRe  = regexp.MustCompile(`(thes_[A-Za-z0-9_-]+)`)
 )
 
 func (h *harness) csrf(path string) string {
@@ -530,4 +532,309 @@ func TestPasswordResetWritesATokenAndSaysNothing(t *testing.T) {
 	if n != 1 {
 		t.Errorf("%d reset rows, want one for the account that exists", n)
 	}
+}
+
+func TestServerErrorRendersTheErrorPage(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	// A handler whose query cannot run is the ordinary way into fail().
+	h.db.Close()
+	res, body := h.get("/settings")
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "500") || !strings.Contains(body, "Something broke.") {
+		t.Errorf("the 500 page did not render from the template:\n%s", body)
+	}
+	var hrefs []string
+	for _, m := range hrefRe.FindAllStringSubmatch(body, -1) {
+		hrefs = append(hrefs, m[1])
+	}
+	if len(hrefs) != 1 || hrefs[0] != "/settings" {
+		t.Errorf("links = %v, want only the page itself", hrefs)
+	}
+}
+
+func TestServerErrorFallsBackWhenTemplatesAreBroken(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	// Templates from an empty tree: nothing, including the error page, renders.
+	h.srv.dev = true
+	h.srv.templateFS = fstest.MapFS{}
+
+	res, body := h.get("/")
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	if body != brokenPage {
+		t.Errorf("fallback body = %q", body)
+	}
+}
+
+func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	res, _ := h.post("/profile/totp", url.Values{"csrf": {h.csrf("/profile")}})
+	if res.Header.Get("Location") != "/profile/authenticator" {
+		t.Fatalf("re-enrol gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	_, body := h.get("/profile/authenticator")
+	secret := secretRe.FindStringSubmatch(body)[1]
+	token := csrfRe.FindStringSubmatch(body)[1]
+
+	// Someone else is now signed in on this browser, with the first person's
+	// enrolment cookie still there.
+	other := &store.User{Handle: "mara", Email: "mara@example.fm", Name: "Mara Okafor",
+		Initials: "MO", Colour: Palette[2], Role: auth.RoleEditor, PasswordHash: "x"}
+	id, err := store.CreateUser(context.Background(), h.db, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.ID, other.SessionEpoch = id, 1
+	w := httptest.NewRecorder()
+	if err := h.srv.auth.StartSession(context.Background(), w, httptest.NewRequest("POST", "/login", nil), other, 30); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(h.http.URL)
+	h.client.Jar.SetCookies(u, w.Result().Cookies())
+
+	code, _ := totp.GenerateCode(secret, time.Now())
+	res, _ = h.post("/profile/authenticator", url.Values{"csrf": {token}, "code": {code}})
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("a stale enrolment cookie gave %d, want 403", res.StatusCode)
+	}
+	owner, err := store.UserByHandle(context.Background(), h.db, "dt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.TOTPSecret == secret {
+		t.Error("the owner's authenticator was replaced from another person's session")
+	}
+}
+
+func TestTeamInvitationsAndTokens(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+
+	res, _ := h.post("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
+	})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("invite gave %d", res.StatusCode)
+	}
+	pending, err := store.ListPendingInvitations(ctx, h.db, time.Now().Unix())
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending invitations = %v, %v", pending, err)
+	}
+	_, body := h.get("/settings")
+	if !strings.Contains(body, "mara@example.fm") {
+		t.Error("the invitation is not listed on the page")
+	}
+
+	var firstHash []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT token_hash FROM invitations`).Scan(&firstHash); err != nil {
+		t.Fatal(err)
+	}
+	id := pending[0].ID
+	if res, _ := h.post("/settings/team/invite/"+itoa(id)+"/resend",
+		url.Values{"csrf": {h.csrf("/settings")}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("resend gave %d", res.StatusCode)
+	}
+	var secondHash []byte
+	if err := h.db.QueryRowContext(ctx, `SELECT token_hash FROM invitations`).Scan(&secondHash); err != nil {
+		t.Fatal(err)
+	}
+	if string(firstHash) == string(secondHash) {
+		t.Error("resend did not replace the token")
+	}
+
+	if res, _ := h.post("/settings/team/invite/"+itoa(id)+"/revoke",
+		url.Values{"csrf": {h.csrf("/settings")}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("revoke gave %d", res.StatusCode)
+	}
+	if left, _ := store.ListPendingInvitations(ctx, h.db, time.Now().Unix()); len(left) != 0 {
+		t.Error("the invitation survived revoking")
+	}
+
+	res, body = h.post("/settings/tokens", url.Values{
+		"csrf": {h.csrf("/settings")}, "name": {"research agent"}, "scopes": {"read write"},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("token create gave %d", res.StatusCode)
+	}
+	m := tokenRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatal("the new token was not shown")
+	}
+	if _, _, err := h.srv.auth.APIToken(ctx, m[1]); err != nil {
+		t.Errorf("the shown token does not work: %v", err)
+	}
+	if _, after := h.get("/settings"); strings.Contains(after, m[1]) {
+		t.Error("the token is shown again on a later load")
+	}
+
+	tokens, err := store.ListAPITokens(ctx, h.db)
+	if err != nil || len(tokens) != 1 {
+		t.Fatalf("tokens = %v, %v", tokens, err)
+	}
+	if res, _ := h.post("/settings/tokens/"+itoa(tokens[0].ID)+"/revoke",
+		url.Values{"csrf": {h.csrf("/settings")}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("token revoke gave %d", res.StatusCode)
+	}
+	if _, _, err := h.srv.auth.APIToken(ctx, m[1]); err == nil {
+		t.Error("a revoked token still works")
+	}
+}
+
+func TestRoleChangesAreGuarded(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner, err := store.UserByHandle(ctx, h.db, "dt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, body := h.post("/settings/team/role", url.Values{
+		"csrf": {h.csrf("/settings")}, "user": {itoa(owner.ID)}, "role": {auth.RoleEditor},
+	})
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "your own role") {
+		t.Errorf("changing your own role gave %d", res.StatusCode)
+	}
+
+	id, err := store.CreateUser(ctx, h.db, &store.User{Handle: "mara", Email: "mara@example.fm",
+		Name: "Mara Okafor", Initials: "MO", Colour: Palette[2], Role: auth.RoleGuest, PasswordHash: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.post("/settings/team/role", url.Values{
+		"csrf": {h.csrf("/settings")}, "user": {itoa(id)}, "role": {auth.RoleEditor},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("role change gave %d", res.StatusCode)
+	}
+	u, _ := store.UserByID(ctx, h.db, id)
+	if u.Role != auth.RoleEditor {
+		t.Errorf("role = %q", u.Role)
+	}
+
+	// A second owner can be demoted; the one doing it is still an owner.
+	if err := store.SetUserRole(ctx, h.db, id, auth.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.post("/settings/team/role", url.Values{
+		"csrf": {h.csrf("/settings")}, "user": {itoa(id)}, "role": {auth.RoleEditor},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("demoting a second owner gave %d", res.StatusCode)
+	}
+}
+
+func TestPasswordChangeAndResetLink(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	password, secret := h.setupOwner()
+
+	res, body := h.post("/profile/password", url.Values{
+		"csrf": {h.csrf("/profile")}, "current": {"not my password"},
+		"password": {"a brand new password"}, "code": {code(t, secret)},
+	})
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "current password") {
+		t.Errorf("a wrong current password gave %d", res.StatusCode)
+	}
+	res, body = h.post("/profile/password", url.Values{
+		"csrf": {h.csrf("/profile")}, "current": {password},
+		"password": {"short"}, "code": {code(t, secret)},
+	})
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "twelve") {
+		t.Errorf("a short new password gave %d", res.StatusCode)
+	}
+	if res, _ := h.post("/profile/password", url.Values{
+		"csrf": {h.csrf("/profile")}, "current": {password},
+		"password": {"a brand new password"}, "code": {code(t, secret)},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the password change gave %d", res.StatusCode)
+	}
+	u, _ := store.UserByHandle(ctx, h.db, "dt")
+	if !auth.CheckPassword(u.PasswordHash, "a brand new password") {
+		t.Error("the new password does not verify")
+	}
+
+	// The reset link sets another password and strands every session.
+	token, err := h.srv.auth.CreatePasswordReset(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.post("/reset/"+token, url.Values{
+		"csrf": {h.csrf("/reset/" + token)}, "password": {"a third long password"},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the reset gave %d", res.StatusCode)
+	}
+	u, _ = store.UserByHandle(ctx, h.db, "dt")
+	if !auth.CheckPassword(u.PasswordHash, "a third long password") {
+		t.Error("the reset password does not verify")
+	}
+	if res, _ := h.get("/profile"); res.Header.Get("Location") != "/login" {
+		t.Error("the session survived a password reset")
+	}
+	if res, _ := h.post("/reset/"+token, url.Values{
+		"csrf": {h.csrf("/reset/" + token)}, "password": {"a fourth long password"},
+	}); res.StatusCode != http.StatusNotFound {
+		t.Errorf("a spent reset link gave %d", res.StatusCode)
+	}
+}
+
+func TestDeleteAccountRefusesTheLastOwner(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+
+	res, body := h.post("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}})
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "last owner") {
+		t.Fatalf("deleting the last owner gave %d", res.StatusCode)
+	}
+	if n, _ := store.CountUsers(ctx, h.db); n != 1 {
+		t.Fatal("the owner was deleted anyway")
+	}
+
+	if _, err := store.CreateUser(ctx, h.db, &store.User{Handle: "mara", Email: "mara@example.fm",
+		Name: "Mara Okafor", Initials: "MO", Colour: Palette[2], Role: auth.RoleOwner, PasswordHash: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if res, _ := h.post("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("deleting a second owner gave %d", res.StatusCode)
+	}
+	if _, err := store.UserByHandle(ctx, h.db, "dt"); err == nil {
+		t.Error("the account was not deleted")
+	}
+}
+
+func TestForbiddenPageLinksOnlyToLogin(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	if err := store.SetUserRole(context.Background(), h.db, 1, auth.RoleGuest); err != nil {
+		t.Fatal(err)
+	}
+	res, body := h.get("/settings")
+	if res.StatusCode != http.StatusForbidden || !strings.Contains(body, "No access.") {
+		t.Fatalf("status = %d", res.StatusCode)
+	}
+	var hrefs []string
+	for _, m := range hrefRe.FindAllStringSubmatch(body, -1) {
+		hrefs = append(hrefs, m[1])
+	}
+	if len(hrefs) != 1 || hrefs[0] != "/login" {
+		t.Errorf("links = %v, want only /login", hrefs)
+	}
+}
+
+func code(t *testing.T, secret string) string {
+	t.Helper()
+	c, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
 }
