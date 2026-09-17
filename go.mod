@@ -7,8 +7,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/johannesboyne/gofakes3 v1.2.0
 	github.com/pquerna/otp v1.5.0
-	golang.org/x/crypto v0.44.0
-	modernc.org/sqlite v1.46.1
+	github.com/yuin/goldmark v1.8.5
+	golang.org/x/crypto v0.42.0
+	modernc.org/sqlite v1.43.0
 )
 
 require (
@@ -29,9 +30,10 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	go.shabbyrobe.org/gocovmerge v0.0.0-20230507111327-fa4f82cfbf4d // indirect
+	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
-	modernc.org/libc v1.72.5 // indirect
+	golang.org/x/tools v0.37.0 // indirect
+	modernc.org/libc v1.66.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
