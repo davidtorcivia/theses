@@ -14,14 +14,14 @@ func TestBetween(t *testing.T) {
 	}{
 		{"empty list", "", "", "V"},
 		{"before first", "", "V", "G"},
-		{"after last", "V", "", "l"},
+		{"after last", "V", "", "W"},
 		{"wide gap", "V", "l", "d"},
 		{"adjacent digits", "1", "2", "1V"},
 		{"adjacent digits again", "1V", "2", "1l"},
 		{"shared prefix", "Vd", "Vl", "Vh"},
 		{"upper extends lower", "V", "V1", "V0V"},
 		{"lower is prefix of upper", "V", "VV", "VG"},
-		{"top of the range", "z", "", "zV"},
+		{"top of the range", "z", "", "z1"},
 		{"bottom of the range", "", "01", "00V"},
 	}
 	for _, tt := range tests {
@@ -114,6 +114,25 @@ func TestRepeatedInsertInSameGap(t *testing.T) {
 	}
 	if len(hi) > 40 {
 		t.Errorf("200 insertions in one gap grew the key to %d characters: %q", len(hi), hi)
+	}
+}
+
+// Appending is the other common case: blocks added at the end of a document,
+// cards added to the bottom of a column.
+func TestRepeatedAppend(t *testing.T) {
+	key := First()
+	for i := 0; i < 1000; i++ {
+		got := After(key)
+		if !Valid(got) {
+			t.Fatalf("append %d produced invalid key %q", i, got)
+		}
+		if got <= key {
+			t.Fatalf("append %d: %q is not above %q", i, got, key)
+		}
+		key = got
+	}
+	if len(key) > 20 {
+		t.Errorf("1000 appends grew the key to %d characters: %q", len(key), key)
 	}
 }
 

@@ -39,13 +39,33 @@ func Between(a, b string) string {
 	if a != "" && b != "" && a >= b {
 		panic("frac: keys out of order: " + a + " >= " + b)
 	}
+	if b == "" && a != "" {
+		return next(a)
+	}
 	return midpoint(a, b)
+}
+
+// next returns the smallest key above a. Nothing sits above the last key, so
+// appending bumps a digit rather than halving the space left, which is what
+// keeps a document written top to bottom from growing a digit every few
+// blocks.
+//
+// ponytail: an append still costs a digit every 61 keys, and an insert between
+// two neighbours a digit every 6; integer prefixed keys would be the fix if a
+// list ever ran to many thousands.
+func next(a string) string {
+	head := strings.TrimRight(a, "z")
+	if head == "" {
+		return a + "1"
+	}
+	last := strings.IndexByte(digits, head[len(head)-1])
+	return head[:len(head)-1] + string(digits[last+1])
 }
 
 // First returns the key for the first item in an empty list.
 func First() string { return Between("", "") }
 
-// After returns a key that sorts after a and after every key below it.
+// After returns the smallest key that sorts after a, for appending to a list.
 func After(a string) string { return Between(a, "") }
 
 // Before returns a key that sorts before b and before every key above it.
