@@ -247,10 +247,13 @@ func parse(def Def, values []string) (any, error) {
 		}
 		return nil, fmt.Errorf("%s: %q is not one of %s", def.Label, first, strings.Join(def.Choices, ", "))
 	case KindList:
+		// Accepts both repeated fields and one textarea of lines.
 		var out []string
 		for _, v := range values {
-			if v = strings.TrimSpace(v); v != "" {
-				out = append(out, v)
+			for _, line := range strings.Split(v, "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					out = append(out, line)
+				}
 			}
 		}
 		if len(out) == 0 {

@@ -32,19 +32,29 @@ func Enrol(handle string) (*Enrolment, error) {
 	if err != nil {
 		return nil, fmt.Errorf("generate authenticator secret: %w", err)
 	}
+	qr, err := QR(key.URL())
+	if err != nil {
+		return nil, err
+	}
+	return &Enrolment{Secret: key.Secret(), URL: key.URL(), QR: qr}, nil
+}
+
+// QR renders an otpauth URL as a PNG data URI, so an enrolment page reloaded
+// from its stored URL shows the same code.
+func QR(otpauth string) (string, error) {
+	key, err := otp.NewKeyFromURL(otpauth)
+	if err != nil {
+		return "", fmt.Errorf("read otpauth URL: %w", err)
+	}
 	img, err := key.Image(240, 240)
 	if err != nil {
-		return nil, fmt.Errorf("render QR code: %w", err)
+		return "", fmt.Errorf("render QR code: %w", err)
 	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
-		return nil, fmt.Errorf("encode QR code: %w", err)
+		return "", fmt.Errorf("encode QR code: %w", err)
 	}
-	return &Enrolment{
-		Secret: key.Secret(),
-		URL:    key.URL(),
-		QR:     "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()),
-	}, nil
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
 }
 
 var totpOpts = totp.ValidateOpts{Period: totpPeriod, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
