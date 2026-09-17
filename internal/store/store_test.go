@@ -1,0 +1,141 @@
+package store
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+)
+
+func TestMigrateFreshAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "theses.db")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var applied int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied == 0 {
+		t.Fatal("no migrations recorded")
+	}
+	for _, table := range []string{"users", "sessions", "invitations", "password_resets", "settings",
+		"api_tokens", "propositions", "proposition_members", "columns", "cards", "card_assignees",
+		"checklist_items", "comments", "documents", "blocks", "document_revisions", "links", "files",
+		"uploads", "card_links", "card_files", "activity", "notification_channels", "notification_rules",
+		"notification_outbox", "mail_outbox", "cards_fts", "blocks_fts", "links_fts", "files_fts", "comments_fts"} {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT count(*) FROM sqlite_master WHERE name = ?`, table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			t.Errorf("table %s missing", table)
+		}
+	}
+	var mode string
+	if err := db.QueryRowContext(ctx, `PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "wal" {
+		t.Errorf("journal mode %q, want wal", mode)
+	}
+	var fk int
+	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil {
+		t.Fatal(err)
+	}
+	if fk != 1 {
+		t.Error("foreign keys are off")
+	}
+	db.Close()
+
+	// Reopening must not re-apply anything.
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var again int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&again); err != nil {
+		t.Fatal(err)
+	}
+	if again != applied {
+		t.Errorf("reopen applied %d migrations, want %d", again-applied, 0)
+	}
+}
+
+func TestForeignKeysEnforced(t *testing.T) {
+	db := OpenTemp(t)
+	_, err := db.ExecContext(context.Background(),
+		`INSERT INTO sessions (user_id, hmac, epoch, created_at, expires_at) VALUES (99, x'00', 1, 0, 0)`)
+	if err == nil {
+		t.Fatal("session for a missing user was accepted")
+	}
+}
+
+func TestFTSTriggers(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+
+	mustExec(t, db, `INSERT INTO propositions (id, number, title, status, position, created_at) VALUES (1, 1, 'Debt', 'idea', 1, 0)`)
+	mustExec(t, db, `INSERT INTO columns (id, proposition_id, name, position) VALUES (1, 1, 'Research', 1)`)
+	mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, description_md, created_at) VALUES (1, 1, 1, 1, 'Mortgage servicers', 'who forecloses', 0)`)
+
+	count := func(q string) int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM cards_fts WHERE cards_fts MATCH ?`, q).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count("servicers") != 1 {
+		t.Error("insert did not reach cards_fts")
+	}
+
+	mustExec(t, db, `UPDATE cards SET title = 'Rating agencies' WHERE id = 1`)
+	if count("servicers") != 0 {
+		t.Error("update left the old title in cards_fts")
+	}
+	if count("agencies") != 1 {
+		t.Error("update did not index the new title")
+	}
+
+	mustExec(t, db, `DELETE FROM cards WHERE id = 1`)
+	if count("agencies") != 0 {
+		t.Error("delete left the row in cards_fts")
+	}
+
+	// The other four indexes exist and index their own tables.
+	mustExec(t, db, `INSERT INTO documents (id, proposition_id, name, slug, position, created_at) VALUES (1, 1, 'Research', 'research', 1, 0)`)
+	mustExec(t, db, `INSERT INTO blocks (id, document_id, position, text, updated_at) VALUES (1, 1, 'a0', 'five consequential facts', 0)`)
+	mustExec(t, db, `INSERT INTO links (id, proposition_id, url, title, created_at) VALUES (1, 1, 'https://example.com', 'Foreclosure machine', 0)`)
+	mustExec(t, db, `INSERT INTO files (id, proposition_id, name, object_key, state, created_at) VALUES (1, 1, 'interview.wav', '1-debt/1/interview.wav', 'ready', 0)`)
+	mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, created_at) VALUES (2, 1, 1, 2, 'Outline', 0)`)
+	mustExec(t, db, `INSERT INTO comments (id, card_id, body_md, created_at) VALUES (1, 2, 'needs a street question', 0)`)
+
+	for _, c := range []struct{ table, match string }{
+		{"blocks_fts", "consequential"},
+		{"links_fts", "foreclosure"},
+		{"files_fts", "interview"},
+		{"comments_fts", "street"},
+	} {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			`SELECT count(*) FROM `+c.table+` WHERE `+c.table+` MATCH ?`, c.match).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", c.table, err)
+		}
+		if n != 1 {
+			t.Errorf("%s did not index %q", c.table, c.match)
+		}
+	}
+}
+
+func mustExec(t *testing.T, db *DB, q string, args ...any) {
+	t.Helper()
+	if _, err := db.ExecContext(context.Background(), q, args...); err != nil {
+		t.Fatalf("%s: %v", q, err)
+	}
+}
