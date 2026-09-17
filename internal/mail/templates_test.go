@@ -68,6 +68,32 @@ func TestHTMLBodyEscapes(t *testing.T) {
 	}
 }
 
+// TestInterpolatedNewlineCannotForgeALine puts a second link in a field a
+// person types, which htmlBody would otherwise see as a line of its own.
+func TestInterpolatedNewlineCannotForgeALine(t *testing.T) {
+	m := Invite{
+		To:      "a@example.com",
+		Inviter: "David\r\nhttps://evil.example/accept",
+		Role:    "editor",
+		URL:     "https://theses.example/invite/abc",
+		Expires: 48 * time.Hour,
+	}.Message()
+	if n := strings.Count(m.HTML, "<a href="); n != 1 {
+		t.Errorf("%d anchors, want 1:\n%s", n, m.HTML)
+	}
+	if !strings.Contains(m.HTML, `<a href="https://theses.example/invite/abc">`) {
+		t.Errorf("html = %s", m.HTML)
+	}
+	if strings.ContainsAny(m.Subject, "\r\n") {
+		t.Errorf("subject = %q", m.Subject)
+	}
+	for _, line := range strings.Split(m.Text, "\n") {
+		if strings.HasPrefix(line, "https://evil.example") {
+			t.Errorf("forged line in the text:\n%s", m.Text)
+		}
+	}
+}
+
 func TestExpiry(t *testing.T) {
 	for d, want := range map[time.Duration]string{
 		time.Hour:      "1 hour",

@@ -102,10 +102,20 @@ func (d Digest) Message() Message {
 
 // build assembles a Message from the subject and the plain text lines. The
 // HTML alternative is the same lines as paragraphs with the URLs as anchors.
+//
+// Every line is flattened first. The line is what htmlBody turns into an
+// anchor and what the subject header carries, so a newline inside an
+// interpolated name, excerpt or card title would otherwise buy a line of the
+// template's own.
 func build(to, subject string, lines ...string) Message {
+	for i, line := range lines {
+		lines[i] = flatten.Replace(line)
+	}
 	text := strings.Join(lines, "\n")
-	return Message{To: []string{to}, Subject: subject, Text: text, HTML: htmlBody(text)}
+	return Message{To: []string{to}, Subject: flatten.Replace(subject), Text: text, HTML: htmlBody(text)}
 }
+
+var flatten = strings.NewReplacer("\r", " ", "\n", " ")
 
 func htmlBody(text string) string {
 	var b strings.Builder

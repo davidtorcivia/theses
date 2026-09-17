@@ -62,32 +62,39 @@ func (s SMTP) Send(ctx context.Context, m Message) error {
 	if len(m.To) == 0 {
 		return errors.New("mail: no recipients")
 	}
+	// Only the parsed forms reach the envelope and the headers. ParseAddress
+	// accepts a comment holding raw CR and LF and returns it in the display
+	// name, and Address.String encodes that rather than writing it out.
 	rcpt := make([]string, len(m.To))
+	header := make([]string, len(m.To))
 	for i, to := range m.To {
 		a, err := netmail.ParseAddress(to)
 		if err != nil {
 			return fmt.Errorf("mail: recipient %q: %w", to, err)
 		}
-		rcpt[i] = a.Address
+		rcpt[i], header[i] = a.Address, a.String()
 	}
-	body, err := render(m, s.From)
+	body, err := render(m, from, header)
 	if err != nil {
 		return err
 	}
 
 	addr := net.JoinHostPort(s.Host, fmt.Sprint(s.Port))
-	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
+	raw, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("mail: dial %s: %w", addr, err)
 	}
-	defer conn.Close()
-	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer raw.Close()
+	// The cancellation closes raw, which is never reassigned, so it reaches the
+	// connection under the TLS wrapper as well.
+	stop := context.AfterFunc(ctx, func() { raw.Close() })
 	defer stop()
-	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
+	if err := raw.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return fmt.Errorf("mail: deadline: %w", err)
 	}
+	var conn net.Conn = raw
 	if s.TLS == "tls" {
-		tc := tls.Client(conn, &tls.Config{ServerName: s.Host})
+		tc := tls.Client(raw, &tls.Config{ServerName: s.Host})
 		if err := tc.HandshakeContext(ctx); err != nil {
 			return fmt.Errorf("mail: tls handshake: %w", err)
 		}
@@ -135,14 +142,14 @@ func (s SMTP) Send(ctx context.Context, m Message) error {
 
 // render builds the RFC 5322 message. The DotWriter returned by Data supplies
 // the carriage returns and the dot stuffing, so plain newlines are used here.
-func render(m Message, from string) ([]byte, error) {
+func render(m Message, from *netmail.Address, to []string) ([]byte, error) {
 	var b strings.Builder
 	h := textproto.MIMEHeader{}
-	h.Set("From", from)
-	h.Set("To", strings.Join(m.To, ", "))
+	h.Set("From", from.String())
+	h.Set("To", strings.Join(to, ", "))
 	h.Set("Subject", mime.QEncoding.Encode("utf-8", m.Subject))
 	h.Set("Date", time.Now().Format(time.RFC1123Z))
-	h.Set("Message-ID", messageID(from))
+	h.Set("Message-ID", messageID(from.Address))
 	h.Set("MIME-Version", "1.0")
 
 	if m.HTML == "" {
@@ -186,9 +193,36 @@ func render(m Message, from string) ([]byte, error) {
 func writeHeader(b *strings.Builder, h textproto.MIMEHeader) {
 	for _, k := range []string{"From", "To", "Subject", "Date", "Message-ID", "MIME-Version", "Content-Type", "Content-Transfer-Encoding"} {
 		if v := h.Get(k); v != "" {
-			fmt.Fprintf(b, "%s: %s\n", k, v)
+			b.WriteString(fold(k, v))
 		}
 	}
+}
+
+// fold writes one header, breaking it at a space once the line would pass 78
+// bytes and continuing with CRLF and a space, because nothing else breaks a
+// long value: QEncoding.Encode joins its encoded words with a plain space and
+// a long ASCII subject is not encoded at all. Unfolding puts the single space
+// back, so the value parses to what went in. A single word longer than the
+// limit stays where it is; RFC 5322 has nowhere to break it.
+func fold(name, value string) string {
+	const limit = 78
+	var b strings.Builder
+	b.WriteString(name)
+	b.WriteByte(':')
+	line := len(name) + 1
+	for i, w := range strings.Split(value, " ") {
+		if i > 0 && w != "" && line+1+len(w) > limit {
+			b.WriteString("\r\n ")
+			line = 1
+		} else {
+			b.WriteByte(' ')
+			line++
+		}
+		b.WriteString(w)
+		line += len(w)
+	}
+	b.WriteByte('\n')
+	return b.String()
 }
 
 // encode returns the body and its transfer encoding. 8BITMIME is not
@@ -228,11 +262,10 @@ func messageID(from string) string {
 	return "<" + hex.EncodeToString(buf[:]) + "@" + domain(from) + ">"
 }
 
+// domain takes the host from a bare address, the form Address.Address holds.
 func domain(addr string) string {
-	if a, err := netmail.ParseAddress(addr); err == nil {
-		if i := strings.LastIndex(a.Address, "@"); i >= 0 {
-			return a.Address[i+1:]
-		}
+	if i := strings.LastIndex(addr, "@"); i >= 0 {
+		return addr[i+1:]
 	}
 	return "localhost"
 }
