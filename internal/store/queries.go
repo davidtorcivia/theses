@@ -187,11 +187,6 @@ func DeleteSession(ctx context.Context, q Querier, hmac []byte) error {
 	return err
 }
 
-func DeleteExpiredSessions(ctx context.Context, q Querier, now int64) error {
-	_, err := q.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now)
-	return err
-}
-
 type Invitation struct {
 	ID          int64
 	Email       string

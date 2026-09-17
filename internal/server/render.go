@@ -36,7 +36,6 @@ var layoutFor = map[string]string{
 // whole tree keeps relative URLs inside the CSS working and makes any change
 // bust every cached URL, which at this size costs nothing.
 type assets struct {
-	fsys    fs.FS
 	prefix  string
 	handler http.Handler
 	dev     bool
@@ -53,7 +52,7 @@ func newAssets(fsys fs.FS, dev bool) (*assets, error) {
 		}
 		hash = h
 	}
-	a := &assets{fsys: fsys, prefix: "/static/" + hash + "/", dev: dev}
+	a := &assets{prefix: "/static/" + hash + "/", dev: dev}
 	a.handler = http.StripPrefix(a.prefix, http.FileServerFS(fsys))
 	return a, nil
 }

@@ -6,7 +6,6 @@ type Kind int
 const (
 	KindString Kind = iota
 	KindInt
-	KindBool
 	KindList   // []string, one entry per repeated form value
 	KindChoice // string restricted to Choices
 	KindText   // multi-line string

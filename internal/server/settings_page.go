@@ -92,8 +92,6 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 			shown[d.Key] = strings.Join(settings.Get[[]string](s.settings, d.Key), "\n")
 		case settings.KindInt:
 			shown[d.Key] = strconv.Itoa(settings.Get[int](s.settings, d.Key))
-		case settings.KindBool:
-			shown[d.Key] = strconv.FormatBool(settings.Get[bool](s.settings, d.Key))
 		default:
 			shown[d.Key] = settings.Get[string](s.settings, d.Key)
 		}

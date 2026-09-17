@@ -97,9 +97,6 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 // AddCheck registers a readiness probe. Call it before the server starts serving.
 func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
 
-// Auth exposes the auth package for the API and MCP adapters added later.
-func (s *Server) Auth() *auth.Auth { return s.auth }
-
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 func (s *Server) routes() http.Handler {
@@ -108,7 +105,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /static/", s.assets)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintln(w, "ok")
+		fmt.Fprintln(w, "theses", s.version)
 	})
 	mux.HandleFunc("GET /readyz", s.readyz)
 	mux.HandleFunc("GET /offline", func(w http.ResponseWriter, r *http.Request) { s.offlinePage(w, r) })

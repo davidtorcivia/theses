@@ -312,6 +312,20 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+	// The transaction takes the write lock at BEGIN, so this settles a race
+	// between two first-run tabs and refuses a stale setup cookie besides.
+	if p.Kind == "setup" {
+		n, err := store.CountUsers(r.Context(), tx)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if n > 0 {
+			s.pending.clear(w, s.cfg.CookieSecure)
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+	}
 	id, err := store.CreateUser(r.Context(), tx, u)
 	if err != nil {
 		s.fail(w, r, err)

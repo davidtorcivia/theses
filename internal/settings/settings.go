@@ -236,9 +236,6 @@ func parse(def Def, values []string) (any, error) {
 			return nil, fmt.Errorf("%s: %q is not a number", def.Label, first)
 		}
 		return n, nil
-	case KindBool:
-		// An unchecked checkbox sends nothing, so an absent value is false.
-		return first != "" && first != "false" && first != "off", nil
 	case KindChoice:
 		for _, c := range def.Choices {
 			if c == first {
@@ -271,8 +268,6 @@ func decode(def Def, valueJSON string) (any, error) {
 		target = new(string)
 	case KindInt:
 		target = new(int)
-	case KindBool:
-		target = new(bool)
 	case KindList:
 		target = new([]string)
 	default:
@@ -285,8 +280,6 @@ func decode(def Def, valueJSON string) (any, error) {
 	case *string:
 		return *v, nil
 	case *int:
-		return *v, nil
-	case *bool:
 		return *v, nil
 	case *[]string:
 		return *v, nil

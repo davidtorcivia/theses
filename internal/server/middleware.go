@@ -24,7 +24,7 @@ const (
 )
 
 func (s *Server) chain(h http.Handler) http.Handler {
-	return s.recoverer(s.logRequests(s.securityHeaders(s.browserSeed(s.setupGate(s.csrfGuard(h))))))
+	return s.logAndRecover(s.securityHeaders(s.browserSeed(s.setupGate(s.csrfGuard(h)))))
 }
 
 // recorder keeps the status for the log line and tells the recoverer whether a
@@ -49,8 +49,11 @@ func (rec *recorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
-func (s *Server) recoverer(next http.Handler) http.Handler {
+// logAndRecover is the outermost middleware: it logs every request with its
+// status and turns a panic into a 500 when nothing has been written yet.
+func (s *Server) logAndRecover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
 			if v := recover(); v != nil {
@@ -59,19 +62,11 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 					s.fail(w, r, errors.New("panic"))
 				}
 			}
+			s.log.Info("request",
+				"method", r.Method, "path", r.URL.Path, "status", rec.status,
+				"ms", time.Since(start).Milliseconds(), "addr", s.auth.ClientIP(r))
 		}()
 		next.ServeHTTP(rec, r)
-	})
-}
-
-func (s *Server) logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
-		s.log.Info("request",
-			"method", r.Method, "path", r.URL.Path, "status", rec.status,
-			"ms", time.Since(start).Milliseconds(), "addr", s.auth.ClientIP(r))
 	})
 }
 

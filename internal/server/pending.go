@@ -40,8 +40,7 @@ type pending struct {
 }
 
 type pendingStore struct {
-	aead   cipher.AEAD
-	secure bool
+	aead cipher.AEAD
 }
 
 func newPendingStore(secretKey []byte) (*pendingStore, error) {
