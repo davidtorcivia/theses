@@ -1,0 +1,35 @@
+services:
+  theses:
+    build:
+      context: .
+      args:
+        VERSION: ${THESES_VERSION:-dev}
+    image: theses:${THESES_VERSION:-dev}
+    container_name: theses
+    restart: unless-stopped
+    # Published on loopback by default; the Caddy already on the host fronts it.
+    ports:
+      - "${THESES_BIND_HOST:-127.0.0.1}:${THESES_PORT:-8080}:8080"
+    environment:
+      THESES_BIND: ":8080"
+      THESES_DATA_DIR: /data
+      THESES_BASE_URL: ${THESES_BASE_URL:?set THESES_BASE_URL in .env}
+      THESES_SECRET_KEY: ${THESES_SECRET_KEY:?set THESES_SECRET_KEY in .env}
+      THESES_SESSION_KEY: ${THESES_SESSION_KEY:?set THESES_SESSION_KEY in .env}
+      THESES_TRUST_PROXY: ${THESES_TRUST_PROXY:-true}
+      THESES_LOG_LEVEL: ${THESES_LOG_LEVEL:-info}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - theses-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  theses-data:
