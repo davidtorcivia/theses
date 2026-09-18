@@ -109,8 +109,15 @@ var commands = map[string]func(context.Context, *board.Service, core.Actor, args
 // which answer is its own.
 func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 	if cmd.Cmd == "where" {
+		// Presence is echoed to everybody in the room, so it takes the same
+		// cap as any other field rather than whatever fits in a frame.
+		where, err := board.Field(cmd.Args.Where, board.MaxWord)
+		if err != nil {
+			c.send(message{Type: "error", ID: cmd.ID, Error: reason(err)})
+			return
+		}
 		c.mu.Lock()
-		c.where = cmd.Args.Where
+		c.where = where
 		c.mu.Unlock()
 		h.announce(c.proposition)
 		return
@@ -144,7 +151,7 @@ func reason(err error) string {
 		return "that is no longer there"
 	case errors.Is(err, core.ErrNotUndoable), errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty),
-		errors.Is(err, board.ErrArchived):
+		errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong):
 		return err.Error()
 	default:
 		return "that did not go through"

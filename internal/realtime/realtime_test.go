@@ -688,3 +688,60 @@ func TestCreatorsOtherTabSeesTheNewProposition(t *testing.T) {
 	read(t, one, "ack")
 	readNothing(t, stranger)
 }
+
+// Presence goes to everybody in the room, so what a tab says it has open takes
+// the same cap as any other field. Without one a tab could put sixty four
+// kilobytes in front of every other tab on the proposition.
+func TestPresenceStringIsCapped(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("ada")
+	read(t, ws, "presence")
+
+	send(t, ws, command{ID: 1, Cmd: "where", Args: args{Where: strings.Repeat("x", board.MaxWord+1)}})
+	if answer := read(t, ws, "error"); answer.ID != 1 || !strings.Contains(answer.Error, "longer than") {
+		t.Errorf("an oversized presence string got %+v", answer)
+	}
+
+	send(t, ws, command{ID: 2, Cmd: "where", Args: args{Where: "card:7"}})
+	found := false
+	for i := 0; i < 3 && !found; i++ {
+		for _, p := range read(t, ws, "presence").People {
+			if p.Where == "card:7" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("a presence string within the cap never reached the room")
+	}
+}
+
+// The limiter is the cheap check, so a tab sending rubbish as fast as it can
+// does not buy a session lookup per frame. The refusal still carries the
+// command's own number.
+func TestTheLimiterRunsBeforeTheSessionLookup(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("grace")
+	read(t, ws, "presence")
+
+	limited := false
+	for i := 0; i < 400 && !limited; i++ {
+		send(t, ws, command{ID: int64(i + 1), Cmd: "no.such.command"})
+		if strings.Contains(read(t, ws, "error").Error, "too many") {
+			limited = true
+		}
+	}
+	if !limited {
+		t.Fatal("the limiter never answered")
+	}
+
+	// Spent, and now signed out everywhere: the limiter answers, and the
+	// socket stays up because the session was never asked about.
+	if err := store.BumpSessionEpoch(context.Background(), r.db, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+	send(t, ws, command{ID: 999, Cmd: "no.such.command"})
+	if answer := read(t, ws, "error"); !strings.Contains(answer.Error, "too many") {
+		t.Errorf("a refused frame reached the session lookup: %+v", answer)
+	}
+}

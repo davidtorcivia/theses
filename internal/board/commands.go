@@ -37,16 +37,18 @@ var (
 // command refuses rather than storing something the column was never meant to
 // carry and every board that draws it has to render.
 const (
-	maxWord = 100
-	maxLine = 500
-	maxBody = 20000
+	MaxWord = 100
+	MaxLine = 500
+	MaxBody = 20000
 	// maxAssignees is more people than the workspace has, so a create naming
 	// more than this is not somebody assigning work.
 	maxAssignees = 50
 )
 
-// field trims a value and refuses one longer than the field takes.
-func field(value string, most int) (string, error) {
+// Field trims a value and refuses one longer than the field takes. It is the
+// one answer to how long a thing on the board may be, so every surface that
+// takes text asks it rather than inventing a limit of its own.
+func Field(value string, most int) (string, error) {
 	value = strings.TrimSpace(value)
 	if utf8.RuneCountInString(value) > most {
 		return "", ErrTooLong
@@ -156,7 +158,7 @@ const (
 // CreateProposition takes the next number, the columns the settings name and
 // the actor as its first member.
 func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title string) (core.Event, error) {
-	title, err := field(title, maxLine)
+	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -237,17 +239,17 @@ func (s *Service) proposition(ctx context.Context, a core.Actor, id int64, need,
 }
 
 func (s *Service) EditProposition(ctx context.Context, a core.Actor, id int64, title, statement, blurb string) (core.Event, error) {
-	title, err := field(title, maxLine)
+	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
 	if title == "" {
 		return core.Event{}, ErrEmpty
 	}
-	if statement, err = field(statement, maxLine); err != nil {
+	if statement, err = Field(statement, MaxLine); err != nil {
 		return core.Event{}, err
 	}
-	if blurb, err = field(blurb, maxBody); err != nil {
+	if blurb, err = Field(blurb, MaxBody); err != nil {
 		return core.Event{}, err
 	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "edit", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
@@ -259,7 +261,7 @@ func (s *Service) EditProposition(ctx context.Context, a core.Actor, id int64, t
 }
 
 func (s *Service) SetStatus(ctx context.Context, a core.Actor, id int64, status string) (core.Event, error) {
-	status, err := field(status, maxWord)
+	status, err := Field(status, MaxWord)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -273,11 +275,11 @@ func (s *Service) SetStatus(ctx context.Context, a core.Actor, id int64, status 
 }
 
 func (s *Service) Schedule(ctx context.Context, a core.Actor, id int64, episode, targetDate string) (core.Event, error) {
-	episode, err := field(episode, maxWord)
+	episode, err := Field(episode, MaxWord)
 	if err != nil {
 		return core.Event{}, err
 	}
-	if targetDate, err = field(targetDate, maxWord); err != nil {
+	if targetDate, err = Field(targetDate, MaxWord); err != nil {
 		return core.Event{}, err
 	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "schedule", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
@@ -368,7 +370,7 @@ func addMember(ctx context.Context, tx *sql.Tx, proposition, user int64) error {
 // Columns.
 
 func (s *Service) CreateColumn(ctx context.Context, a core.Actor, proposition int64, name string) (core.Event, error) {
-	name, err := field(name, maxLine)
+	name, err := Field(name, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -432,7 +434,7 @@ func readColumn(ctx context.Context, q store.Querier, id int64) (Column, error) 
 }
 
 func (s *Service) RenameColumn(ctx context.Context, a core.Actor, id int64, name string) (core.Event, error) {
-	name, err := field(name, maxLine)
+	name, err := Field(name, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -476,7 +478,7 @@ func (s *Service) DeleteColumn(ctx context.Context, a core.Actor, id int64) (cor
 // Cards.
 
 func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, title string, assignees []int64) (core.Event, error) {
-	title, err := field(title, maxLine)
+	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -554,7 +556,7 @@ func (s *Service) card(ctx context.Context, a core.Actor, id int64, need, action
 // from. A card has one version across both fields, so an edit that began before
 // somebody else's is refused with the text that is now there.
 func (s *Service) EditCardTitle(ctx context.Context, a core.Actor, id, base int64, title string) (core.Event, error) {
-	title, err := field(title, maxLine)
+	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -573,7 +575,7 @@ func (s *Service) EditCardTitle(ctx context.Context, a core.Actor, id, base int6
 }
 
 func (s *Service) EditCardDescription(ctx context.Context, a core.Actor, id, base int64, description string) (core.Event, error) {
-	description, err := field(description, maxBody)
+	description, err := Field(description, MaxBody)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -642,7 +644,7 @@ func (s *Service) UnassignCard(ctx context.Context, a core.Actor, id, user int64
 }
 
 func (s *Service) SetCardDue(ctx context.Context, a core.Actor, id int64, due string) (core.Event, error) {
-	due, err := field(due, maxWord)
+	due, err := Field(due, MaxWord)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -689,7 +691,7 @@ func (s *Service) DeleteCard(ctx context.Context, a core.Actor, id int64) (core.
 // Checklist items.
 
 func (s *Service) AddChecklistItem(ctx context.Context, a core.Actor, card int64, itemText string) (core.Event, error) {
-	itemText, err := field(itemText, maxLine)
+	itemText, err := Field(itemText, MaxLine)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -773,7 +775,7 @@ func readChecklistItem(ctx context.Context, q store.Querier, id int64) (Checklis
 // Notes.
 
 func (s *Service) PostComment(ctx context.Context, a core.Actor, card int64, body string) (core.Event, error) {
-	body, err := field(body, maxBody)
+	body, err := Field(body, MaxBody)
 	if err != nil {
 		return core.Event{}, err
 	}

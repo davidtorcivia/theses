@@ -181,6 +181,12 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	}
 	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
 
+	// The subscription takes every proposition so that the rail stays live, and
+	// it is opened before the memberships are read: a member command in
+	// between is then waiting on the subscription rather than missed by both.
+	sub := h.board.Bus.Subscribe(0)
+	defer sub.Close()
+
 	member, err := board.Memberships(ctx, h.board.DB, user.ID)
 	if err != nil {
 		return
@@ -196,10 +202,6 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	defer c.close()
 	go c.write()
 
-	// The subscription takes every proposition so that the rail stays live, and
-	// the filter below decides what this tab is entitled to see.
-	sub := h.board.Bus.Subscribe(0)
-	defer sub.Close()
 	go c.forward(sub)
 
 	h.join(c)
@@ -211,23 +213,25 @@ func (h *Hub) serve(ws *websocket.Conn) {
 		if err := websocket.Message.Receive(ws, &raw); err != nil {
 			return
 		}
-		// The handshake is not enough on a connection that stays open for
-		// hours: a sign out, a sign out everywhere or a deleted account has to
-		// stop the writes it was authorising.
-		if !h.stillSignedIn(c, r) {
-			return
-		}
+		// The limiter first, because it is the cheap check and a flood of
+		// rubbish should not buy a session query per frame. The frame was
+		// capped before it was read, so parsing one to answer under its own
+		// number costs nothing either.
+		allowed := h.auth.Allow(auth.BucketSocket, c.tab, strconv.FormatInt(c.user.ID, 10))
 		var cmd command
 		if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
 			c.send(message{Type: "error", Error: "that was not a command"})
 			continue
 		}
-		// After the parse, so the refusal comes back under the number the tab
-		// gave the command and the tab stops waiting for it. The frame was
-		// already capped before it was read, so parsing one costs nothing.
-		if !h.auth.Allow(auth.BucketSocket, c.tab, strconv.FormatInt(c.user.ID, 10)) {
+		if !allowed {
 			c.send(message{Type: "error", ID: cmd.ID, Error: "too many changes at once; wait a moment"})
 			continue
+		}
+		// The handshake is not enough on a connection that stays open for
+		// hours: a sign out, a sign out everywhere or a deleted account has to
+		// stop the writes it was authorising.
+		if !h.stillSignedIn(c, r) {
+			return
 		}
 		h.dispatch(ctx, c, cmd)
 	}
@@ -286,8 +290,9 @@ func (c *client) membership(e core.Event) {
 	} else {
 		delete(c.member, e.Proposition)
 	}
+	owner := c.owner
 	c.mu.Unlock()
-	if !added && !c.owner && e.Proposition == c.proposition {
+	if !added && !owner && e.Proposition == c.proposition {
 		c.close()
 	}
 }

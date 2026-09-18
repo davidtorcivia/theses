@@ -665,8 +665,8 @@ func TestCommandsRefuseAFieldLongerThanTheFieldTakes(t *testing.T) {
 	f := setup(t)
 	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
 	owner := f.who["owner"]
-	long := strings.Repeat("x", maxLine+1)
-	huge := strings.Repeat("x", maxBody+1)
+	long := strings.Repeat("x", MaxLine+1)
+	huge := strings.Repeat("x", MaxBody+1)
 
 	for name, run := range map[string]func() error{
 		"a proposition title": func() error { _, err := f.CreateProposition(ctx, owner, long); return err },
@@ -695,8 +695,8 @@ func TestCommandsRefuseAFieldLongerThanTheFieldTakes(t *testing.T) {
 
 	// The limit is in runes, not bytes, so a field of accented text holds as
 	// much of it as a field of plain text does.
-	if _, err := f.CreateProposition(ctx, owner, strings.Repeat("é", maxLine)); err != nil {
-		t.Errorf("a title of %d accented characters was refused: %v", maxLine, err)
+	if _, err := f.CreateProposition(ctx, owner, strings.Repeat("é", MaxLine)); err != nil {
+		t.Errorf("a title of %d accented characters was refused: %v", MaxLine, err)
 	}
 }
 
