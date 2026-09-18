@@ -191,11 +191,7 @@ func (s *Server) search(ctx context.Context, req *sdk.CallToolRequest, in search
 	if err != nil {
 		return nil, searchOut{}, err
 	}
-	visible, err := s.api.Visible(ctx, p)
-	if err != nil {
-		return nil, searchOut{}, s.failed("search", err)
-	}
-	groups, err := search.Search(ctx, s.db, in.Query, in.Limit, visible)
+	groups, err := search.Search(ctx, s.db, in.Query, in.Limit, s.api.Reader(p))
 	if err != nil {
 		return nil, searchOut{}, s.failed("search", err)
 	}

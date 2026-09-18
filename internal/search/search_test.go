@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/store"
@@ -50,7 +51,7 @@ func TestSearchMatchesABackslash(t *testing.T) {
 		VALUES (1, 'dos', 'dos@example.com', 'C:\ Drive', 'CD', '#fff', 'guest', 'x', 1)`); err != nil {
 		t.Fatal(err)
 	}
-	groups, err := Search(context.Background(), db, `C:\ Dri`, 0, Everything)
+	groups, err := Search(context.Background(), db, `C:\ Dri`, 0, Everything())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestSearchGroupsEveryKind(t *testing.T) {
 	db := store.OpenTemp(t)
 	seed(t, db)
 
-	groups, err := Search(context.Background(), db, "debt", 0, Everything)
+	groups, err := Search(context.Background(), db, "debt", 0, Everything())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func TestSearchMatchesUsersByName(t *testing.T) {
 
 	// A name is matched anywhere inside it and nowhere else: "nora" is in no FTS
 	// table and in no proposition title.
-	groups, err := Search(context.Background(), db, "ora Stud", 0, Everything)
+	groups, err := Search(context.Background(), db, "ora Stud", 0, Everything())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func TestSearchSurvivesFTSSyntax(t *testing.T) {
 	seed(t, db)
 
 	for _, q := range []string{`"debt`, `debt*`, `debt NEAR crisis`, `debt AND (`, `^debt`, `debt OR OR`} {
-		if _, err := Search(context.Background(), db, q, 0, Everything); err != nil {
+		if _, err := Search(context.Background(), db, q, 0, Everything()); err != nil {
 			t.Errorf("Search(%q): %v", q, err)
 		}
 	}
@@ -156,7 +157,7 @@ func TestSearchOfPunctuationIsEmpty(t *testing.T) {
 	db := store.OpenTemp(t)
 	seed(t, db)
 
-	groups, err := Search(context.Background(), db, `*"()^ -`, 0, Everything)
+	groups, err := Search(context.Background(), db, `*"()^ -`, 0, Everything())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,4 +172,70 @@ func kinds(groups []Group) []string {
 		out = append(out, g.Kind)
 	}
 	return out
+}
+
+// The membership test belongs inside the query, not over its results: the
+// limit has to count hits the reader may see. Filtering afterwards lets one
+// busy proposition they are not a member of fill the page and hide their own.
+func TestABusyPropositionDoesNotHideTheReadersOwnHits(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	mustExec(`INSERT INTO users (id, handle, email, name, initials, colour, role, password_hash, created_at)
+		VALUES (1, 'grace', 'grace@example.com', 'Grace Hopper', 'GH', '#111', 'editor', 'x', 0)`)
+	for _, p := range []int64{1, 2} {
+		mustExec(`INSERT INTO propositions (id, number, title, status, position, created_at)
+			VALUES (?, ?, 'Prop', 'idea', 'V', 0)`, p, p)
+		mustExec(`INSERT INTO columns (id, proposition_id, name, position) VALUES (?, ?, 'Research', 'V')`, p, p)
+	}
+	// The reader is a member of the second one only.
+	mustExec(`INSERT INTO proposition_members (proposition_id, user_id) VALUES (2, 1)`)
+
+	// Far more matches in the proposition they cannot read than any page holds.
+	for i := 0; i < 55; i++ {
+		mustExec(`INSERT INTO cards (id, proposition_id, column_id, position, title, created_at)
+			VALUES (?, 1, 1, ?, 'tidal survey', 0)`, i+1, "V"+strconv.Itoa(i))
+	}
+	mustExec(`INSERT INTO cards (id, proposition_id, column_id, position, title, created_at)
+		VALUES (100, 2, 2, 'V', 'tidal gauge', 0)`)
+
+	groups, err := Search(ctx, db, "tidal", 0, Member(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var titles []string
+	for _, g := range groups {
+		for _, h := range g.Hits {
+			if h.Kind != KindCard {
+				continue
+			}
+			if h.PropositionID != 2 {
+				t.Errorf("a card of proposition %d reached a reader who is not a member", h.PropositionID)
+			}
+			titles = append(titles, h.Title)
+		}
+	}
+	if len(titles) != 1 || titles[0] != "tidal gauge" {
+		t.Errorf("the reader's own card is %v, want the one in their proposition", titles)
+	}
+
+	// An owner still reads all fifty six.
+	groups, err = Search(ctx, db, "tidal", MaxLimit, Everything())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cards := 0
+	for _, g := range groups {
+		if g.Kind == KindCard {
+			cards = len(g.Hits)
+		}
+	}
+	if cards != MaxLimit {
+		t.Errorf("an owner asking for %d cards got %d", MaxLimit, cards)
+	}
 }

@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
-	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -249,12 +248,7 @@ func (a *API) users(w http.ResponseWriter, r *http.Request, _ Principal) {
 
 func (a *API) search(w http.ResponseWriter, r *http.Request, p Principal) {
 	q := r.URL.Query().Get("q")
-	visible, err := a.Visible(r.Context(), p)
-	if err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-	groups, err := search.Search(r.Context(), a.db, q, intParam(r, "limit", 0), visible)
+	groups, err := search.Search(r.Context(), a.db, q, intParam(r, "limit", 0), a.Reader(p))
 	if err != nil {
 		a.serverError(w, r, err)
 		return
@@ -265,21 +259,17 @@ func (a *API) search(w http.ResponseWriter, r *http.Request, p Principal) {
 	a.writeJSON(w, http.StatusOK, map[string]any{"query": q, "groups": groups})
 }
 
-// Visible is the workspace as this token's owner may read it: every
-// proposition for an owner, and the ones they are a member of for everybody
-// else. A token is never a way to read past what its owner may read.
-func (a *API) Visible(ctx context.Context, p Principal) (search.Visible, error) {
-	if p.User != nil && p.User.Role == auth.RoleOwner {
-		return search.Everything, nil
-	}
+// Reader is the workspace as this token's owner may read it: every proposition
+// for an owner, and the ones they are a member of for everybody else. A token
+// is never a way to read past what its owner may read.
+func (a *API) Reader(p Principal) search.Reader {
 	if p.User == nil {
-		return func(int64) bool { return false }, nil
+		return search.Reader{}
 	}
-	member, err := board.Memberships(ctx, a.db, p.User.ID)
-	if err != nil {
-		return nil, err
+	if p.User.Role == auth.RoleOwner {
+		return search.Everything()
 	}
-	return func(proposition int64) bool { return member[proposition] }, nil
+	return search.Member(p.User.ID)
 }
 
 type activityJSON struct {
