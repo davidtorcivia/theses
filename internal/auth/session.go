@@ -22,6 +22,9 @@ const (
 // Authenticate checks an account name, password and authenticator code together,
 // so a failure never says which of the three was wrong.
 func (a *Auth) Authenticate(ctx context.Context, handle, password, code string) (*store.User, error) {
+	// Cut before either branch, so the unknown account and the wrong password do
+	// the same bcrypt work whatever the caller sent.
+	password = capPassword(password)
 	u, err := store.UserByHandle(ctx, a.db, handle)
 	if errors.Is(err, store.ErrNotFound) {
 		burnPasswordTime(password)

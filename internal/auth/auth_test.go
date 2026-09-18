@@ -3,8 +3,10 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -434,6 +436,7 @@ func TestClientIP(t *testing.T) {
 	f := newFixture(t)
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "192.0.2.9:4444"
+	// The client sent the first entry itself; the proxy appended the last.
 	r.Header.Set("X-Forwarded-For", "203.0.113.7, 198.51.100.1")
 	r.Header.Set("CF-Connecting-IP", "203.0.113.8")
 
@@ -441,11 +444,81 @@ func TestClientIP(t *testing.T) {
 		t.Errorf("without THESES_TRUST_PROXY, ClientIP = %q", got)
 	}
 	trusting := New(f.db, sessionKey, true, true)
-	if got := trusting.ClientIP(r); got != "203.0.113.8" {
-		t.Errorf("CF-Connecting-IP should win: %q", got)
+	if got := trusting.ClientIP(r); got != "198.51.100.1" {
+		t.Errorf("the rightmost X-Forwarded-For entry expected: %q", got)
 	}
-	r.Header.Del("CF-Connecting-IP")
-	if got := trusting.ClientIP(r); got != "203.0.113.7" {
-		t.Errorf("first X-Forwarded-For entry expected: %q", got)
+	r.Header.Del("X-Forwarded-For")
+	if got := trusting.ClientIP(r); got != "192.0.2.9" {
+		t.Errorf("CF-Connecting-IP must not be believed: %q", got)
+	}
+	// Two header lines are one list, so the last entry of the last line wins.
+	r.Header.Add("X-Forwarded-For", "203.0.113.7")
+	r.Header.Add("X-Forwarded-For", "198.51.100.2")
+	if got := trusting.ClientIP(r); got != "198.51.100.2" {
+		t.Errorf("with two header lines, ClientIP = %q", got)
+	}
+}
+
+func TestUnknownHandleTakesAsLongAsAWrongPassword(t *testing.T) {
+	// bcrypt refuses a password over 72 bytes outright but still hashes one when
+	// comparing, so without a cap the two branches were 0ms and 180ms apart.
+	ctx := context.Background()
+	was := BcryptCost
+	BcryptCost = 10
+	defer func() { BcryptCost = was }()
+
+	f := newFixture(t)
+	f.user(t, "dt", "a long enough password", "")
+	long := strings.Repeat("x", 100)
+
+	median := func(handle string) time.Duration {
+		var runs []time.Duration
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			if _, err := f.Authenticate(ctx, handle, long, ""); err == nil {
+				t.Fatalf("%s with a wrong password was accepted", handle)
+			}
+			runs = append(runs, time.Since(start))
+		}
+		sort.Slice(runs, func(i, j int) bool { return runs[i] < runs[j] })
+		return runs[1]
+	}
+	known := median("dt")
+	unknown := median("nobody")
+	if unknown*2 < known {
+		t.Errorf("an unknown account answered in %v against %v for a known one, which says which is which", unknown, known)
+	}
+}
+
+func TestRateLimiterRefusalRecordsNothing(t *testing.T) {
+	f := newFixture(t)
+	key := BucketLogin + "\x00" + "10.0.0.1"
+	for i := 0; i < limitsByBucket[BucketLogin].n; i++ {
+		f.Allow(BucketLogin, "10.0.0.1")
+	}
+	before := len(f.limits.hits[key])
+	if f.Allow(BucketLogin, "10.0.0.1") {
+		t.Fatal("the limit did not hold")
+	}
+	if got := len(f.limits.hits[key]); got != before {
+		t.Errorf("a refused attempt was still counted: %d entries, was %d", got, before)
+	}
+}
+
+func TestRateLimiterForgetsStaleKeys(t *testing.T) {
+	f := newFixture(t)
+	for i := 0; i < 300; i++ {
+		f.Allow(BucketLogin, fmt.Sprintf("10.0.1.%d", i))
+	}
+	if len(f.limits.hits) < 300 {
+		t.Fatalf("only %d keys were recorded", len(f.limits.hits))
+	}
+
+	f.now = f.now.Add(longestWindow + time.Minute)
+	for i := 0; i < sweepEvery; i++ {
+		f.Allow(BucketLogin, "10.0.0.1")
+	}
+	if got := len(f.limits.hits); got > 1 {
+		t.Errorf("%d keys left after the window passed, want only the live one", got)
 	}
 }

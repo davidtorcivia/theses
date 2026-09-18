@@ -20,8 +20,22 @@ import (
 // BcryptCost is a variable so tests can drop it; production never changes it.
 var BcryptCost = 12
 
-// MinPasswordLen matches what the invite page asks for.
-const MinPasswordLen = 12
+// MinPasswordLen matches what the invite page asks for. MaxPasswordLen is
+// bcrypt's own limit: it ignores anything past 72 bytes, and
+// GenerateFromPassword refuses a longer one outright while
+// CompareHashAndPassword still does the full hash. Cutting the password here
+// keeps those two paths the same length of work.
+const (
+	MinPasswordLen = 12
+	MaxPasswordLen = 72
+)
+
+func capPassword(password string) string {
+	if len(password) > MaxPasswordLen {
+		return password[:MaxPasswordLen]
+	}
+	return password
+}
 
 var (
 	ErrBadCredentials = errors.New("that account name, password or code is wrong")
@@ -72,12 +86,12 @@ func HashPassword(password string) (string, error) {
 	if len([]rune(password)) < MinPasswordLen {
 		return "", fmt.Errorf("a password is at least %d characters", MinPasswordLen)
 	}
-	h, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
+	h, err := bcrypt.GenerateFromPassword([]byte(capPassword(password)), BcryptCost)
 	return string(h), err
 }
 
 func CheckPassword(hash, password string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(capPassword(password))) == nil
 }
 
 // burnPasswordTime does bcrypt's work and throws it away, so that an unknown
@@ -114,16 +128,19 @@ func Can(role, action string) bool { return permissions[role][action] }
 
 func ValidRole(role string) bool { _, ok := permissions[role]; return ok }
 
-// ClientIP is the address rate limits and the activity log use.
-// X-Forwarded-For and CF-Connecting-IP are believed only with THESES_TRUST_PROXY.
+// ClientIP is the address rate limits and the activity log use. With
+// THESES_TRUST_PROXY it is the rightmost X-Forwarded-For entry, which is the one
+// the proxy in front appended; everything to its left is whatever the client
+// sent and is not evidence of anything. No other forwarding header is believed,
+// because nothing in this deployment sets one.
 func (a *Auth) ClientIP(r *http.Request) string {
 	if a.trustProxy {
-		if v := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); v != "" {
-			return v
-		}
-		if v := r.Header.Get("X-Forwarded-For"); v != "" {
-			if first, _, _ := strings.Cut(v, ","); strings.TrimSpace(first) != "" {
-				return strings.TrimSpace(first)
+		if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
+			parts := strings.Split(strings.Join(values, ","), ",")
+			for i := len(parts) - 1; i >= 0; i-- {
+				if v := strings.TrimSpace(parts[i]); v != "" {
+					return v
+				}
 			}
 		}
 	}
