@@ -111,16 +111,16 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 		presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		presented = strings.TrimSpace(presented)
 		if !ok || presented == "" {
-			unauthorized(w, "send an API token as Authorization: Bearer")
+			a.unauthorized(w, "send an API token as Authorization: Bearer")
 			return
 		}
 		token, user, err := a.auth.APIToken(r.Context(), presented)
 		if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, store.ErrNotFound) {
-			unauthorized(w, "that token is not valid")
+			a.unauthorized(w, "that token is not valid")
 			return
 		}
 		if err != nil {
-			a.failed(w, r, err)
+			a.serverError(w, r, err)
 			return
 		}
 		// ponytail: the limit is keyed by token id, which needs the lookup, and
@@ -128,7 +128,7 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 		// write each time. Upgrade path: split APIToken into a lookup and a
 		// touch, and touch after this passes.
 		if !a.auth.Allow(auth.BucketAPI, "token:"+strconv.FormatInt(token.ID, 10)) {
-			fail(w, http.StatusTooManyRequests, "too many requests for this token; wait a minute")
+			a.fail(w, http.StatusTooManyRequests, "too many requests for this token; wait a minute")
 			return
 		}
 		ctx := WithPrincipal(r.Context(), Principal{Token: token, User: user})
@@ -146,11 +146,11 @@ func (a *API) scoped(scope string, h func(http.ResponseWriter, *http.Request, Pr
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := PrincipalFrom(r.Context())
 		if !ok {
-			a.failed(w, r, errors.New("route is not behind Authenticate"))
+			a.serverError(w, r, errors.New("route is not behind Authenticate"))
 			return
 		}
 		if scope != anyScope && !auth.HasScope(p.Token.Scopes, scope) {
-			fail(w, http.StatusForbidden, "this token does not have the "+scope+" scope")
+			a.fail(w, http.StatusForbidden, "this token does not have the "+scope+" scope")
 			return
 		}
 		h(w, r, p)
@@ -169,13 +169,13 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings", a.scoped(auth.ScopeAdmin, a.getSettings))
 	mux.HandleFunc("PUT /api/v1/settings/{key}", a.scoped(auth.ScopeAdmin, a.putSetting))
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
-		fail(w, http.StatusNotFound, "no such endpoint")
+		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})
 	return a.Authenticate(mux)
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request, p Principal) {
-	writeJSON(w, http.StatusOK, p.Me())
+	a.writeJSON(w, http.StatusOK, p.Me())
 }
 
 // A UserView is one member of the workspace. Email addresses are not in it: a
@@ -209,23 +209,23 @@ func (a *API) UserViews(ctx context.Context) ([]UserView, error) {
 func (a *API) users(w http.ResponseWriter, r *http.Request, _ Principal) {
 	out, err := a.UserViews(r.Context())
 	if err != nil {
-		a.failed(w, r, err)
+		a.serverError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": out})
+	a.writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
 
 func (a *API) search(w http.ResponseWriter, r *http.Request, _ Principal) {
 	q := r.URL.Query().Get("q")
 	groups, err := search.Search(r.Context(), a.db, q, intParam(r, "limit", 0))
 	if err != nil {
-		a.failed(w, r, err)
+		a.serverError(w, r, err)
 		return
 	}
 	if groups == nil {
 		groups = []search.Group{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"query": q, "groups": groups})
+	a.writeJSON(w, http.StatusOK, map[string]any{"query": q, "groups": groups})
 }
 
 type activityJSON struct {
@@ -264,7 +264,7 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, _ Principal) {
 		entity, entity_id, action, before_json, after_json, created_at, undone_at
 		FROM activity WHERE id > ? ORDER BY id LIMIT ?`, intParam(r, "since", 0), limit)
 	if err != nil {
-		a.failed(w, r, err)
+		a.serverError(w, r, err)
 		return
 	}
 	defer rows.Close()
@@ -276,23 +276,35 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, _ Principal) {
 		var before, after sql.NullString
 		if err := rows.Scan(&e.ID, &prop, &e.ActorKind, &e.ActorID, &e.Entity, &e.EntityID,
 			&e.Action, &before, &after, &e.CreatedAt, &undone); err != nil {
-			a.failed(w, r, err)
+			a.serverError(w, r, err)
 			return
 		}
 		e.PropositionID, e.UndoneAt = prop.Int64, undone.Int64
-		if before.Valid {
-			e.Before = json.RawMessage(before.String)
-		}
-		if after.Valid {
-			e.After = json.RawMessage(after.String)
-		}
+		e.Before, e.After = jsonOrString(before), jsonOrString(after)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
-		a.failed(w, r, err)
+		a.serverError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"activity": out})
+	a.writeJSON(w, http.StatusOK, map[string]any{"activity": out})
+}
+
+// jsonOrString is an activity column as JSON. Most hold the JSON of an entity,
+// but a few hold a bare value such as a role name, and quoting those is what
+// keeps one of them from making the whole page unencodable.
+func jsonOrString(v sql.NullString) json.RawMessage {
+	if !v.Valid {
+		return nil
+	}
+	if json.Valid([]byte(v.String)) {
+		return json.RawMessage(v.String)
+	}
+	quoted, err := json.Marshal(v.String)
+	if err != nil {
+		return nil
+	}
+	return quoted
 }
 
 // A SettingView is one setting as both surfaces report it.
@@ -346,7 +358,7 @@ func (a *API) SettingViews() []SettingView {
 }
 
 func (a *API) getSettings(w http.ResponseWriter, r *http.Request, _ Principal) {
-	writeJSON(w, http.StatusOK, map[string]any{"settings": a.SettingViews()})
+	a.writeJSON(w, http.StatusOK, map[string]any{"settings": a.SettingViews()})
 }
 
 // maxBodyBytes is what a request body may be. Every write here is one setting;
@@ -356,7 +368,7 @@ const maxBodyBytes = 64 << 10
 func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 	def, ok := settings.Lookup(r.PathValue("key"))
 	if !ok {
-		fail(w, http.StatusNotFound, "no such setting")
+		a.fail(w, http.StatusNotFound, "no such setting")
 		return
 	}
 	var body struct {
@@ -366,24 +378,24 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
+			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
 			return
 		}
-		fail(w, http.StatusBadRequest, "the body must be JSON with a value field")
+		a.fail(w, http.StatusBadRequest, "the body must be JSON with a value field")
 		return
 	}
 	values, err := formValues(body.Value)
 	if err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
+		a.fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := a.set.SetAs(r.Context(), def.Key, values, p.Actor()); err != nil {
 		// Set validates against the key's definition, so what it complains about
 		// is the client's fault and worth repeating word for word.
-		fail(w, http.StatusBadRequest, err.Error())
+		a.fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a.Describe(def))
+	a.writeJSON(w, http.StatusOK, a.Describe(def))
 }
 
 // formValues turns the JSON value into what settings parses: the strings a form
@@ -426,25 +438,32 @@ func intParam(r *http.Request, name string, fallback int) int {
 	return n
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// writeJSON marshals the whole response before writing the status, so a value
+// that cannot be encoded is a logged 500 rather than a 200 with an empty body.
+func (a *API) writeJSON(w http.ResponseWriter, status int, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		a.log.Error("api response could not be encoded", "err", err)
+		status, body = http.StatusInternalServerError, []byte(`{"error":"something went wrong here"}`)
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	w.Write(append(body, '\n'))
 }
 
 // fail is every refusal the client caused: one JSON object with one field.
-func fail(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+func (a *API) fail(w http.ResponseWriter, status int, msg string) {
+	a.writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func unauthorized(w http.ResponseWriter, msg string) {
+func (a *API) unauthorized(w http.ResponseWriter, msg string) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="theses"`)
-	fail(w, http.StatusUnauthorized, msg)
+	a.fail(w, http.StatusUnauthorized, msg)
 }
 
-// failed is a fault on this side: logged with the path, answered without the
-// detail.
-func (a *API) failed(w http.ResponseWriter, r *http.Request, err error) {
+// serverError is a fault on this side: logged with the path, answered without
+// the detail.
+func (a *API) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	a.log.Error("api request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-	fail(w, http.StatusInternalServerError, "something went wrong here")
+	a.fail(w, http.StatusInternalServerError, "something went wrong here")
 }

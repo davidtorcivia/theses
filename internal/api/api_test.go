@@ -404,3 +404,32 @@ func TestATokenIsRateLimited(t *testing.T) {
 		t.Errorf("body = %s", last.Body.String())
 	}
 }
+
+func TestActivityCarriesRowsThatAreNotJSON(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	// A role change stores the role either side, which is a bare word and not
+	// the JSON the column usually holds.
+	if err := store.InsertActivity(ctx, h.db, "user", "1", "user", "2", "role", "owner", "guest"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertActivity(ctx, h.db, "user", "1", "card", "3", "create", "", `{"t":"x"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	w := h.do("GET", "/api/v1/activity", h.token(auth.ScopeRead), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %q", w.Code, w.Body.String())
+	}
+	rows := decode(t, w)["activity"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v", rows)
+	}
+	first := rows[0].(map[string]any)
+	if first["before"] != "owner" || first["after"] != "guest" {
+		t.Errorf("bare values came back as %v and %v", first["before"], first["after"])
+	}
+	if after := rows[1].(map[string]any)["after"].(map[string]any); after["t"] != "x" {
+		t.Errorf("JSON value came back as %v", after)
+	}
+}
