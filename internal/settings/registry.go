@@ -29,6 +29,10 @@ type Def struct {
 // overflows the duration that builds the cookie.
 const MaxSessionDays = 365
 
+// defaultEvents is what a new account's email is subscribed to before the
+// owner says otherwise: the things that are about them, and the two dates.
+const defaultEvents = "assigned\nmentioned\ndue\nstatus\nrelease"
+
 var days = []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 var providers = []string{"backblaze", "r2", "s3"}
 
@@ -86,6 +90,16 @@ var Registry = []Def{
 	{Key: "signin.require_totp", Kind: KindChoice, Default: "all", Choices: []string{"all", "owners"}, Label: "Require an authenticator", Hint: "Owners are always required to enrol."},
 	{Key: "signin.session_days", Kind: KindInt, Default: 30, Min: 1, Max: MaxSessionDays, Label: "Session length", Hint: "Days a sign-in lasts before it has to be repeated, 1 to 365."},
 	{Key: "signin.handle_min_length", Kind: KindInt, Default: 2, Min: 2, Max: 32, Label: "Shortest account name", Hint: "Account names are lowercase letters, digits and hyphens, up to 32 characters."},
+
+	{Key: "notify.pushover_token", Kind: KindString, Default: "", Secret: true, Label: "Pushover application token", Hint: "The workspace's own application, so that members paste only their user key."},
+	{Key: "notify.ntfy_server", Kind: KindString, Default: "https://ntfy.sh", Label: "ntfy server", Hint: "Where a topic lives when an account names no server of its own."},
+	{Key: "notify.digest_time", Kind: KindString, Default: "08:00", Label: "Digest time", Hint: "24 hour, in the workspace time zone. The daily digest and the due date pass both run then."},
+	{Key: "notify.defaults", Kind: KindText, Default: defaultEvents, Label: "New accounts are notified about", Hint: "What a new account's email starts subscribed to. Everybody can change their own."},
+
+	// What the daily pass last did, written by the worker and read by it, as a
+	// date in the form 20260918. Settings rather than a table because there is
+	// one of it, which is what backups.last_at already does.
+	{Key: "notify.last_tick", Kind: KindInt, Default: 0, Label: "Last daily pass"},
 }
 
 var byKey = func() map[string]Def {

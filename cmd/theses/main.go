@@ -104,6 +104,26 @@ func run() error {
 		srv.SweepUploads(ctx)
 	}()
 
+	// The notifier is two goroutines: one filling the outbox from the bus every
+	// applied command is published on, one emptying it.
+	//
+	// The watcher outlives the signal on purpose. Shutdown drains the requests
+	// already in flight, and the commands those apply are published after ctx
+	// is done: a watcher that stopped with the signal would leave them
+	// unmatched. It is stopped once the drain has finished.
+	watchCtx, stopWatch := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopWatch()
+	notifyDone := make(chan struct{})
+	go func() {
+		defer close(notifyDone)
+		srv.Notify().Watch(watchCtx, srv.Bus())
+	}()
+	notifySendDone := make(chan struct{})
+	go func() {
+		defer close(notifySendDone)
+		srv.Notify().Run(ctx)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:    cfg.Bind,
 		Handler: srv,
@@ -136,10 +156,14 @@ func run() error {
 		if err := httpSrv.Shutdown(shutdown); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
+		// Only now, with nothing left to apply a command.
+		stopWatch()
 		<-mailDone
 		<-backupDone
 		<-docsDone
 		<-sweepDone
+		<-notifyDone
+		<-notifySendDone
 		return <-done
 	}
 }

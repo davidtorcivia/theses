@@ -1,5 +1,5 @@
 {{define "content"}}<section id="admin">
-  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#danger">Danger</a><a href="/" class="back">← Back to work</a></nav>
+  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a><a href="/" class="back">← Back to work</a></nav>
   <div class="apane">
     <h2>Profile</h2>
     {{template "notice" .}}
@@ -44,11 +44,76 @@
       </div>
     </section>
 
+    <section class="fs" id="notifications">
+      <div class="fsh"><h3>Notifications</h3><p>Where they reach you, and which ones. Being mentioned always reaches at least one channel, whatever the rest of this says.</p></div>
+      <div class="fsb">
+        {{if .NotifyResult}}<p class="notice{{if .NotifyFailed}} bad{{end}}">{{.NotifyResult}}</p>{{end}}
+        <ul class="chans">
+          {{range .Channels}}<li>
+            <b>{{.KindLabel}}</b>
+            <span class="mono">{{.Label}}</span>
+            <span class="mono {{if .Verified}}ok{{else}}dim{{end}}">{{if .Verified}}verified{{else}}not verified{{end}}</span>
+            <span class="chanacts"><button class="lnk" type="button" data-dialog="{{.DialogID}}">Edit</button><button class="lnk" type="submit" form="test-{{.ID}}">Test</button></span>
+          </li>{{end}}
+          {{range .ChannelForms}}{{if not .ID}}<li>
+            <b>{{.KindLabel}}</b><span class="mono dim">not set</span><span></span>
+            <span class="chanacts"><button class="lnk" type="button" data-dialog="{{.DialogID}}">Add</button></span>
+          </li>{{end}}{{end}}
+        </ul>
+        {{range .Channels}}<form method="post" action="/profile/notifications/channel/{{.ID}}/test" id="test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}
+
+        {{if .Channels}}
+        <form class="form" method="post" action="/profile/notifications" data-notify-matrix>
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <table class="matrix">
+            <thead><tr><th>Notify me</th>{{range .Channels}}<th>{{.KindLabel}}</th>{{end}}</tr></thead>
+            <tbody>{{range $row := .Matrix}}<tr><td>{{$row.Label}}</td>{{range $row.Cells}}<td><input type="checkbox" name="rule" value="{{$row.Key}}:{{.ChannelID}}"{{if .On}} checked{{end}} aria-label="{{$row.Label}}, {{.KindLabel}}"></td>{{end}}</tr>{{end}}</tbody>
+          </table>
+          <ul class="chans quiet">{{range .Channels}}<li><b>{{.KindLabel}}</b><span class="mono">{{if .QuietFrom}}quiet {{.QuietFrom}} to {{.QuietTo}}{{else}}no quiet hours{{end}}</span><span class="mono">{{if .Digest}}digest{{else}}as it happens{{end}}</span><button class="lnk" type="button" data-dialog="{{.DialogID}}">Change</button></li>{{end}}</ul>
+          <button class="save" type="submit">Save</button>
+        </form>
+        {{end}}
+      </div>
+    </section>
+
     <section class="fs last" id="danger">
       <div class="fsh"><h3>Danger</h3><p>This is not undoable from here.</p></div>
       <div class="fsb"><div class="danger"><button class="lnk del" type="button" data-dialog="delete-account">Delete my account</button></div></div>
     </section>
   </div>
+
+  {{range .ChannelForms}}<dialog id="{{.DialogID}}">
+    <h3>{{if .ID}}{{.KindLabel}}{{else}}Add {{.KindLabel}}{{end}}</h3>
+    <form class="form" method="post" action="/profile/notifications/channel">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="id" value="{{.ID}}">
+      <input type="hidden" name="kind" value="{{.Kind}}">
+      {{if eq .Kind "email"}}<p>Notifications go to {{$.User.Email}}, the address on your account, through the workspace mail server.</p>{{end}}
+      {{if eq .Kind "pushover"}}<label class="f"><span class="l">User key</span><input type="password" name="user_key" autocomplete="off" spellcheck="false" placeholder="{{if .UserKeySet}}set{{else}}required{{end}}"{{if not .UserKeySet}} required{{end}}><small>Your own key. The application token is the workspace's. Empty keeps what is stored.</small></label>{{end}}
+      {{if eq .Kind "ntfy"}}<div class="row3">
+        <label class="f"><span class="l">Server</span><input name="server" value="{{.Server}}" spellcheck="false" placeholder="https://ntfy.sh"><small>Empty uses the workspace's.</small></label>
+        <label class="f"><span class="l">Topic</span><input name="topic" value="{{.Topic}}" spellcheck="false" required></label>
+        <label class="f"><span class="l">Access token</span><input name="token" type="password" autocomplete="off" placeholder="{{if .TokenSet}}set{{else}}optional{{end}}"><small>Empty keeps what is stored.</small></label>
+      </div>{{end}}
+      {{if eq .Kind "webhook"}}<div class="row3">
+        <label class="f"><span class="l">URL</span><input name="url" value="{{.URL}}" spellcheck="false" placeholder="https://example.com/hook" required></label>
+        <label class="f"><span class="l">Secret</span><input name="secret" type="password" autocomplete="off" placeholder="{{if .SecretSet}}set{{else}}optional{{end}}"><small>Signs the body as X-Theses-Signature.</small></label>
+      </div>{{end}}
+      <div class="row3">
+        <label class="f"><span class="l">Quiet from</span><input name="quiet_from" value="{{.QuietFrom}}" placeholder="23:00" spellcheck="false"></label>
+        <label class="f"><span class="l">Quiet until</span><input name="quiet_to" value="{{.QuietTo}}" placeholder="07:00" spellcheck="false"><small>In the workspace time zone. A mention still gets through.</small></label>
+        <label class="f"><span class="l">Digest instead</span><input type="checkbox" name="digest" value="1"{{if .Digest}} checked{{end}}><small>One message a day rather than each one.</small></label>
+      </div>
+      <div class="acts">
+        <button class="lnk plain" type="button" data-close>Cancel</button>
+        <button class="lnk" type="submit">{{if .ID}}Save{{else}}Add{{end}}</button>
+      </div>
+    </form>
+    {{if .ID}}<form method="post" action="/profile/notifications/channel/{{.ID}}/delete" class="acts">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="lnk del" type="submit">Remove this channel</button>
+    </form>{{end}}
+  </dialog>{{end}}
 
   <dialog id="signout-all">
     <h3>Sign out everywhere</h3>
@@ -70,3 +135,5 @@
     </form>
   </dialog>
 </section>{{end}}
+
+{{define "scripts"}}<script type="module" src="{{asset "app/notify.js"}}"></script>{{end}}

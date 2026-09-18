@@ -9,6 +9,10 @@ import (
 	"strings"
 )
 
+// DefaultNtfyServer is where a topic lives when the workspace names no server
+// of its own.
+const DefaultNtfyServer = "https://ntfy.sh"
+
 // Ntfy posts to a topic on an ntfy server. Server defaults to ntfy.sh, Token
 // is the optional access token.
 type Ntfy struct {
@@ -23,7 +27,7 @@ type Ntfy struct {
 func (t Ntfy) Send(ctx context.Context, n Note) error {
 	server := t.Server
 	if server == "" {
-		server = "https://ntfy.sh"
+		server = DefaultNtfyServer
 	}
 	// An account types this server, so it goes through the same check as a
 	// webhook: nothing else stops it naming an admin port on the box.
@@ -41,6 +45,9 @@ func (t Ntfy) Send(ctx context.Context, n Note) error {
 	req.Header.Set("Priority", strconv.Itoa(n.Priority+3))
 	if n.URL != "" {
 		req.Header.Set("Click", n.URL)
+	}
+	if len(n.Tags) > 0 {
+		req.Header.Set("Tags", strings.Join(n.Tags, ","))
 	}
 	if t.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+t.Token)

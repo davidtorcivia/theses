@@ -180,3 +180,32 @@ func TestPlain(t *testing.T) {
 		})
 	}
 }
+
+func TestMentions(t *testing.T) {
+	tests := []struct {
+		source string
+		want   []string
+	}{
+		{"hello @ada", []string{"ada"}},
+		{"@ada and @grace and @ada again", []string{"ada", "grace"}},
+		{"ada@example.com is an address", nil},
+		{"nothing here", nil},
+		{"```\n@ada\n```", nil},
+		{"`@ada`", nil},
+		{"**@ada**", []string{"ada"}},
+		{"(@ada)", []string{"ada"}},
+	}
+	for _, tt := range tests {
+		got := Mentions(tt.source)
+		if len(got) != len(tt.want) {
+			t.Errorf("Mentions(%q) = %v, want %v", tt.source, got, tt.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("Mentions(%q) = %v, want %v", tt.source, got, tt.want)
+				break
+			}
+		}
+	}
+}

@@ -1,7 +1,8 @@
 {{define "content"}}<section id="admin">
   <nav>
     <a href="#workspace">Workspace</a><a href="#defaults">Defaults</a><a href="#storage">Storage</a>
-    <a href="#mail">Mail</a><a href="#signin">Sign-in</a><a href="#backups">Backups</a><a href="#team">Team</a><a href="#environment">Environment</a>
+    <a href="#mail">Mail</a><a href="#signin">Sign-in</a><a href="#backups">Backups</a><a href="#team">Team</a>
+    <a href="#notifications">Notifications</a><a href="#integrations">Integrations</a><a href="#environment">Environment</a>
     <a href="/" class="back">← Back to work</a>
   </nav>
   <div class="apane">
@@ -209,6 +210,72 @@
       </div>
     </section>
 
+    <form class="form" method="post" action="/settings" id="notifications">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Notifications</h3><p>What the workspace holds for everybody: the Pushover application, the ntfy server and the hour the digest and the date pass run.</p></div>
+        <div class="fsb">
+          {{if .NotifyResult}}<p class="notice{{if .NotifyFailed}} bad{{end}}">{{.NotifyResult}}</p>{{end}}
+          <div class="row3">
+            <label class="f"><span class="l">Pushover application token</span><input type="password" name="notify.pushover_token" autocomplete="off" placeholder="{{if index .Set "notify.pushover_token"}}set{{else}}not set{{end}}"><small>Members then paste only their own user key. Empty keeps what is stored.</small></label>
+            <label class="f"><span class="l">ntfy server</span><input name="notify.ntfy_server" value="{{index .S "notify.ntfy_server"}}" spellcheck="false"><small>Where a topic lives when nobody names a server.</small></label>
+            <label class="f"><span class="l">Digest time</span><input name="notify.digest_time" value="{{index .S "notify.digest_time"}}" spellcheck="false"><small>24 hour, in the workspace time zone.</small></label>
+          </div>
+          <p class="small">{{.NotifyOutbox.Pending}} waiting, {{.NotifyOutbox.GivenUp}} given up.{{if .NotifyOutbox.LastError}} Last failure: {{.NotifyOutbox.LastError}}{{end}}</p>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/settings/notifications/defaults">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Notification defaults</h3><p>What a new account's email is subscribed to on the day it is made. Everybody can change their own afterwards.</p></div>
+        <div class="fsb">
+          <ul class="events">{{range .NotifyDefaults}}<li><label><input type="checkbox" name="event" value="{{.Key}}"{{if .On}} checked{{end}}> {{.Label}}</label></li>{{end}}</ul>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+
+    <section class="fs" id="integrations">
+      <div class="fsh"><h3>Integrations</h3><p>Webhooks the workspace fires whoever caused them, signed with their own secret. This is how Slack and anything else is wired without an integration of its own.</p></div>
+      <div class="fsb">
+        <ul class="ints">
+          {{range .Hooks}}{{if .ID}}<li>
+            <b>Webhook</b>
+            <span class="mono {{if .Verified}}ok{{else}}dim{{end}}">{{if .Verified}}verified{{else}}not verified{{end}}</span>
+            <span class="mono">{{.URL}}</span>
+            <span class="chanacts"><button class="lnk" type="button" data-dialog="hook-{{.ID}}">Configure</button><button class="lnk" type="submit" form="hook-test-{{.ID}}">Test</button></span>
+          </li>{{end}}{{end}}
+          <li><b>Webhook</b><span class="mono dim">not set</span><span>POST JSON on the events you choose</span><span class="chanacts"><button class="lnk" type="button" data-dialog="hook-new">Add</button></span></li>
+        </ul>
+        {{range .Hooks}}{{if .ID}}<form method="post" action="/settings/integrations/webhook/{{.ID}}/test" id="hook-test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}{{end}}
+      </div>
+    </section>
+
+    {{range .Hooks}}<dialog id="{{if .ID}}hook-{{.ID}}{{else}}hook-new{{end}}">
+      <h3>{{if .ID}}Webhook{{else}}Add a webhook{{end}}</h3>
+      <form class="form" method="post" action="/settings/integrations/webhook">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <div class="row3">
+          <label class="f"><span class="l">URL</span><input name="url" value="{{.URL}}" spellcheck="false" placeholder="https://example.com/hook" required></label>
+          <label class="f"><span class="l">Secret</span><input type="password" name="secret" autocomplete="off" placeholder="{{if .SecretSet}}set{{else}}optional{{end}}"><small>Signs the body as X-Theses-Signature. Empty keeps what is stored.</small></label>
+          <label class="f"><span class="l">Only this column</span><input name="column" value="{{.Column}}" spellcheck="false" placeholder="any"><small>A card move only fires when it lands here.</small></label>
+        </div>
+        <ul class="events">{{range .Events}}<li><label><input type="checkbox" name="event" value="{{.Key}}"{{if .On}} checked{{end}}> {{.Label}}</label></li>{{end}}</ul>
+        <div class="acts">
+          <button class="lnk plain" type="button" data-close>Cancel</button>
+          <button class="lnk" type="submit">{{if .ID}}Save{{else}}Add{{end}}</button>
+        </div>
+      </form>
+      {{if .ID}}<form method="post" action="/settings/integrations/webhook/{{.ID}}/delete" class="acts">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button class="lnk del" type="submit">Remove this webhook</button>
+      </form>{{end}}
+    </dialog>{{end}}
+
     <section class="fs last" id="environment">
       <div class="fsh"><h3>Environment</h3><p>The bootstrap variables. They are read once at startup and cannot be edited here.</p></div>
       <div class="fsb">
@@ -220,7 +287,8 @@
   </div>
 </section>{{end}}
 
-{{define "scripts"}}<script type="module" src="{{asset "app/storage.js"}}"></script>{{end}}
+{{define "scripts"}}<script type="module" src="{{asset "app/storage.js"}}"></script>
+<script type="module" src="{{asset "app/notify.js"}}"></script>{{end}}
 
 {{define "bucket"}}<div class="row3">
   <label class="f"><span class="l">Provider</span><select name="{{.Prefix}}.provider">{{range .Providers}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
