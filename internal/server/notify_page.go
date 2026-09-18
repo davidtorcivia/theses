@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -104,20 +105,11 @@ func (s *Server) notifyProfile(r *http.Request) (map[string]any, error) {
 		row := matrixRow{Key: e.Key, Label: e.Label}
 		for _, c := range views {
 			row.Cells = append(row.Cells, matrixCell{ChannelID: c.ID, KindLabel: c.KindLabel,
-				On: contains(rules[e.Key], c.ID)})
+				On: slices.Contains(rules[e.Key], c.ID)})
 		}
 		rows = append(rows, row)
 	}
 	return map[string]any{"Channels": views, "ChannelForms": forms, "Matrix": rows}, nil
-}
-
-func contains(ids []int64, id int64) bool {
-	for _, v := range ids {
-		if v == id {
-			return true
-		}
-	}
-	return false
 }
 
 // notifySettings is the Notifications and Integrations sections of the settings
@@ -131,7 +123,7 @@ func (s *Server) notifySettings(r *http.Request) (map[string]any, error) {
 	defaults := make([]hookEvent, 0, len(notify.Events))
 	for _, e := range notify.Events {
 		defaults = append(defaults, hookEvent{Key: e.Key, Label: e.Label,
-			On: containsString(chosen, e.Key)})
+			On: slices.Contains(chosen, e.Key)})
 	}
 
 	hooks := make([]hookView, 0, len(channels))
@@ -140,7 +132,7 @@ func (s *Server) notifySettings(r *http.Request) (map[string]any, error) {
 			Verified: c.Verified(), Column: c.Config.Column}
 		for _, e := range notify.Events {
 			h.Events = append(h.Events, hookEvent{Key: e.Key, Label: e.Label,
-				On: containsString(c.Config.Events, e.Key)})
+				On: slices.Contains(c.Config.Events, e.Key)})
 		}
 		hooks = append(hooks, h)
 	}
@@ -158,15 +150,6 @@ func (s *Server) notifySettings(r *http.Request) (map[string]any, error) {
 		"Hooks":          hooks,
 		"NotifyOutbox":   state,
 	}, nil
-}
-
-func containsString(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }
 
 // postNotificationRules saves the matrix. Every cell is a checkbox named
