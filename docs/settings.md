@@ -55,7 +55,17 @@ puts every unsent message back at the front of the outbox.
 
 Whether an authenticator is required of everyone or of owners only, how many
 days a sign-in lasts before it has to be repeated, and the shortest account
-name allowed. Owners always enrol, whatever the first is set to.
+name allowed.
+
+The requirement is enforced at the sign-in itself. Setup and invitation
+acceptance both enrol before the account row is written, so an invited account
+always has an authenticator whatever this is set to; what the setting decides
+is what happens to an account that has none, which is one whose role changed
+or whose secret was removed. With **Everyone**, any such account is sent to
+enrol as soon as its password is accepted and signs in at the end of it. With
+**Owners only**, an editor, researcher or guest signs straight in, and an owner
+is sent to enrol: owners are always required, because this setting is theirs to
+change.
 
 ## Notifications
 
@@ -70,13 +80,48 @@ hours and its rules on its profile page.
 
 ## Integrations
 
-Webhooks the workspace fires whoever caused the thing, which is how a chat
-room or anything else is wired up without an integration of its own. Each has
-a URL, a secret each message is signed with when one is set, the events it
-fires on, and optionally one column: a card move then fires only when the card
-lands there. A webhook is sent nothing until a test message has reached it, and
-the page tests one as it is saved, so a URL that refuses says so on the spot.
-The secret is stored on the same terms as the rest of this page.
+One row per service, with configure, connect, a test button and disconnect.
+Every key, token and secret here is stored the way the rest of this page stores
+one: encrypted at rest, shown as set, never sent back to the browser and never
+written to a log or into an error message.
+
+**Google Drive**, files in. Make an OAuth client of type Web application in a
+Google Cloud project with the Drive API enabled, list the redirect address the
+section prints as an authorised redirect URI, and paste the client id and
+secret. Connect then sends you to Google to approve read-only access to the
+Drive account the files are in, and the refresh token that comes back is what
+every later request is made on; it is renewed on its own and stored again the
+same way. The test button lists the root folder. Once it is connected, anybody
+who can edit a proposition gets **add from Drive** in its files pane: a dialog
+listing one folder at a time, or a search, and an import that copies the chosen
+file into the bucket as an ordinary file on that proposition, attributed to
+whoever pressed it. Native Google Docs, Sheets and Slides files are not listed,
+because they have no file to copy until they are exported. Disconnect throws
+the token away and keeps the client id, so connecting again is one button.
+
+**Transistor**, publish out. Paste an API key and the show's id; testing with
+the show field empty prints the shows the key reaches, with their ids, so the
+id can be read off the page. The last field is the status at which a
+proposition may be published, which is `released` unless it is changed. A
+proposition that has reached it gets a Publish section on its own settings
+page: a document for the show notes, defaulting to the one called Show notes,
+and a recording from the Recordings folder for the audio. Publishing creates
+the episode with the proposition's title and blurb, the notes rendered to HTML,
+and a presigned link to the recording that lasts a day, which is how Transistor
+fetches a file out of a private bucket. The episode id is kept on the
+proposition, so publishing again updates that episode instead of making
+another, and the page links to it.
+
+**Riverside** and **Descript** are not built. The interface the two above
+implement is what they would implement; nothing of them ships.
+
+**Webhooks** are below the two of them: the workspace fires those whoever
+caused the thing, which is how a chat room or anything else is wired up without
+an integration of its own. Each has a URL, a secret each message is signed with
+when one is set, the events it fires on, and optionally one column: a card move
+then fires only when the card lands there. A webhook is sent nothing until a
+test message has reached it, and the page tests one as it is saved, so a URL
+that refuses says so on the spot.
 
 ## Backups
 

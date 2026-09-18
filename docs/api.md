@@ -993,3 +993,13 @@ and the token's name is used instead.
 
 A write through MCP is recorded in the activity log as the person the token
 belongs to, with `mcp:<client>` in the log's `via` field.
+
+## What is not here
+
+Adding a file from Google Drive and publishing a proposition to Transistor are
+browser routes only. Both belong here as `import_from_drive` and
+`publish_episode` the week the board's own resources land, which is what moves
+every mount under one handler; putting them in first would put them in the
+wrong place twice. Everything else about a file imported that way is already in
+this document: it is an ordinary file row, listed, downloaded and attached like
+any other.
