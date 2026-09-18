@@ -13,9 +13,11 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
+	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/config"
 	"github.com/davidtorcivia/theses/internal/mail"
+	"github.com/davidtorcivia/theses/internal/mcp"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 	"github.com/davidtorcivia/theses/web"
@@ -47,6 +49,9 @@ type Server struct {
 	pending  *pendingStore
 	checks   []Check
 	handler  http.Handler
+
+	api *api.API
+	mcp *mcp.Server
 }
 
 func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Logger, version string) (*Server, error) {
@@ -81,6 +86,8 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	if s.templates, err = parseTemplates(templateFS, s.funcs()); err != nil {
 		return nil, err
 	}
+	s.api = api.New(db, s.auth, set, log)
+	s.mcp = mcp.New(s.api, db, set, log, version)
 
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {
 		var n int
@@ -114,6 +121,11 @@ func (s *Server) routes() http.Handler {
 		fmt.Fprintln(w, "theses", s.version)
 	})
 	mux.HandleFunc("GET /readyz", s.readyz)
+
+	// The machine surfaces: bearer tokens instead of a session, and so outside
+	// the setup gate and the CSRF check, but inside the headers and the log.
+	mux.Handle("/api/v1/", s.api.Handler())
+	mux.Handle("/mcp", s.mcp.Handler())
 	mux.HandleFunc("GET /offline", func(w http.ResponseWriter, r *http.Request) { s.offlinePage(w, r) })
 
 	mux.HandleFunc("GET /setup", s.getSetup)

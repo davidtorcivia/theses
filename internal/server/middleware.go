@@ -86,10 +86,21 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// machinePath reports whether a request is for the API or MCP: a bearer token
+// rather than a session, so no CSRF token, no setup redirect and no cookie of
+// its own. The security headers and the logging still apply.
+func machinePath(p string) bool {
+	return strings.HasPrefix(p, "/api/") || p == "/mcp"
+}
+
 // browserSeed puts the value a CSRF token is bound to into the context: the
 // session cookie once signed in, a cookie of its own before that.
 func (s *Server) browserSeed(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if machinePath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		seed := ""
 		if c, err := r.Cookie(auth.SessionCookie); err == nil {
 			seed = c.Value
@@ -117,7 +128,7 @@ func seedOf(r *http.Request) string {
 func (s *Server) setupGate(next http.Handler) http.Handler {
 	exempt := []string{"/setup", "/static/", "/healthz", "/readyz"}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.hasUsers.Load() {
+		if machinePath(r.URL.Path) || s.hasUsers.Load() {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -149,7 +160,7 @@ const maxFormBytes = 64 << 10
 // csrfGuard parses every form and checks its token against this browser's seed.
 func (s *Server) csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		if r.Method != http.MethodPost || machinePath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
