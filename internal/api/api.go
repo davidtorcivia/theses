@@ -308,6 +308,13 @@ const (
 // reads the log without these.
 const administration = `'setting', 'invitation', 'api_token'`
 
+// workspaceWide is every entity whose rows belong to the workspace rather than
+// to one proposition, and so are readable by anyone the scope allows. It is a
+// list of what to show rather than of what to hide: a proposition's own delete
+// is filed with no proposition so that it survives the cascade, and an entity
+// added later would otherwise be readable by everybody the day it appeared.
+const workspaceWide = `'setting', 'user', 'invitation', 'api_token', 'backup'`
+
 // activity is a cursor rather than a feed: it returns the rows after ?since= in
 // id order, so following the log is asking again with the last id you were
 // given. Ids are used and not timestamps because created_at is whole seconds
@@ -328,9 +335,12 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	args := []any{intParam(r, "since", 0)}
 	// A row about a proposition is readable the way the proposition is. Rows
-	// about the workspace itself carry no proposition and are unaffected.
+	// about the workspace itself are readable by anyone, but carrying no
+	// proposition is not enough to be one: a deleted proposition's row carries
+	// none either, and it holds the title, statement and members it took away.
 	if p.User == nil || p.User.Role != auth.RoleOwner {
-		query += ` AND (proposition_id IS NULL OR proposition_id IN
+		query += ` AND ((proposition_id IS NULL AND entity IN (` + workspaceWide + `))
+			OR proposition_id IN
 			(SELECT proposition_id FROM proposition_members WHERE user_id = ?))`
 		var id int64
 		if p.User != nil {

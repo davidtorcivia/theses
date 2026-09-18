@@ -722,3 +722,58 @@ func TestSearchAndActivityShowOnlyWhatMembershipAllows(t *testing.T) {
 		t.Error("the rows that belong to no proposition went away too")
 	}
 }
+
+// Deleting a proposition files its record with no proposition, so that it
+// survives the cascade that takes the proposition away. That record holds the
+// title, statement, blurb and members it took with it, so carrying no
+// proposition cannot be what makes a row readable by everybody.
+func TestADeletedPropositionIsNotReadableByEverybody(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
+		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+	})
+	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boards.EditProposition(ctx, owner, e.EntityID,
+		"Tidal Power", "The tide is a battery.", "On the estuary."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boards.DeleteProposition(ctx, owner, e.EntityID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The token's owner is now a guest who was never a member of anything.
+	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = 'guest' WHERE id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `DELETE FROM proposition_members WHERE user_id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	w := h.do("GET", "/api/v1/activity?limit=200", h.token(auth.ScopeRead), "")
+	var body struct {
+		Activity []activityJSON `json:"activity"`
+	}
+	into(t, w, &body)
+	for _, row := range body.Activity {
+		if row.Entity == "proposition" || row.Entity == "card" || row.Entity == "member" {
+			t.Errorf("a member of nothing was shown a %s row: %s %s", row.Entity, row.Action, row.Before)
+		}
+	}
+	if strings.Contains(w.Body.String(), "The tide is a battery") {
+		t.Error("the deleted proposition's statement is in the log for anyone to read")
+	}
+
+	// The owner still reads it, because the record is the point of keeping it.
+	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = 'owner' WHERE id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.do("GET", "/api/v1/activity?limit=200", h.token(auth.ScopeRead), "").Body.String(),
+		"The tide is a battery") {
+		t.Error("an owner cannot read what the deletion took away")
+	}
+}

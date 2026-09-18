@@ -246,8 +246,8 @@ func (s *Server) setSetting(ctx context.Context, req *sdk.CallToolRequest, in se
 		return nil, api.SettingView{}, fmt.Errorf("there is no setting called %q", in.Key)
 	}
 	who := actor(req, p)
-	// Until the activity table records it, the via is written here, so that an
-	// owner reading the log can find which client made a change.
+	// The activity row carries the via as well now; this is the same line in
+	// the log, for reading a write next to the connection that made it.
 	s.log.Info("mcp write", "tool", "set_setting", "key", def.Key,
 		"user", p.User.ID, "via", who.Via, "protocol", req.ProtocolVersion())
 	if err := s.set.SetAs(ctx, def.Key, []string{in.Value}, who); err != nil {
