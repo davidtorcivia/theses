@@ -50,8 +50,10 @@ function addLine() {
     // way back up.
     if (!navigator.onLine) {
       field.value = '';
-      queueLink(state.open, url);
-      say('That link is kept on this device. It is read when the connection is back.');
+      const kept = await queueLink(state.open, url);
+      say(kept
+        ? 'That link is kept on this device. It is read when the connection is back.'
+        : 'This browser will not keep it. Paste it again when the connection is back.');
       return;
     }
     field.disabled = true;

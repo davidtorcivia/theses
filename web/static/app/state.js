@@ -101,6 +101,10 @@ function loadBoard(board) {
 // up to date from then on.
 export async function material() {
   if (!state.open || state.loaded === state.open) return;
+  // With no connection there is nothing to read them from, and every render
+  // would try again and say so again over whatever else is on the bar. What
+  // was cached is already here; the next render with a network fetches.
+  if (!navigator.onLine) return;
   const proposition = state.open;
   state.loaded = proposition;
   try {
@@ -414,19 +418,24 @@ export function predict(cmd, args) {
   const row = rowOf(spec.entity, spec.id(args));
   if (!row) return null;
   const was = { ...row };
+  const touched = Object.keys(spec.fields(args, row));
   apply(local(spec.entity, { ...row, ...spec.fields(args, row) }));
-  // Undrawing a refusal puts the row back as it was. A conflict does better
-  // than that: it carries the field the server actually holds and the version
-  // it holds it at, which is where the row is now rather than where it was when
-  // this person started typing.
-  //
-  // ponytail: a refusal that is not a conflict has no such answer, so the row
-  // goes back to what it was here, which is stale if somebody else changed it
-  // meanwhile. It is corrected by the next event on that row. The upgrade is
-  // asking the event stream for that one row instead of remembering it.
-  return (detail) => apply(local(spec.entity, detail && detail.field
-    ? { ...was, [detail.field]: detail.current, version: detail.version }
-    : was));
+  // Undrawing puts back the fields the guess touched and leaves the rest of the
+  // row where it is. Starting from the copy taken before the guess would undo
+  // whatever else has happened to that row since, and while a command was in
+  // the outbox somebody may well have changed a field beside it. A conflict
+  // does better still on the one field it is about: it carries what the server
+  // holds and the version it holds it at, which is where the row actually is.
+  return (detail) => {
+    const now = rowOf(spec.entity, spec.id(args)) || was;
+    const back = { ...now };
+    for (const field of touched) back[field] = was[field];
+    if (detail && detail.field) {
+      back[detail.field] = detail.current;
+      back.version = detail.version;
+    }
+    apply(local(spec.entity, back));
+  };
 }
 
 // local is an event this tab made up. Sequence zero, so it never moves the
@@ -487,9 +496,13 @@ function snapshot() {
 const VERSION = import.meta.url.match(/\/static\/([^/]+)\//)?.[1] || 'dev';
 
 // ponytail: the whole snapshot is written again two seconds after the last
-// change rather than the rows that moved. At a few hundred cards that is a
-// millisecond; at a hundred thousand it would have to be one row at a time.
+// change rather than the rows that moved. At four hundred cards that is not
+// what limits anything, measured: a replay of four hundred commands takes the
+// time its pace asks for whether the snapshot is written through it or held
+// until the end. Beyond a few thousand rows it would have to be one row at a
+// time.
 let keeping = 0;
+
 export function remember() {
   if (!state.open || keeping || state.fromCache) return;
   keeping = setTimeout(write, 2000);

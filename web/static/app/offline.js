@@ -103,6 +103,13 @@ export async function queued() {
 
 export const drop = (n) => withStore('outbox', 'readwrite', (store) => store.delete(n));
 
+// get is one row as the store holds it now. The drain reads each row again
+// immediately before it sends it, because the arguments may have been written
+// over since the pass began: somebody carrying on typing folds the newer text
+// into the row that is about to go, and sending the older one would put a
+// superseded edit up and leave the real one to conflict with it.
+export const get = (n) => withStore('outbox', 'readonly', (store) => store.get(n));
+
 // dropIfUnchanged is what an answered command leaves the outbox by. A row that
 // was written into while it was in flight, because the person carried on typing
 // in the same field, is left where it is and goes up on the next pass.

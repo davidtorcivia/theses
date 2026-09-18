@@ -202,7 +202,14 @@ export async function replay() {
 // pace is how long the drain waits between commands. The socket takes three
 // hundred a minute from one tab, which is five a second, and a queue that has
 // been filling all afternoon would otherwise spend its first second being
-// refused for going too fast. Four a second stays under it.
+// refused for going too fast.
+//
+// Measured, four hundred commands go up in a hundred and two seconds, which is
+// this wait and almost nothing else: the replay is paced rather than working
+// hard. In a tab that is not the one being looked at it is four times slower,
+// because a browser clamps a hidden tab's timers to one a second. That is the
+// browser's decision and the right one; the queue is going up either way and
+// nobody is watching it.
 const pace = 250;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -220,12 +227,24 @@ function transient(err) {
 // up joins the back of it: one pass over a list read at the start would leave
 // it sitting there until the next reconnection. Every pass drops, marks or
 // backs off on every row it sees, so there is always one less to do.
+// tries counts what a row has been handed back for a reason that was nobody's
+// decision. Three rounds of that and it stops being a hold-up and becomes an
+// answer, so it goes to the panel with try it again beside let it go rather
+// than sitting in the queue for ever in front of everything behind it.
+const rounds = 3;
+
 async function drain() {
   let pause = 500;
-  for (let gaveUp = 0; gaveUp < 8; ) {
-    const rows = (await offline.queued()).filter((row) => !row.refused);
-    if (!rows.length) return;
-    for (const row of rows) {
+  const tries = new Map();
+  for (;;) {
+    const pass = (await offline.queued()).filter((row) => !row.refused);
+    if (!pass.length) return;
+    for (const stale of pass) {
+      // The row is read again here rather than trusted from the pass: the
+      // person may have typed into the same field since, and what goes up has
+      // to be what they last wrote.
+      const row = await offline.get(stale.n);
+      if (!row || row.refused) continue;
       // The outbox is this device's, but the person at it can change. Another
       // account's commands are not this one's to send.
       if (row.me && state.me && row.me !== state.me) {
@@ -237,6 +256,7 @@ async function drain() {
           row.via === 'api' ? httpWait : replyWait);
         await offline.dropIfUnchanged(row.n, row.at);
         reverts.delete(row.n);
+        tries.delete(row.n);
         pause = 500;
         await sleep(pace);
       } catch (err) {
@@ -248,8 +268,9 @@ async function drain() {
           if (socket && row.via !== 'api') socket.close();
           return;
         }
-        if (transient(err)) {
-          gaveUp++;
+        const again = (tries.get(row.n) || 0) + 1;
+        tries.set(row.n, again);
+        if (transient(err) && again < rounds) {
           await sleep(pause);
           pause = Math.min(pause * 2, 8000);
           break;
@@ -261,9 +282,6 @@ async function drain() {
       }
     }
   }
-  // Eight goes and the server is still saying not now. The queue keeps its
-  // place and another attempt is made shortly; nothing is lost either way.
-  setTimeout(replay, 15000);
 }
 
 // answered gives up on a command the server never answers. A socket can be open
@@ -344,10 +362,16 @@ export async function resend(row, args) {
 }
 
 // queueLink is the links pane's way in: no socket command adds a link, so the
-// request goes in the outbox under its own name and is replayed as one.
+// request goes in the outbox under its own name and is replayed as one. It
+// answers the key it was filed under, or zero when there was no storage to file
+// it in, because the pane promises to keep it and must not promise that when it
+// could not.
 export async function queueLink(proposition, url) {
-  await offline.queue({ via: 'api', me: state.me, proposition, cmd: 'link.add', args: { proposition, url } });
+  const n = await offline.queue({
+    via: 'api', me: state.me, proposition, cmd: 'link.add', args: { proposition, url },
+  });
   await count();
+  return n;
 }
 
 // stillSignedIn tells a server that is down from a session that has ended. Both
