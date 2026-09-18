@@ -7,9 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -963,8 +963,11 @@ func TestWaitingOutAFileSomebodyElseHasOpen(t *testing.T) {
 		err   error
 		again bool
 	}{
-		{"a rename over a file another handle holds", fs.ErrPermission, true},
-		{"a read of a file being replaced", syscall.Errno(32), true},
+		// A rename refused for a handle is Access is denied, which is worth
+		// waiting out only where it means that; everywhere else it is a
+		// permission the process does not have.
+		{"a rename over a file another handle holds", fs.ErrPermission, runtime.GOOS == "windows"},
+		{"a read of a file being replaced", sharingViolation, true},
 		{"a file that is not there", fs.ErrNotExist, false},
 		{"a path that is not a directory", errors.New("not a directory"), false},
 		{"no error at all", nil, false},
@@ -981,7 +984,7 @@ func TestWaitingOutAFileSomebodyElseHasOpen(t *testing.T) {
 	if err := waitOut(func() error {
 		tries++
 		if tries < 4 {
-			return &os.LinkError{Op: "rename", Err: fs.ErrPermission}
+			return &os.LinkError{Op: "rename", Err: sharingViolation}
 		}
 		return nil
 	}); err != nil {
@@ -1009,7 +1012,7 @@ func TestWaitingOutAFileSomebodyElseHasOpen(t *testing.T) {
 
 	// And one that never lets go is given up on inside the budget.
 	started = time.Now()
-	if err := waitOut(func() error { return fs.ErrPermission }); !errors.Is(err, fs.ErrPermission) {
+	if err := waitOut(func() error { return sharingViolation }); !errors.Is(err, sharingViolation) {
 		t.Fatalf("got %v", err)
 	}
 	if waited := time.Since(started); waited < inUseWait || waited > 3*inUseWait {

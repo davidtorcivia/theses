@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -216,11 +217,17 @@ const inUseWait = time.Second
 const sharingViolation = syscall.Errno(32)
 
 // inUse reports whether an operation was refused because something else has the
-// file open. Windows will not let a rename replace a file another handle holds,
-// and will not open one that is in the middle of being replaced. Neither is a
-// reason to give up: the handle goes in a moment.
+// file open. Windows will not let a rename replace or a remove take away a file
+// another handle holds, and will not open one that is in the middle of being
+// replaced. Neither is a reason to give up: the handle goes in a moment.
+//
+// It answers those two with Access is denied and with a code of its own. Only
+// the second means the same thing everywhere; a permission error on the machine
+// this is deployed to is a permission the process does not have and never will,
+// and waiting a second per file for it would cost the startup pass a second per
+// document to learn nothing.
 func inUse(err error) bool {
-	if errors.Is(err, fs.ErrPermission) {
+	if runtime.GOOS == "windows" && errors.Is(err, fs.ErrPermission) {
 		return true
 	}
 	var errno syscall.Errno
@@ -289,7 +296,11 @@ func (s *Service) forgetOthers(document int64, keep string) {
 	}
 	s.mu.Unlock()
 	for _, path := range stale {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// The same wait the rename gets, for the same reason: a file left
+		// behind because something had it open is one a later document that
+		// slugs to this path would find in its way for good.
+		err := waitOut(func() error { return os.Remove(path) })
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			s.log.Warn("old document file not removed", "err", err)
 		}
 	}
