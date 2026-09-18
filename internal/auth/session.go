@@ -17,6 +17,9 @@ import (
 const (
 	SessionCookie = "theses_session"
 	CSRFCookie    = "theses_csrf"
+	// CSRFHeader is where a request with a JSON body carries the token that a
+	// form would have carried in a field.
+	CSRFHeader = "X-CSRF-Token"
 )
 
 // Authenticate checks an account name, password and authenticator code together,

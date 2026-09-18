@@ -56,6 +56,16 @@ func (s *Service) AddLink(ctx context.Context, a core.Actor, proposition int64, 
 	})
 }
 
+// ReadLink is one link, refusing a proposition the reader may not see the same
+// way the list does.
+func (s *Service) ReadLink(ctx context.Context, a core.Actor, id int64) (Link, error) {
+	l, err := GetLink(ctx, s.DB, id)
+	if err != nil {
+		return Link{}, err
+	}
+	return l, visible(ctx, s.DB, a, l.Proposition)
+}
+
 // Edit is the drawer's fields. Every one of them is what a person corrected,
 // including the kind the guess got wrong.
 type Edit struct {
