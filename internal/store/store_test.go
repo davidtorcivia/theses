@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -317,5 +318,37 @@ func TestSidecarsMoveWithTheirDatabaseAndAreRemovedWithIt(t *testing.T) {
 		if _, err := os.Stat(to + suffix); err == nil {
 			t.Errorf("%s survived", suffix)
 		}
+	}
+}
+
+// Ordering keys are base-62 strings, and a column with REAL affinity would turn
+// the ones that spell a number into floats and leave the rest as text, which
+// would put "2" above "1A" instead of below it.
+func TestOrderingKeysStayText(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+
+	mustExec(t, db, `INSERT INTO propositions (id, number, title, status, position, created_at) VALUES (1, 1, 'Debt', 'idea', 'V', 0)`)
+	mustExec(t, db, `INSERT INTO columns (id, proposition_id, name, position) VALUES (1, 1, 'Research', 'V')`)
+	for i, pos := range []string{"2", "1A", "1"} {
+		mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, created_at)
+			VALUES (?, 1, 1, ?, 'card', 0)`, i+1, pos)
+	}
+
+	rows, err := db.QueryContext(ctx, `SELECT position FROM cards WHERE column_id = 1 ORDER BY position`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, p)
+	}
+	if want := []string{"1", "1A", "2"}; !slices.Equal(got, want) {
+		t.Errorf("ordered %v, want %v", got, want)
 	}
 }
