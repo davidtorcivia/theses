@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/core"
@@ -26,6 +27,12 @@ type transistorFake struct {
 	forms  []url.Values
 	status map[string]string
 	next   int
+	// onCreate runs as the episode is made, which is where a test that wants
+	// the request to go away underneath the publish pulls it.
+	onCreate func()
+	// refuse answers the publish step instead of publishing, so a test can see
+	// what a refusal carries.
+	refuse func(w http.ResponseWriter, r *http.Request) bool
 }
 
 func newTransistorFake(t *testing.T) *transistorFake {
@@ -50,7 +57,11 @@ func newTransistorFake(t *testing.T) *transistorFake {
 		f.next++
 		id := strconv.Itoa(f.next)
 		f.status[id] = "draft"
+		hook := f.onCreate
 		f.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		answer(w, id)
 	})
 	mux.HandleFunc("PATCH /v1/episodes/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +70,9 @@ func newTransistorFake(t *testing.T) *transistorFake {
 	})
 	mux.HandleFunc("PATCH /v1/episodes/{id}/publish", func(w http.ResponseWriter, r *http.Request) {
 		note(r)
+		if f.refuse != nil && !f.refuse(w, r) {
+			return
+		}
 		f.mu.Lock()
 		f.status[r.PathValue("id")] = "published"
 		f.mu.Unlock()
@@ -291,5 +305,120 @@ func TestPublishSectionIsHiddenUntilTransistorIsConnected(t *testing.T) {
 		"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {"publish"}})
 	if res.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("publishing with nothing connected gave %d", res.StatusCode)
+	}
+}
+
+// A publish that is under way when the browser goes away has to finish. The
+// episode exists at Transistor from the moment it answers, and a cancelled
+// write of its id is a second episode on the next attempt.
+func TestPublishRecordsTheEpisodeWhenTheRequestGoesAway(t *testing.T) {
+	h, fake, id := publishable(t)
+	at := strconv.FormatInt(id, 10)
+	form := h.publishForm(t, at)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Transistor has made the episode; now the browser closes the tab.
+	fake.onCreate = cancel
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		h.http.URL+"/p/"+at+"/publish", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := h.client.Do(req); err == nil {
+		t.Fatal("the request was not cancelled")
+	}
+
+	// The handler runs on after the connection has gone, so the assertion
+	// waits for it rather than racing it.
+	var episode string
+	for i := 0; i < 100 && episode == ""; i++ {
+		time.Sleep(20 * time.Millisecond)
+		if err := h.db.QueryRowContext(context.Background(),
+			`SELECT coalesce(transistor_episode_id, '') FROM propositions WHERE id = ?`, id).
+			Scan(&episode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if episode != "901" {
+		t.Fatalf("the episode id was not recorded: %q", episode)
+	}
+}
+
+// Transistor quotes back what it was sent, and one of the things it is sent is
+// a link that reads the recording for a day.
+func TestPublishRefusalDoesNotCarryTheSignedAudioLink(t *testing.T) {
+	h, fake, id := publishable(t)
+	at := strconv.FormatInt(id, 10)
+	fake.refuse = func(w http.ResponseWriter, r *http.Request) bool {
+		f := fake.forms[0]
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]string{
+			{"title": "Could not fetch " + f.Get("episode[audio_url]")}}})
+		return false
+	}
+
+	form := h.publishForm(t, at)
+	res, body := h.post("/p/"+at+"/publish", form)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("a refused publish gave %d", res.StatusCode)
+	}
+	said := firstNotice(body)
+	if !strings.Contains(said, "Could not fetch") {
+		t.Fatalf("the page said %q", said)
+	}
+	for _, leak := range []string{"X-Amz-Signature", "X-Amz-Credential", "AWS4-HMAC"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("the page carries %s", leak)
+		}
+	}
+	if !strings.Contains(said, "[redacted]") {
+		t.Fatalf("the link was not redacted: %q", said)
+	}
+}
+
+// publishForm is the section's two selects, as the page renders them, plus the
+// token and the button.
+func (h *harness) publishForm(t *testing.T, at string) url.Values {
+	t.Helper()
+	_, page := h.get("/p/" + at + "/settings")
+	var file int64
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT id FROM files WHERE folder = ?`, files.Recordings).Scan(&file); err != nil {
+		t.Fatal(err)
+	}
+	return url.Values{
+		"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {"publish"},
+		"document": {h.chosen(page, "document")}, "file": {strconv.FormatInt(file, 10)},
+	}
+}
+
+func TestEpisodeNumberIsOnlyAPlainNumber(t *testing.T) {
+	four := "4"
+	spaced := " 4 "
+	season := "S2E4"
+	zero := "0"
+	negative := "-3"
+	empty := ""
+	cases := []struct {
+		name  string
+		given *string
+		want  string
+	}{
+		{"nothing scheduled", nil, ""},
+		{"an empty field", &empty, ""},
+		{"a number", &four, "4"},
+		{"a number with spaces round it", &spaced, "4"},
+		{"a season and episode", &season, ""},
+		{"zero", &zero, ""},
+		{"a negative number", &negative, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := episodeNumber(c.given); got != c.want {
+				t.Fatalf("gave %q, want %q", got, c.want)
+			}
+		})
 	}
 }

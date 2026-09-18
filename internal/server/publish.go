@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
@@ -27,6 +28,11 @@ import (
 // showNotes is the document a proposition uses for the episode's notes when
 // nobody has chosen one.
 const showNotes = "Show notes"
+
+// publishTimeout bounds a publish, which is three calls to Transistor and two
+// writes here. It is generous because the alternative to finishing is an
+// episode that exists and is not recorded.
+const publishTimeout = 2 * time.Minute
 
 // publishChoice is what this proposition publishes with. It lives in the
 // settings table under a key of its own, the way the document switches beside
@@ -176,7 +182,7 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := userOf(r)
-	p, err := s.publishable(r, id)
+	p, err := s.writable(r, id)
 	if errors.Is(err, core.ErrNotFound) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
@@ -216,10 +222,13 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 	s.renderPropositionSettings(w, r, http.StatusOK, map[string]any{"PublishResult": said})
 }
 
-// publishable is the standing this needs: the proposition has to be readable,
-// the person has to be allowed to edit it, and it must not be archived. It is
-// the same rule every other change on this page goes through.
-func (s *Server) publishable(r *http.Request, id int64) (board.Proposition, error) {
+// writable is the standing a change to one proposition needs: it has to be
+// readable, the person has to be allowed to edit, and it must not be archived.
+// It is the rule every other change on the settings page goes through, and it
+// is here so that publishing and importing from Drive both ask for it before
+// they do anything a refusal would have to undo. Not readable answers not
+// found, because not a member and not there are the same answer.
+func (s *Server) writable(r *http.Request, id int64) (board.Proposition, error) {
 	me := userOf(r)
 	readable, err := board.Readable(r.Context(), s.db, me, id)
 	if err != nil {
@@ -243,7 +252,12 @@ func (s *Server) publishable(r *http.Request, id int64) (board.Proposition, erro
 // episode that exists and is not recorded is the one thing that would make the
 // next attempt a second episode rather than an update.
 func (s *Server) publish(r *http.Request, p board.Proposition, chosen publishChoice) (string, error) {
-	ctx := r.Context()
+	// The call outlives the request on purpose. A browser that goes away after
+	// Transistor has made the episode would otherwise cancel the write that
+	// records its id, and the next attempt would make a second episode. The
+	// timeout is what stops it outliving the request forever instead.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), publishTimeout)
+	defer cancel()
 	me := userOf(r)
 	actor := core.Actor{Kind: core.KindUser, ID: me.ID, Name: me.Name}
 

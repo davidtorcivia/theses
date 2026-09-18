@@ -204,3 +204,33 @@ func TestPutStreamTakesAReaderThatCannotRewind(t *testing.T) {
 		t.Fatal("an empty object was written through PutStream")
 	}
 }
+
+// The presigned PUT signs a content type, and the browser has to send exactly
+// it. A name ending in a dot or a space has no extension until filename has
+// trimmed it, so the type has to be read off the row rather than off what came
+// in, or the bucket is told octet-stream for a file the list calls markdown.
+func TestCreateSignsTheTypeOfTheStoredName(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	cases := []struct{ name, stored, want string }{
+		{"notes.md", "notes.md", "text/markdown; charset=utf-8"},
+		{"notes.md.", "notes.md", "text/markdown; charset=utf-8"},
+		{"notes.md ", "notes.md", "text/markdown; charset=utf-8"},
+		{"take one.wav", "take one.wav", "audio/wav"},
+		{"unlabelled", "unlabelled", "application/octet-stream"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			up, err := f.Create(ctx, f.who["editor"], f.prop, c.name, "Documents", 10, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if up.File.Name != c.stored {
+				t.Fatalf("the row is called %q, want %q", up.File.Name, c.stored)
+			}
+			if got := up.Headers["Content-Type"]; got != c.want {
+				t.Fatalf("the PUT signs %q, want %q", got, c.want)
+			}
+		})
+	}
+}

@@ -8,22 +8,42 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 )
 
-// driveWith is Drive as the import path uses it: a metadata read and a
-// download of the same id.
-func driveWith(t *testing.T, contents map[string]string) *httptest.Server {
+// driveFake is Drive as the import path uses it: a metadata read and a
+// download of the same id. hits counts what reached it, so a test can show
+// that a refusal never asked Drive anything.
+type driveFake struct {
+	*httptest.Server
+	hits atomic.Int64
+}
+
+func driveWith(t *testing.T, contents map[string]string) *driveFake {
 	t.Helper()
+	fake := &driveFake{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /token", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "access-1", "refresh_token": "refresh-1", "expires_in": 3600})
 	})
+	mux.HandleFunc("GET /drive/v3/files", func(w http.ResponseWriter, r *http.Request) {
+		fake.hits.Add(1)
+		rows := make([]map[string]string, 0, len(contents))
+		for id, body := range contents {
+			rows = append(rows, map[string]string{
+				"id": id, "name": id + ".wav", "mimeType": "audio/wav",
+				"size": strconv.Itoa(len(body))})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"files": rows})
+	})
 	mux.HandleFunc("GET /drive/v3/files/{id}", func(w http.ResponseWriter, r *http.Request) {
+		fake.hits.Add(1)
 		body, ok := contents[r.PathValue("id")]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -38,27 +58,28 @@ func driveWith(t *testing.T, contents map[string]string) *httptest.Server {
 			"id": r.PathValue("id"), "name": r.PathValue("id") + ".wav",
 			"mimeType": "audio/wav", "size": strconv.Itoa(len(body))})
 	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
+	fake.Server = httptest.NewServer(mux)
+	t.Cleanup(fake.Close)
+	return fake
 }
 
 // connectedDrive is a harness with a bucket, a connected Drive and one
 // proposition.
-func connectedDrive(t *testing.T, contents map[string]string) (*harness, int64) {
+func connectedDrive(t *testing.T, contents map[string]string) (*harness, *driveFake, int64) {
 	t.Helper()
 	h := newHarness(t)
 	h.setupOwner()
 	h.configureBucket(fakeBucket(t, "theses"), "theses")
-	h.pointAtFakes(driveWith(t, contents).URL, "")
+	drive := driveWith(t, contents)
+	h.pointAtFakes(drive.URL, "")
 	h.saveSecret("integrations.drive.client_id", "the-client")
 	h.saveSecret("integrations.drive.client_secret", "the-secret")
 	h.saveSecret("integrations.drive.token", `{"refresh_token":"refresh-1"}`)
-	return h, h.proposition("Tidal Power")
+	return h, drive, h.proposition("Tidal Power")
 }
 
 func TestDriveImportStreamsIntoTheBucket(t *testing.T) {
-	h, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
+	h, _, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
 	token := h.csrf("/profile")
 
 	res, body := h.send("POST", "/app/drive/import", token,
@@ -96,7 +117,7 @@ func TestDriveImportStreamsIntoTheBucket(t *testing.T) {
 }
 
 func TestDriveImportRefusals(t *testing.T) {
-	h, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
+	h, _, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
 	token := h.csrf("/profile")
 	at := strconv.FormatInt(proposition, 10)
 
@@ -132,7 +153,7 @@ func TestDriveImportRefusals(t *testing.T) {
 }
 
 func TestDriveImportNeedsASessionAndACSRFToken(t *testing.T) {
-	h, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
+	h, _, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
 	at := strconv.FormatInt(proposition, 10)
 
 	if res, _ := h.send("POST", "/app/drive/import", "", `{"proposition":`+at+`,"file":"f1"}`); res.StatusCode != http.StatusForbidden {
@@ -155,7 +176,7 @@ func TestDriveImportNeedsASessionAndACSRFToken(t *testing.T) {
 // theirs either.
 func TestDriveListIsRefusedToAGuest(t *testing.T) {
 	const password = "a long enough password"
-	h, _ := connectedDrive(t, map[string]string{})
+	h, _, _ := connectedDrive(t, map[string]string{})
 	if err := h.srv.settings.Set(context.Background(), "signin.require_totp",
 		[]string{"owners"}, 1); err != nil {
 		t.Fatal(err)
@@ -181,5 +202,79 @@ func TestDriveListSaysWhenNothingIsConnected(t *testing.T) {
 	}
 	if !strings.Contains(body, "not connected yet") {
 		t.Fatalf("the answer said %s", body)
+	}
+}
+
+// The import asks Drive what a file is called and how big it is before it
+// writes anything, so the standing has to be settled first: otherwise somebody
+// who may not import gets one answer for a file that is there and another for
+// one that is not, and spends the workspace's Drive quota finding out.
+func TestDriveRoutesCheckStandingBeforeAskingDrive(t *testing.T) {
+	const password = "a long enough password"
+	h, drive, live := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
+	ctx := context.Background()
+	owner := core.Actor{Kind: core.KindUser, ID: 1, Name: "Ada Lovelace"}
+	if err := h.srv.settings.Set(ctx, "signin.require_totp", []string{"owners"}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	archived := h.proposition("Grid Storage")
+	guest := h.withoutAuthenticator("gwen", auth.RoleGuest, password)
+	member := h.withoutAuthenticator("mara", auth.RoleEditor, password)
+	if _, err := h.srv.board.AddMember(ctx, owner, live, guest); err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []int64{live, archived} {
+		if _, err := h.srv.board.AddMember(ctx, owner, at, member); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.srv.board.ArchiveProposition(ctx, owner, archived); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name, who          string
+		at                 int64
+		listing, importing int
+	}{
+		{"a guest who is a member", "gwen", live, http.StatusForbidden, http.StatusForbidden},
+		{"an editor who is not a member", "stranger", live, http.StatusOK, http.StatusNotFound},
+		{"an editor on an archived proposition", "mara", archived, http.StatusOK, http.StatusForbidden},
+	}
+	// The stranger is an editor of the workspace and a member of nothing.
+	h.withoutAuthenticator("stranger", auth.RoleEditor, password)
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h.signOut()
+			if res, _ := h.signIn(c.who, password, ""); res.Header.Get("Location") != "/" {
+				t.Fatalf("%s could not sign in: %s", c.who, res.Header.Get("Location"))
+			}
+			if res, _ := h.get("/app/drive"); res.StatusCode != c.listing {
+				t.Errorf("listing gave %d, want %d", res.StatusCode, c.listing)
+			}
+			was := drive.hits.Load()
+			res, body := h.send("POST", "/app/drive/import", h.csrf("/profile"),
+				`{"proposition":`+strconv.FormatInt(c.at, 10)+`,"file":"f1","folder":"Recordings"}`)
+			if res.StatusCode != c.importing {
+				t.Errorf("import gave %d, want %d: %s", res.StatusCode, c.importing, body)
+			}
+			if drive.hits.Load() != was {
+				t.Error("the refusal asked Drive about the file first")
+			}
+		})
+	}
+
+	// And the same request from somebody who may make it goes through, so the
+	// refusals above are the standing and not the fixture.
+	h.signOut()
+	if res, _ := h.signIn("mara", password, ""); res.Header.Get("Location") != "/" {
+		t.Fatal("the member could not sign in")
+	}
+	res, body := h.send("POST", "/app/drive/import", h.csrf("/profile"),
+		`{"proposition":`+strconv.FormatInt(live, 10)+`,"file":"f1","folder":"Recordings"}`)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("a member importing gave %d: %s", res.StatusCode, body)
 	}
 }

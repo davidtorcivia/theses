@@ -290,3 +290,57 @@ func firstNotice(page string) string {
 	}
 	return rest[start+1 : end]
 }
+
+// Google sends the owner back with an error rather than a code when they say
+// no on the consent screen. It is still their browser and their state, so it
+// is a line on the page rather than a refusal of the request.
+func TestDriveCallbackWhenTheOwnerSaysNo(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	google, exchange := fakeGoogle(t)
+	h.pointAtFakes(google.URL, "")
+	h.saveSecret("integrations.drive.client_id", "the-client")
+	h.saveSecret("integrations.drive.client_secret", "the-secret")
+
+	res, _ := h.post("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
+	sent, _ := url.Parse(res.Header.Get("Location"))
+	state := url.QueryEscape(sent.Query().Get("state"))
+
+	res, body := h.get(driveCallback + "?error=access_denied&state=" + state)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("a refused consent gave %d", res.StatusCode)
+	}
+	if !strings.Contains(body, "Google refused the connection: access_denied") {
+		t.Fatalf("the page said %q", firstNotice(body))
+	}
+	if *exchange != nil {
+		t.Fatal("something was exchanged although there was no code")
+	}
+	if h.srv.settings.IsSet("integrations.drive.token") {
+		t.Fatal("a token was stored")
+	}
+	// The cookie was spent, so pressing Connect again is what is left.
+	res, body = h.get(driveCallback + "?code=the-code&state=" + state)
+	if res.StatusCode != http.StatusUnprocessableEntity ||
+		!strings.Contains(body, "press Connect again") {
+		t.Fatalf("the spent state gave %d: %q", res.StatusCode, firstNotice(body))
+	}
+}
+
+// And a callback with no code and no error is not a connection either.
+func TestDriveCallbackWithNoCode(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	google, _ := fakeGoogle(t)
+	h.pointAtFakes(google.URL, "")
+	h.saveSecret("integrations.drive.client_id", "the-client")
+	h.saveSecret("integrations.drive.client_secret", "the-secret")
+
+	res, _ := h.post("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
+	sent, _ := url.Parse(res.Header.Get("Location"))
+	res, body := h.get(driveCallback + "?state=" + url.QueryEscape(sent.Query().Get("state")))
+	if res.StatusCode != http.StatusUnprocessableEntity ||
+		!strings.Contains(body, "no authorisation code") {
+		t.Fatalf("gave %d: %q", res.StatusCode, firstNotice(body))
+	}
+}

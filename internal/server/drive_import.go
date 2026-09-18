@@ -91,6 +91,18 @@ func (s *Server) postDriveImport(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that request could not be read"})
 		return
 	}
+	// Standing first. The files service checks it again, which is the real
+	// gate, but by then Drive has been asked whether the file exists and what
+	// it is called, and a refusal that is 403 for one id and 422 for another
+	// tells somebody who may not import anything what is in the Drive.
+	if !auth.Can(userOf(r).Role, auth.CanEdit) {
+		s.refuseJSON(w, r, core.ErrForbidden)
+		return
+	}
+	if _, err := s.writable(r, in.Proposition); err != nil {
+		s.refuseJSON(w, r, err)
+		return
+	}
 	drive, err := s.loadDrive(r.Context())
 	if err != nil {
 		s.refuseJSON(w, r, err)

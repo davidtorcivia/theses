@@ -53,8 +53,10 @@ type Drive struct {
 	// Auth, Token and API are Google's endpoints, replaced in tests.
 	Auth, TokenURL, API string
 	// Save persists a token this package refreshed. The caller seals it and
-	// writes the settings row; a failure here is logged by the caller, because
-	// the refreshed access token is still good for the call in hand.
+	// writes the settings row. A failure fails the call that triggered the
+	// refresh: the access token in hand would still work, but going on with a
+	// refresh token nobody stored means doing the same exchange again on every
+	// request from here on, and saying so once is better than that.
 	Save func(ctx context.Context, t Token) error
 
 	// mu covers the token, which a refresh replaces. Refreshes are serialised

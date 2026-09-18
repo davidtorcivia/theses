@@ -90,7 +90,11 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 	}
 
 	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}
-	kind := contentType(name)
+	// The row's name, not the one that came in: filename trims and normalises,
+	// and a name ending in a dot or a space has no extension until it has been
+	// through that, so signing the type of the raw one would sign
+	// octet-stream for a file the list calls markdown.
+	kind := contentType(row.Name)
 	if size <= blob.PartSize {
 		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, kind, size, uploadTTL)
 		if err != nil {

@@ -454,6 +454,7 @@ dialog{border:1px solid var(--p);background:var(--k);color:var(--p);padding:1.2r
 dialog::backdrop{background:rgba(0,0,0,.65)}
 dialog h3{margin:0 0 .5rem;font-weight:800;font-size:17px;letter-spacing:-.01em}
 dialog p{margin:0 0 1rem;color:var(--dim);font-size:14px;line-height:1.35}
+dialog p .mono{overflow-wrap:anywhere}
 dialog .acts{display:flex;gap:1.2rem;justify-content:flex-end;align-items:baseline}
 
 .notice{border-left:2px solid var(--y);padding:.5rem 0 .5rem .8rem;margin:0 0 1.2rem;color:var(--dim);max-width:60ch}
