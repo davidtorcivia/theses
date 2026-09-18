@@ -194,8 +194,11 @@ func TestReadyzFailsOnAStaleBackup(t *testing.T) {
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("backups on and never run gave %d:\n%s", res.StatusCode, body)
 	}
-	if !strings.Contains(body, "backup age: no backup has succeeded yet") {
+	if !strings.Contains(body, "backup age: failed") {
 		t.Errorf("readyz does not name the stale backup:\n%s", body)
+	}
+	if !strings.Contains(h.log.String(), "no backup has succeeded yet") {
+		t.Error("the reason is not in the log either")
 	}
 }
 
@@ -216,5 +219,33 @@ func TestWritesAreRefusedWhileARestoreRuns(t *testing.T) {
 	}
 	if res, _ := h.get("/settings"); res.StatusCode != http.StatusOK {
 		t.Errorf("reading during a restore gave %d", res.StatusCode)
+	}
+}
+
+func TestReadyzDoesNotPrintWhereTheObjectStoreIs(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	// A bucket that is not answering. The error names the endpoint and the
+	// bucket, and this route has no session in front of it.
+	gone := httptest.NewServer(http.NotFoundHandler())
+	endpoint := gone.URL
+	gone.Close()
+	h.configureBucket(endpoint, "example-bucket")
+
+	res, body := h.get("/readyz")
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("a bucket that is not there gave %d:\n%s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "object store: failed") {
+		t.Errorf("readyz does not name the check:\n%s", body)
+	}
+	for _, leak := range []string{endpoint, "http", "example-bucket"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("readyz prints %q to anyone who asks:\n%s", leak, body)
+		}
+	}
+	if !strings.Contains(h.log.String(), endpoint) {
+		t.Error("the detail is not in the log either")
 	}
 }

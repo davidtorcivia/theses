@@ -199,7 +199,10 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	for _, c := range s.checks {
 		if err := c.Run(r.Context()); err != nil {
 			status = http.StatusServiceUnavailable
-			body += fmt.Sprintf("%s: %v\n", c.Name, err)
+			// Named, not explained: this route has no session behind it, and
+			// the reasons carry the endpoint, the bucket and the paths on
+			// the container. Whoever can read the log can have those.
+			body += c.Name + ": failed\n"
 			s.log.Error("readiness check failed", "check", c.Name, "err", err)
 			continue
 		}
