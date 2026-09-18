@@ -392,3 +392,25 @@ func TestRowsQueuedBeforeConfigurationGoOutLater(t *testing.T) {
 		t.Errorf("%d rows are still unsent", n)
 	}
 }
+
+func TestMarkSentSurvivesCancellation(t *testing.T) {
+	o, db, _ := newTestOutbox(t)
+	ctx := context.Background()
+	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	var id int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM mail_outbox`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shutdown lands after the server has taken the message.
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := o.markSent(stopped, id); err != nil {
+		t.Fatalf("marking a delivered message failed on a cancelled context: %v", err)
+	}
+	if n := countRows(t, db, `sent_at IS NULL`); n != 0 {
+		t.Error("the row is still unsent, so the next start would deliver it twice")
+	}
+}

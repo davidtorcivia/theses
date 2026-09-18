@@ -151,8 +151,7 @@ func (o *Outbox) once(ctx context.Context) error {
 	for _, q := range batch {
 		err := sender.Send(ctx, Message{To: []string{q.to}, Subject: q.subject, Text: q.text, HTML: q.htmlBody})
 		if err == nil {
-			if _, err := o.db.ExecContext(ctx,
-				`UPDATE mail_outbox SET sent_at = unixepoch(), last_error = '' WHERE id = ?`, q.id); err != nil {
+			if err := o.markSent(ctx, q.id); err != nil {
 				return err
 			}
 			continue
@@ -172,6 +171,15 @@ func (o *Outbox) once(ctx context.Context) error {
 			"err", Redact(err.Error(), sender.Password))
 	}
 	return nil
+}
+
+// markSent records the delivery. The write drops the cancellation, because the
+// server has already taken the message: a shutdown landing between the two
+// would otherwise leave the row unsent and deliver it twice on the next start.
+func (o *Outbox) markSent(ctx context.Context, id int64) error {
+	_, err := o.db.ExecContext(context.WithoutCancel(ctx),
+		`UPDATE mail_outbox SET sent_at = unixepoch(), last_error = '' WHERE id = ?`, id)
+	return err
 }
 
 // backoff is a minute, doubled for each attempt already made, capped at an hour.
