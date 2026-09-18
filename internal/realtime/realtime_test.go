@@ -356,6 +356,77 @@ func TestSocketSendsNoEventsForAPropositionTheTabCannotRead(t *testing.T) {
 	}
 }
 
+// A socket is only as good as the session behind it. Signing out everywhere
+// stops the writes, and being removed from the proposition stops the reading.
+func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+
+	member := r.mustDial("grace")
+	read(t, member, "presence")
+	if _, err := r.boards.RemoveMember(ctx, r.actor("ada"), r.prop, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+	member.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		var raw string
+		if err := websocket.Message.Receive(member, &raw); err != nil {
+			break // the socket was closed, which is the point
+		}
+		var m message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Type == "event" && m.Event.Entity == "card" {
+			t.Fatal("a removed member was still sent the board")
+		}
+	}
+
+	// Signing out everywhere is a bumped epoch, which the next command sees.
+	ws := r.mustDial("ada")
+	read(t, ws, "presence")
+	if err := store.BumpSessionEpoch(ctx, r.db, r.users["ada"].ID); err != nil {
+		t.Fatal(err)
+	}
+	send(t, ws, command{ID: 1, Cmd: "card.create", Args: args{
+		Column: r.cols[0].ID, Title: "Should not land"}})
+	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var raw string
+	if err := websocket.Message.Receive(ws, &raw); err == nil {
+		t.Fatalf("a revoked session got an answer: %s", raw)
+	}
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM cards WHERE title = 'Should not land'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("a revoked session wrote a card")
+	}
+}
+
+// An idle socket is checked on a timer as well, so a tab nobody is touching
+// does not keep receiving after the account behind it is signed out.
+func TestIdleSocketIsDroppedWhenTheSessionGoes(t *testing.T) {
+	was := sessionCheck
+	sessionCheck = 50 * time.Millisecond
+	t.Cleanup(func() { sessionCheck = was })
+
+	ctx := context.Background()
+	r := newRig(t)
+	ws := r.mustDial("grace")
+	read(t, ws, "presence")
+
+	if err := store.BumpSessionEpoch(ctx, r.db, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var raw string
+	if err := websocket.Message.Receive(ws, &raw); err == nil {
+		t.Fatalf("an idle socket on a revoked session stayed open: %s", raw)
+	}
+}
+
 // The fallback reads the same stream out of the activity table.
 func TestLongPollServesTheSameStream(t *testing.T) {
 	ctx := context.Background()

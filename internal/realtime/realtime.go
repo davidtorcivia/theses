@@ -29,6 +29,11 @@ const outBuffer = 64
 // pollWait is how long the fallback holds a request open with nothing to say.
 const pollWait = 25 * time.Second
 
+// sessionCheck is how often an idle socket re-reads the session behind it. A
+// tab that is doing something is checked on every command as well. It is a
+// variable so a test does not have to wait a minute for it.
+var sessionCheck = time.Minute
+
 type Hub struct {
 	board *board.Service
 	auth  *auth.Auth
@@ -194,10 +199,17 @@ func (h *Hub) serve(ws *websocket.Conn) {
 
 	h.join(c)
 	defer h.leave(c)
+	go h.watchSession(c, r)
 
 	for {
 		var raw string
 		if err := websocket.Message.Receive(ws, &raw); err != nil {
+			return
+		}
+		// The handshake is not enough on a connection that stays open for
+		// hours: a sign out, a sign out everywhere or a deleted account has to
+		// stop the writes it was authorising.
+		if !h.stillSignedIn(c, r) {
 			return
 		}
 		var cmd command
@@ -247,6 +259,37 @@ func (c *client) canRead(proposition int64) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.owner || c.member[proposition]
+}
+
+// watchSession closes an idle socket once the session behind it is gone, so a
+// tab left open on a signed out account stops receiving as well as writing.
+func (h *Hub) watchSession(c *client, r *http.Request) {
+	ticker := time.NewTicker(sessionCheck)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-ticker.C:
+			if !h.stillSignedIn(c, r) {
+				return
+			}
+		}
+	}
+}
+
+// stillSignedIn re-reads the session and keeps the client's standing current,
+// so a demotion takes away the rail the old role reached.
+func (h *Hub) stillSignedIn(c *client, r *http.Request) bool {
+	user, err := h.auth.SessionUser(r.Context(), r)
+	if err != nil || user.ID != c.user.ID {
+		c.close()
+		return false
+	}
+	c.mu.Lock()
+	c.owner = user.Role == auth.RoleOwner
+	c.mu.Unlock()
+	return true
 }
 
 func (c *client) write() {
