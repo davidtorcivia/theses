@@ -13,6 +13,7 @@ const (
 	BucketReset  = "reset"
 	BucketInvite = "invite"
 	BucketAPI    = "api"
+	BucketSocket = "socket"
 )
 
 type limit struct {
@@ -27,6 +28,10 @@ var limitsByBucket = map[string]limit{
 	// One token, a few requests a second: enough for an agent working through a
 	// document, low enough that a loop cannot hold the one writer connection.
 	BucketAPI: {n: 300, window: time.Minute},
+	// One tab, a few commands a second: more than dragging a card, ticking
+	// one and typing a note ever needs, and low enough that a loop in a page
+	// cannot hold the one writer connection.
+	BucketSocket: {n: 300, window: time.Minute},
 }
 
 // longestWindow is how old a key's newest attempt has to be before no bucket

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -622,5 +623,48 @@ func TestLoadReadsTheSequenceNumberBeforeTheRows(t *testing.T) {
 		if !have[first.ID] || !have[second.EntityID] {
 			t.Errorf("a board at seq %d plus its stream is missing a card: %v", b.Seq, have)
 		}
+	}
+}
+
+// A field on the board holds what the field is for. Past that the command
+// refuses rather than storing something no column was meant to carry and every
+// board that draws it has to render.
+func TestCommandsRefuseAFieldLongerThanTheFieldTakes(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
+	owner := f.who["owner"]
+	long := strings.Repeat("x", maxLine+1)
+	huge := strings.Repeat("x", maxBody+1)
+
+	for name, run := range map[string]func() error{
+		"a proposition title": func() error { _, err := f.CreateProposition(ctx, owner, long); return err },
+		"a statement":         func() error { _, err := f.EditProposition(ctx, owner, f.prop, "ok", long, ""); return err },
+		"a blurb":             func() error { _, err := f.EditProposition(ctx, owner, f.prop, "ok", "", huge); return err },
+		"a status":            func() error { _, err := f.SetStatus(ctx, owner, f.prop, long); return err },
+		"an episode":          func() error { _, err := f.Schedule(ctx, owner, f.prop, long, ""); return err },
+		"a column name":       func() error { _, err := f.CreateColumn(ctx, owner, f.prop, long); return err },
+		"a card title":        func() error { _, err := f.CreateCard(ctx, owner, f.cols[0].ID, long, nil); return err },
+		"a card description": func() error {
+			_, err := f.EditCardDescription(ctx, owner, card.ID, card.Version, huge)
+			return err
+		},
+		"a due date":       func() error { _, err := f.SetCardDue(ctx, owner, card.ID, long); return err },
+		"a checklist item": func() error { _, err := f.AddChecklistItem(ctx, owner, card.ID, long); return err },
+		"a note":           func() error { _, err := f.PostComment(ctx, owner, card.ID, huge); return err },
+		"a list of assignees": func() error {
+			_, err := f.CreateCard(ctx, owner, f.cols[0].ID, "ok", make([]int64, maxAssignees+1))
+			return err
+		},
+	} {
+		if err := run(); !errors.Is(err, ErrTooLong) {
+			t.Errorf("%s over the limit gave %v, want ErrTooLong", name, err)
+		}
+	}
+
+	// The limit is in runes, not bytes, so a field of accented text holds as
+	// much of it as a field of plain text does.
+	if _, err := f.CreateProposition(ctx, owner, strings.Repeat("é", maxLine)); err != nil {
+		t.Errorf("a title of %d accented characters was refused: %v", maxLine, err)
 	}
 }

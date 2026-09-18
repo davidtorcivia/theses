@@ -525,3 +525,43 @@ func TestLongPollServesTheSameStream(t *testing.T) {
 		t.Errorf("a non member got %d from the fallback", refused.StatusCode)
 	}
 }
+
+// A socket takes short commands and a few of them a second. A frame larger
+// than any command could be closes the connection, and a tab in a loop is
+// refused rather than allowed to hold the one writer connection.
+func TestSocketCapsTheFrameAndTheRate(t *testing.T) {
+	r := newRig(t)
+
+	big := r.mustDial("ada")
+	read(t, big, "presence")
+	if err := websocket.Message.Send(big, strings.Repeat("x", maxFrame+1024)); err != nil {
+		t.Fatalf("sending the oversized frame failed before the server saw it: %v", err)
+	}
+	big.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var raw string
+	if err := websocket.Message.Receive(big, &raw); err == nil {
+		t.Fatalf("an oversized frame was answered: %s", raw)
+	}
+
+	// An unknown command is refused without touching the database, so the run
+	// below measures the limiter and nothing else.
+	ws := r.mustDial("grace")
+	read(t, ws, "presence")
+	limited := false
+	for i := 0; i < 400 && !limited; i++ {
+		send(t, ws, command{ID: int64(i + 1), Cmd: "no.such.command"})
+		answer := read(t, ws, "error")
+		if strings.Contains(answer.Error, "too many") {
+			limited = true
+		}
+	}
+	if !limited {
+		t.Error("a tab sending four hundred commands was never held back")
+	}
+
+	// The limit is per tab as well as per person, so a second tab still works
+	// for a moment and the person's own allowance is what runs out.
+	if _, err := r.dial("ada"); err != nil {
+		t.Errorf("a second tab could not connect: %v", err)
+	}
+}

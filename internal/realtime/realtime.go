@@ -29,6 +29,11 @@ const outBuffer = 64
 // pollWait is how long the fallback holds a request open with nothing to say.
 const pollWait = 25 * time.Second
 
+// maxFrame is the largest command a tab may send. Every one of them is a
+// short JSON object; a description is the longest field in one and the board
+// caps that well below this.
+const maxFrame = 64 << 10
+
 // sessionCheck is how often an idle socket re-reads the session behind it. A
 // tab that is doing something is checked on every command as well. It is a
 // variable so a test does not have to wait a minute for it.
@@ -41,6 +46,7 @@ type Hub struct {
 
 	mu    sync.Mutex
 	rooms map[int64]map[*client]struct{}
+	tabs  int64
 }
 
 func New(b *board.Service, a *auth.Auth, log *slog.Logger) *Hub {
@@ -108,6 +114,9 @@ type client struct {
 	out         chan []byte
 	done        chan struct{}
 	closeOnce   sync.Once
+	// tab names this socket to the rate limiter, so one tab in a loop cannot
+	// spend the allowance of the person's other tabs.
+	tab string
 
 	mu     sync.Mutex
 	where  string
@@ -176,9 +185,14 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	if err != nil {
 		return
 	}
+	ws.MaxPayloadBytes = maxFrame
+	h.mu.Lock()
+	h.tabs++
+	tab := strconv.FormatInt(h.tabs, 10)
+	h.mu.Unlock()
 	c := &client{hub: h, ws: ws, user: user, proposition: proposition,
 		out: make(chan []byte, outBuffer), done: make(chan struct{}),
-		member: member, owner: user.Role == auth.RoleOwner}
+		member: member, owner: user.Role == auth.RoleOwner, tab: tab}
 	defer c.close()
 	go c.write()
 
@@ -202,6 +216,10 @@ func (h *Hub) serve(ws *websocket.Conn) {
 		// stop the writes it was authorising.
 		if !h.stillSignedIn(c, r) {
 			return
+		}
+		if !h.auth.Allow(auth.BucketSocket, c.tab, strconv.FormatInt(c.user.ID, 10)) {
+			c.send(message{Type: "error", Error: "too many changes at once; wait a moment"})
+			continue
 		}
 		var cmd command
 		if err := json.Unmarshal([]byte(raw), &cmd); err != nil {

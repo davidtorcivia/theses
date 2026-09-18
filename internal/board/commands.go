@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/core"
@@ -27,7 +28,31 @@ var (
 	// ErrArchived is an edit to a proposition that has been put away. Restoring
 	// it and deleting it are the two things still allowed.
 	ErrArchived = errors.New("that proposition is archived; restore it first")
+	// ErrTooLong is a field with more in it than the field is for.
+	ErrTooLong = errors.New("that is longer than this field takes")
 )
+
+// What a field on the board holds. A status or a date is a word, a title is a
+// line, a description or a note is the longest thing here. Past these the
+// command refuses rather than storing something the column was never meant to
+// carry and every board that draws it has to render.
+const (
+	maxWord = 100
+	maxLine = 500
+	maxBody = 20000
+	// maxAssignees is more people than the workspace has, so a create naming
+	// more than this is not somebody assigning work.
+	maxAssignees = 50
+)
+
+// field trims a value and refuses one longer than the field takes.
+func field(value string, most int) (string, error) {
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > most {
+		return "", ErrTooLong
+	}
+	return value, nil
+}
 
 // do is core.Do with the one rule core does not know about: an archived
 // proposition is read only, so every command but restore and delete refuses
@@ -119,7 +144,10 @@ const (
 // CreateProposition takes the next number, the columns the settings name and
 // the actor as its first member.
 func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title string) (core.Event, error) {
-	title = strings.TrimSpace(title)
+	title, err := field(title, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if title == "" {
 		return core.Event{}, ErrEmpty
 	}
@@ -196,20 +224,33 @@ func (s *Service) proposition(ctx context.Context, a core.Actor, id int64, need,
 }
 
 func (s *Service) EditProposition(ctx context.Context, a core.Actor, id int64, title, statement, blurb string) (core.Event, error) {
-	title = strings.TrimSpace(title)
+	title, err := field(title, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if title == "" {
 		return core.Event{}, ErrEmpty
+	}
+	if statement, err = field(statement, maxLine); err != nil {
+		return core.Event{}, err
+	}
+	if blurb, err = field(blurb, maxBody); err != nil {
+		return core.Event{}, err
 	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "edit", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
 		_, err := tx.ExecContext(ctx,
 			`UPDATE propositions SET title = ?, statement = ?, blurb = ? WHERE id = ?`,
-			title, strings.TrimSpace(statement), strings.TrimSpace(blurb), id)
+			title, statement, blurb, id)
 		return err
 	})
 }
 
 func (s *Service) SetStatus(ctx context.Context, a core.Actor, id int64, status string) (core.Event, error) {
-	if strings.TrimSpace(status) == "" {
+	status, err := field(status, maxWord)
+	if err != nil {
+		return core.Event{}, err
+	}
+	if status == "" {
 		return core.Event{}, ErrEmpty
 	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "status", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
@@ -219,9 +260,16 @@ func (s *Service) SetStatus(ctx context.Context, a core.Actor, id int64, status 
 }
 
 func (s *Service) Schedule(ctx context.Context, a core.Actor, id int64, episode, targetDate string) (core.Event, error) {
+	episode, err := field(episode, maxWord)
+	if err != nil {
+		return core.Event{}, err
+	}
+	if targetDate, err = field(targetDate, maxWord); err != nil {
+		return core.Event{}, err
+	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "schedule", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
 		_, err := tx.ExecContext(ctx, `UPDATE propositions SET episode = ?, target_date = ? WHERE id = ?`,
-			value(strings.TrimSpace(episode)), value(strings.TrimSpace(targetDate)), id)
+			value(episode), value(targetDate), id)
 		return err
 	})
 }
@@ -300,7 +348,10 @@ func (s *Service) member(ctx context.Context, a core.Actor, proposition, user in
 // Columns.
 
 func (s *Service) CreateColumn(ctx context.Context, a core.Actor, proposition int64, name string) (core.Event, error) {
-	name = strings.TrimSpace(name)
+	name, err := field(name, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if name == "" {
 		return core.Event{}, ErrEmpty
 	}
@@ -361,7 +412,10 @@ func readColumn(ctx context.Context, q store.Querier, id int64) (Column, error) 
 }
 
 func (s *Service) RenameColumn(ctx context.Context, a core.Actor, id int64, name string) (core.Event, error) {
-	name = strings.TrimSpace(name)
+	name, err := field(name, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if name == "" {
 		return core.Event{}, ErrEmpty
 	}
@@ -402,9 +456,15 @@ func (s *Service) DeleteColumn(ctx context.Context, a core.Actor, id int64) (cor
 // Cards.
 
 func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, title string, assignees []int64) (core.Event, error) {
-	title = strings.TrimSpace(title)
+	title, err := field(title, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if title == "" {
 		return core.Event{}, ErrEmpty
+	}
+	if len(assignees) > maxAssignees {
+		return core.Event{}, ErrTooLong
 	}
 	proposition, err := propositionOf(ctx, s.DB, columnScope, column)
 	if err != nil {
@@ -474,7 +534,10 @@ func (s *Service) card(ctx context.Context, a core.Actor, id int64, need, action
 // from. A card has one version across both fields, so an edit that began before
 // somebody else's is refused with the text that is now there.
 func (s *Service) EditCardTitle(ctx context.Context, a core.Actor, id, base int64, title string) (core.Event, error) {
-	title = strings.TrimSpace(title)
+	title, err := field(title, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if title == "" {
 		return core.Event{}, ErrEmpty
 	}
@@ -490,6 +553,10 @@ func (s *Service) EditCardTitle(ctx context.Context, a core.Actor, id, base int6
 }
 
 func (s *Service) EditCardDescription(ctx context.Context, a core.Actor, id, base int64, description string) (core.Event, error) {
+	description, err := field(description, maxBody)
+	if err != nil {
+		return core.Event{}, err
+	}
 	return s.card(ctx, a, id, auth.CanEdit, "edit", func(ctx context.Context, tx *sql.Tx, was Card) error {
 		if was.Version != base {
 			return &core.ConflictError{Entity: "card", EntityID: id, Field: "description_md",
@@ -497,7 +564,7 @@ func (s *Service) EditCardDescription(ctx context.Context, a core.Actor, id, bas
 		}
 		_, err := tx.ExecContext(ctx,
 			`UPDATE cards SET description_md = ?, version = version + 1 WHERE id = ?`,
-			strings.TrimSpace(description), id)
+			description, id)
 		return err
 	})
 }
@@ -555,9 +622,13 @@ func (s *Service) UnassignCard(ctx context.Context, a core.Actor, id, user int64
 }
 
 func (s *Service) SetCardDue(ctx context.Context, a core.Actor, id int64, due string) (core.Event, error) {
+	due, err := field(due, maxWord)
+	if err != nil {
+		return core.Event{}, err
+	}
 	return s.card(ctx, a, id, auth.CanEdit, "due", func(ctx context.Context, tx *sql.Tx, _ Card) error {
 		_, err := tx.ExecContext(ctx, `UPDATE cards SET due_date = ? WHERE id = ?`,
-			value(strings.TrimSpace(due)), id)
+			value(due), id)
 		return err
 	})
 }
@@ -598,7 +669,10 @@ func (s *Service) DeleteCard(ctx context.Context, a core.Actor, id int64) (core.
 // Checklist items.
 
 func (s *Service) AddChecklistItem(ctx context.Context, a core.Actor, card int64, itemText string) (core.Event, error) {
-	itemText = strings.TrimSpace(itemText)
+	itemText, err := field(itemText, maxLine)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if itemText == "" {
 		return core.Event{}, ErrEmpty
 	}
@@ -679,7 +753,10 @@ func readChecklistItem(ctx context.Context, q store.Querier, id int64) (Checklis
 // Notes.
 
 func (s *Service) PostComment(ctx context.Context, a core.Actor, card int64, body string) (core.Event, error) {
-	body = strings.TrimSpace(body)
+	body, err := field(body, maxBody)
+	if err != nil {
+		return core.Event{}, err
+	}
 	if body == "" {
 		return core.Event{}, ErrEmpty
 	}
