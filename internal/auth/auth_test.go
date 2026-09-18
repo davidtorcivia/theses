@@ -288,8 +288,11 @@ func TestInvitationLifecycle(t *testing.T) {
 		t.Errorf("a nonsense token returned %v", err)
 	}
 
-	if err := store.AcceptInvitation(ctx, f.db, inv.ID); err != nil {
-		t.Fatal(err)
+	if accepted, err := store.AcceptInvitation(ctx, f.db, inv.ID); err != nil || !accepted {
+		t.Fatalf("accepting: %v %v", accepted, err)
+	}
+	if accepted, err := store.AcceptInvitation(ctx, f.db, inv.ID); err != nil || accepted {
+		t.Fatalf("accepting twice: %v %v", accepted, err)
 	}
 	if _, err := f.Invitation(ctx, token); !errors.Is(err, ErrTokenInvalid) {
 		t.Errorf("an accepted invitation returned %v", err)

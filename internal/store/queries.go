@@ -270,9 +270,29 @@ func ListPendingInvitations(ctx context.Context, q Querier, now int64) ([]*Invit
 	return out, rows.Err()
 }
 
-func AcceptInvitation(ctx context.Context, q Querier, id int64) error {
-	_, err := q.ExecContext(ctx, `UPDATE invitations SET accepted_at = unixepoch() WHERE id = ?`, id)
-	return err
+// InvitationByID reads an invitation for the second half of acceptance, where
+// the token is no longer in hand but the id is.
+func InvitationByID(ctx context.Context, q Querier, id int64) (*Invitation, error) {
+	var i Invitation
+	err := q.QueryRowContext(ctx, `SELECT id, email, role, invited_by, created_at,
+		expires_at, accepted_at FROM invitations WHERE id = ?`, id).
+		Scan(&i.ID, &i.Email, &i.Role, &i.InvitedBy, &i.CreatedAt, &i.ExpiresAt, &i.AcceptedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &i, err
+}
+
+// AcceptInvitation marks an invitation used and reports whether it was still
+// unused, so two submissions of the same accept form cannot both go through.
+func AcceptInvitation(ctx context.Context, q Querier, id int64) (bool, error) {
+	res, err := q.ExecContext(ctx,
+		`UPDATE invitations SET accepted_at = unixepoch() WHERE id = ? AND accepted_at IS NULL`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ReissueInvitation replaces the token and expiry of a pending invitation, which

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -830,9 +831,11 @@ func TestForbiddenPageLinksOnlyToLogin(t *testing.T) {
 	}
 }
 
-func code(t *testing.T, secret string) string {
+func code(t *testing.T, secret string) string { return codeAt(t, secret, time.Now()) }
+
+func codeAt(t *testing.T, secret string, at time.Time) string {
 	t.Helper()
-	c, err := totp.GenerateCode(secret, time.Now())
+	c, err := totp.GenerateCode(secret, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -875,4 +878,146 @@ func TestAnOutOfRangeSessionLengthStillSignsYouIn(t *testing.T) {
 	if res, _ := h.get("/"); res.StatusCode != http.StatusOK {
 		t.Errorf("the session did not survive the redirect: %d", res.StatusCode)
 	}
+}
+
+// invited walks an invitation as far as the authenticator page and returns the
+// secret and CSRF token waiting there, so a test can interfere in between.
+func (h *harness) invited(role string) (token, secret, csrf string, id int64) {
+	h.Helper()
+	ctx := context.Background()
+	owner, err := store.UserByHandle(ctx, h.db, "dt")
+	if err != nil {
+		h.Fatal(err)
+	}
+	token, err = h.srv.auth.CreateInvitation(ctx, "mara@example.fm", role, owner.ID)
+	if err != nil {
+		h.Fatal(err)
+	}
+	inv, err := h.srv.auth.Invitation(ctx, token)
+	if err != nil {
+		h.Fatal(err)
+	}
+
+	_, body := h.get("/invite/" + token)
+	res, _ := h.post("/invite/"+token, url.Values{
+		"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "handle": {"mara"}, "name": {"Mara Okafor"},
+		"initials": {"MO"}, "colour": {Palette[2]}, "password": {"another long password"},
+	})
+	if res.Header.Get("Location") != "/invite/"+token+"/authenticator" {
+		h.Fatalf("accept gave %d", res.StatusCode)
+	}
+	_, body = h.get("/invite/" + token + "/authenticator")
+	return token, secretRe.FindStringSubmatch(body)[1], csrfRe.FindStringSubmatch(body)[1], inv.ID
+}
+
+// An invitation revoked while someone is on the authenticator page used to mint
+// the account anyway, because the second step never looked at it again.
+func TestAnInvitationRevokedMidwayMakesNoAccount(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	token, secret, csrf, id := h.invited(auth.RoleEditor)
+
+	if err := store.DeleteInvitation(ctx, h.db, id); err != nil {
+		t.Fatal(err)
+	}
+	res, body := h.post("/invite/"+token+"/authenticator", url.Values{
+		"csrf": {csrf}, "code": {code(t, secret)},
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("a revoked invitation gave %d, want the 404 page", res.StatusCode)
+	}
+	if !strings.Contains(body, "Not found.") {
+		t.Error("the refusal is not the error page")
+	}
+	if _, err := store.UserByHandle(ctx, h.db, "mara"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("the account was created from a revoked invitation")
+	}
+}
+
+func TestAnInvitationExpiringMidwayMakesNoAccount(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	token, secret, csrf, _ := h.invited(auth.RoleEditor)
+
+	// The clock moves past the week the invitation was good for. The
+	// authenticator code has to come from the same clock, or the code is what
+	// gets refused and the test proves nothing.
+	later := h.srv.auth.Now().Add(auth.InviteValidity + time.Hour)
+	h.srv.auth.Now = func() time.Time { return later }
+
+	res, _ := h.post("/invite/"+token+"/authenticator", url.Values{
+		"csrf": {csrf}, "code": {codeAt(t, secret, later)},
+	})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("an expired invitation gave %d, want the 404 page", res.StatusCode)
+	}
+	if _, err := store.UserByHandle(ctx, h.db, "mara"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("the account was created from an expired invitation")
+	}
+}
+
+// The same accept submitted twice used to reach CreateUser a second time and
+// die on the email unique constraint with a 500.
+func TestAnInvitationAcceptedTwiceIsRefusedNotA500(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	token, secret, csrf, _ := h.invited(auth.RoleEditor)
+
+	if res, _ := h.post("/invite/"+token+"/authenticator", url.Values{
+		"csrf": {csrf}, "code": {code(t, secret)},
+	}); res.Header.Get("Location") != "/" {
+		t.Fatalf("the first accept gave %d", res.StatusCode)
+	}
+
+	// The pending cookie is gone after a success, so the replay is put back the
+	// way a resubmitted form or a copied cookie would put it.
+	h.replayPending(t, "mara", secret, auth.RoleEditor, inviteID(t, h))
+	res, _ := h.post("/invite/"+token+"/authenticator", url.Values{
+		"csrf": {h.csrf("/invite/" + token + "/authenticator")}, "code": {code(t, secret)},
+	})
+	if res.StatusCode >= 500 {
+		t.Fatalf("a replayed accept gave %d", res.StatusCode)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("a replayed accept gave %d, want the 404 page", res.StatusCode)
+	}
+	var n int
+	if err := h.db.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE handle = 'mara'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("%d accounts named mara", n)
+	}
+}
+
+func inviteID(t *testing.T, h *harness) int64 {
+	t.Helper()
+	var id int64
+	if err := h.db.QueryRowContext(context.Background(), `SELECT id FROM invitations`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// replayPending puts an enrolment cookie back in the jar, which is what a
+// resubmitted form or a copied cookie amounts to.
+func (h *harness) replayPending(t *testing.T, handle, secret, role string, invitation int64) {
+	t.Helper()
+	hash, err := auth.HashPassword("another long password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	if err := h.srv.pending.put(w, false, &pending{
+		Kind: "invite", InvitationID: invitation, Handle: handle, Name: "Mara Okafor",
+		Initials: "MO", Colour: Palette[2], Email: "mara@example.fm", PasswordHash: hash,
+		Role: role, Secret: secret, OTPURL: "otpauth://totp/THESES:" + handle + "?secret=" + secret + "&issuer=THESES",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(h.http.URL)
+	h.client.Jar.SetCookies(u, w.Result().Cookies())
 }

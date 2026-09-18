@@ -198,6 +198,13 @@ func (s *Server) postInvite(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/invite/"+token+"/authenticator", http.StatusSeeOther)
 }
 
+// invitationGone is what an accept form finds when the invitation stopped being
+// valid between the two steps: revoked, expired, or already used.
+func (s *Server) invitationGone(w http.ResponseWriter, r *http.Request) {
+	s.pending.clear(w, s.cfg.CookieSecure)
+	s.errorPage(w, r, http.StatusNotFound)
+}
+
 func (s *Server) inviteRefused(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, auth.ErrTokenExpired) {
 		s.errorPage(w, r, http.StatusNotFound)
@@ -363,14 +370,38 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The invitation was checked before the authenticator step, and could have
+	// been revoked, run out or already been used since. It is read again inside
+	// the transaction so a replayed cookie is refused here rather than dying on
+	// a unique constraint further down.
+	if p.InvitationID != 0 {
+		inv, err := store.InvitationByID(r.Context(), tx, p.InvitationID)
+		if errors.Is(err, store.ErrNotFound) {
+			s.invitationGone(w, r)
+			return
+		}
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if inv.AcceptedAt.Valid || inv.ExpiresAt <= s.auth.Now().Unix() {
+			s.invitationGone(w, r)
+			return
+		}
+	}
 	id, err := store.CreateUser(r.Context(), tx, u)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	if p.InvitationID != 0 {
-		if err := store.AcceptInvitation(r.Context(), tx, p.InvitationID); err != nil {
+		accepted, err := store.AcceptInvitation(r.Context(), tx, p.InvitationID)
+		if err != nil {
 			s.fail(w, r, err)
+			return
+		}
+		if !accepted {
+			s.invitationGone(w, r)
 			return
 		}
 	}
