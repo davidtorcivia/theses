@@ -53,13 +53,16 @@ func newFakeTransistor(t *testing.T) *fakeTransistor {
 		}
 		return true
 	}
+	// The lock covers the inner map as well as the outer one. Taking the inner
+	// map out and reading it afterwards reads the same fields the two PATCH
+	// handlers write, which is the race the outer lookup looks like it closed.
 	write := func(w http.ResponseWriter, id string) {
 		f.mu.Lock()
-		e := f.episodes[id]
+		title, status := f.episodes[id]["title"], f.episodes[id]["status"]
 		f.mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"id": id, "type": "episode", "attributes": map[string]any{
-				"title": e["title"], "status": e["status"], "share_url": "https://example.com/s/" + id,
+				"title": title, "status": status, "share_url": "https://example.com/s/" + id,
 			}}})
 	}
 

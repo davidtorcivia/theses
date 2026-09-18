@@ -75,10 +75,15 @@ func newTransistorFake(t *testing.T) *transistorFake {
 	t.Helper()
 	f := &transistorFake{status: map[string]string{}, next: 900}
 	mux := http.NewServeMux()
+	// The status is copied out under the lock: the handlers that write it hold
+	// it, and encoding straight from the map would read it while they do.
 	answer := func(w http.ResponseWriter, id string) {
+		f.mu.Lock()
+		status := f.status[id]
+		f.mu.Unlock()
 		json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 			"id": id, "attributes": map[string]any{
-				"status": f.status[id], "share_url": "https://example.com/s/" + id}}})
+				"status": status, "share_url": "https://example.com/s/" + id}}})
 	}
 	note := func(r *http.Request) {
 		r.ParseForm()
