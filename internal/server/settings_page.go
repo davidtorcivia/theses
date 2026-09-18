@@ -319,9 +319,12 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
 }
 
-// ponytail: the accept link is logged rather than mailed until internal/mail lands.
+// ponytail: nothing sends it until internal/mail lands, so the invitation is
+// recorded and the link goes nowhere. The link is deliberately not logged:
+// anything with read access to the log could accept the invitation with it.
 func (s *Server) logInvite(who, token string) {
-	s.log.Info("invitation issued", "to", who, "link", s.cfg.BaseURL+"/invite/"+token)
+	_ = token
+	s.log.Info("invitation issued", "to", who)
 }
 
 func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {

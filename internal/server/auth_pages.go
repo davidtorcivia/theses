@@ -462,9 +462,11 @@ func (s *Server) postReset(w http.ResponseWriter, r *http.Request) {
 				s.fail(w, r, err)
 				return
 			}
-			// ponytail: logged rather than mailed until internal/mail lands.
-			s.log.Info("password reset requested", "handle", u.Handle,
-				"link", s.cfg.BaseURL+"/reset/"+token)
+			// ponytail: nothing sends it until internal/mail lands, so the token
+			// is written and the link goes nowhere. The link is deliberately not
+			// logged: anything with read access to the log could use it.
+			_ = token
+			s.log.Info("password reset requested", "handle", u.Handle)
 		}
 	}
 	s.render(w, r, http.StatusOK, "reset.html", s.page(r, "Reset", map[string]any{
@@ -479,13 +481,23 @@ func (s *Server) getResetToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postResetToken(w http.ResponseWriter, r *http.Request) {
-	// The password is checked before the token is spent, so a too-short one does
-	// not burn the link.
-	hash, err := auth.HashPassword(r.PostFormValue("password"))
-	if err != nil {
-		s.render(w, r, http.StatusUnprocessableEntity, "reset_new.html", s.page(r, "Reset", map[string]any{
-			"ArtFrames": quietArt, "Action": r.URL.Path, "Error": err.Error(),
+	refuse := func(status int, msg string) {
+		s.render(w, r, status, "reset_new.html", s.page(r, "Reset", map[string]any{
+			"ArtFrames": quietArt, "Action": r.URL.Path, "Error": msg,
 		}))
+	}
+	if !s.auth.Allow(auth.BucketReset, s.auth.ClientIP(r)) {
+		refuse(http.StatusTooManyRequests, auth.ErrRateLimited.Error())
+		return
+	}
+
+	// Only the length is checked before the token, because hashing is the
+	// expensive part and a wrong token should not pay for it. The token is spent
+	// before the hash for the same reason, and the length check first means a
+	// password the rules refuse still does not burn the link.
+	password := r.PostFormValue("password")
+	if len([]rune(password)) < auth.MinPasswordLen {
+		refuse(http.StatusUnprocessableEntity, fmt.Sprintf("a password is at least %d characters", auth.MinPasswordLen))
 		return
 	}
 	u, err := s.auth.UsePasswordReset(r.Context(), r.PathValue("token"))
@@ -495,6 +507,11 @@ func (s *Server) postResetToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.fail(w, r, err)
+		return
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		refuse(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if err := store.SetPasswordHash(r.Context(), s.db, u.ID, hash); err != nil {

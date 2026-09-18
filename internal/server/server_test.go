@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -35,6 +37,26 @@ type harness struct {
 	db     *store.DB
 	http   *httptest.Server
 	client *http.Client
+	log    *logBuffer
+}
+
+// logBuffer collects what the server logged. The handler writes from whichever
+// goroutine is serving, so it is locked.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
 }
 
 func newHarness(t *testing.T) *harness {
@@ -50,7 +72,8 @@ func newHarness(t *testing.T) *harness {
 		SessionKey: []byte("a session key of at least thirty-two bytes"),
 		LogLevel:   slog.LevelError,
 	}
-	srv, err := New(cfg, db, set, slog.New(slog.NewTextHandler(io.Discard, nil)), "test")
+	logs := &logBuffer{}
+	srv, err := New(cfg, db, set, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +85,7 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	return &harness{
-		T: t, srv: srv, db: db, http: ts,
+		T: t, srv: srv, db: db, http: ts, log: logs,
 		client: &http.Client{
 			Jar:           jar,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -1020,4 +1043,107 @@ func (h *harness) replayPending(t *testing.T, handle, secret, role string, invit
 	}
 	u, _ := url.Parse(h.http.URL)
 	h.client.Jar.SetCookies(u, w.Result().Cookies())
+}
+
+// A reset link or an accept link in the process log is a way in for anything
+// that can read the log, and logs travel further than the database does.
+func TestNoResetOrInviteLinkReachesTheLog(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	if res, _ := h.post("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("invite gave %d", res.StatusCode)
+	}
+	h.signOut()
+	if res, _ := h.post("/reset", url.Values{
+		"csrf": {h.csrf("/reset")}, "who": {"dt"},
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("reset gave %d", res.StatusCode)
+	}
+
+	logged := h.log.String()
+	// The events are still recorded, so an operator can see them happen.
+	for _, want := range []string{"invitation issued", "password reset requested"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("the log does not record %q", want)
+		}
+	}
+	for _, leak := range []string{"/reset/", "/invite/"} {
+		for _, line := range strings.Split(logged, "\n") {
+			// Request lines name the path that was asked for, which is not a token.
+			if strings.Contains(line, "msg=request") {
+				continue
+			}
+			if strings.Contains(line, leak) {
+				t.Errorf("the log carries a %s link: %s", leak, line)
+			}
+		}
+	}
+}
+
+// Hashing before checking the token let anyone spend a full bcrypt on the
+// server with a URL they made up.
+func TestAWrongResetTokenDoesNoHashing(t *testing.T) {
+	was := auth.BcryptCost
+	auth.BcryptCost = 12
+	defer func() { auth.BcryptCost = was }()
+
+	h := newHarness(t)
+	h.setupOwner()
+	u, err := store.UserByHandle(context.Background(), h.db, "dt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	good, err := h.srv.auth.CreatePasswordReset(context.Background(), u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	res, _ := h.post("/reset/not-a-real-token", url.Values{
+		"csrf": {h.csrf("/reset/not-a-real-token")}, "password": {"a long enough password"},
+	})
+	wrong := time.Since(start)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("a wrong token gave %d", res.StatusCode)
+	}
+
+	start = time.Now()
+	if res, _ := h.post("/reset/"+good, url.Values{
+		"csrf": {h.csrf("/reset/" + good)}, "password": {"a long enough password"},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("a real token gave %d", res.StatusCode)
+	}
+	right := time.Since(start)
+
+	if wrong*4 > right {
+		t.Errorf("a wrong token took %v against %v for a real one, so it hashed first", wrong, right)
+	}
+}
+
+func TestTheResetFormIsRateLimited(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	h.signOut()
+
+	token := h.csrf("/reset/whatever")
+	limited := 0
+	for i := 0; i < 20; i++ {
+		res, _ := h.post("/reset/whatever", url.Values{"csrf": {token}, "password": {"a long enough password"}})
+		switch res.StatusCode {
+		case http.StatusNotFound:
+		case http.StatusTooManyRequests:
+			limited = i + 1
+		default:
+			t.Fatalf("attempt %d gave %d", i+1, res.StatusCode)
+		}
+		if limited != 0 {
+			break
+		}
+	}
+	if limited == 0 {
+		t.Error("twenty guesses at a reset token were never rate limited")
+	}
 }
