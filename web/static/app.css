@@ -502,7 +502,7 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
 .list .row.pending{cursor:default;color:var(--dim)}
 #drawer .linked li p{margin:.15rem 0}
 
-/* Findings 2, 5 and 15. The palette shows what the server found, so a row
+/* The palette shows what the server found, so a row
    carries a snippet beside its title and a bare URL can arrive as one; and a
    link with no title of its own is the widest thing in the links pane. Both
    break anywhere rather than pushing the page sideways. The selected row is the
