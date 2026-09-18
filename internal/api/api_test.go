@@ -574,3 +574,28 @@ func TestTheUseIsRecordedAtMostOnceAMinute(t *testing.T) {
 		t.Errorf("a use two minutes after the last one did not record %d", at)
 	}
 }
+
+func TestTheBearerSchemeIsNotCaseSensitive(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead)
+	cases := []struct {
+		header string
+		want   int
+	}{
+		{"Bearer " + token, http.StatusOK},
+		{"bearer " + token, http.StatusOK},
+		{"BEARER " + token, http.StatusOK},
+		{"Basic " + token, http.StatusUnauthorized},
+		{token, http.StatusUnauthorized},
+		{"Bearer", http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		r := httptest.NewRequest("GET", "/api/v1/me", nil)
+		r.Header.Set("Authorization", c.header)
+		w := httptest.NewRecorder()
+		h.handler.ServeHTTP(w, r)
+		if w.Code != c.want {
+			t.Errorf("%q: status %d, want %d", c.header, w.Code, c.want)
+		}
+	}
+}

@@ -133,9 +133,11 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 // wrapped in this too, which is why it is a method and not a closure.
 func (a *API) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		// RFC 9110 says the scheme is matched without regard to case, and some
+		// clients send it lowercase.
+		scheme, presented, _ := strings.Cut(r.Header.Get("Authorization"), " ")
 		presented = strings.TrimSpace(presented)
-		if !ok || presented == "" {
+		if !strings.EqualFold(scheme, "Bearer") || presented == "" {
 			a.unauthorized(w, "send an API token as Authorization: Bearer")
 			return
 		}
