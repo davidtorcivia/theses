@@ -188,7 +188,7 @@ document area stand.
 Scope `write`. The body is JSON with a `name`. The first document of a
 proposition starts from the workspace's document template, with the
 proposition's own statement in place of the placeholder; every one after it
-starts from its own title. An empty name is `400`, as is a fifty first
+starts from its own title. An empty name is `422`, as is a fifty first
 document; a name another document there already has is given a numbered slug
 rather than refused, and an archived proposition is `409`.
 
@@ -230,7 +230,7 @@ those blocks as the HTML the page draws.
 ## `PATCH /api/v1/documents/{id}`
 
 Scope `write`. Renames it: the body is JSON with a `name`. An empty one is
-`400`.
+`422`.
 
 ## `DELETE /api/v1/documents/{id}`
 
@@ -254,9 +254,10 @@ applies a hand edit.
 
 ## `POST /api/v1/documents/{id}/revisions`
 
-Scope `write`. Keeps one now. The body may carry a `reason`, which is `manual`,
-`periodic` or `pre-import`; an empty one is `manual`, and anything else is
-`400`.
+Scope `write`. Keeps one now. A revision asked for over the API is `manual`,
+which is what an empty `reason` means and the only one the body may name.
+`periodic` belongs to the ten minute timer and `pre-import` to the markdown
+watcher, so naming either here is `422`.
 
 ## `POST /api/v1/documents/{id}/blocks`
 
@@ -288,7 +289,7 @@ longer holds, are both `409`:
 
 `current` is what the block holds now and `version` is the version it is at, so
 the next attempt is that text with yours worked into it and that number as
-`base_version`. Text longer than a block may hold is `400`.
+`base_version`. Text longer than a block may hold is `422`.
 
 ## `POST /api/v1/blocks/{id}/move`
 
@@ -411,9 +412,10 @@ resume; on a first answer there are none and it is left out.
 `expires_at` is when those URLs stop working by this server's clock, and
 `ttl_seconds` is how long they last from the moment the answer arrives, which
 is what a client counts from, since its own clock may be minutes out. A folder
-that is not one of the four, and a name that is empty once it has been cleaned
-of paths and control characters, are `422`; object storage nobody has set up
-yet is `503`. An object is ten thousand parts of 64 MiB at most.
+that is not one of the four, a name that is empty once it has been cleaned of
+paths and control characters, and a size of no bytes or of more than the
+largest object allowed, are `422`; object storage nobody has set up yet is
+`503`. An object is ten thousand parts of 64 MiB at most.
 
 ## `GET /api/v1/files/{id}/parts?after=`
 
@@ -539,7 +541,9 @@ Scope `write`. The body carries `channels`, `rules`, or both, and replaces what
 it carries. Channels are a whole list, so one this account has that the list
 leaves out is deleted. A secret left out keeps the stored one and an empty
 string clears it. A channel arrives unverified and stays silent until a test
-reaches it, and one edited to point somewhere else is unverified again.
+reaches it, and one edited to point somewhere else is unverified again. Email
+is the exception: it goes to the address the account signs in with, so it is
+verified the moment it is saved and there is nothing for a test to prove.
 
 ```
 PUT /api/v1/me/notifications
@@ -549,7 +553,7 @@ PUT /api/v1/me/notifications
 ```
 
 A channel that cannot work, quiet hours that are not two times of day, and an
-event key the matrix does not hold are `400`. An `id` this account does not own
+event key the matrix does not hold are `422`. An `id` this account does not own
 is `404`. The answer is what `GET` reports.
 
 Quiet hours hold a message until they end, and a channel set to `digest` holds
