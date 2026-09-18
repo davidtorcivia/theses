@@ -195,12 +195,19 @@ func (s *Service) createDocumentRow(ctx context.Context, a core.Actor, propositi
 	e, err := s.do(ctx, a, proposition, auth.CanEdit, "document", "create",
 		func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 			var count int
-			var statement string
+			var statement, propositionTitle string
 			if err := tx.QueryRowContext(ctx, `SELECT
 				(SELECT count(*) FROM documents WHERE proposition_id = ?),
-				(SELECT statement FROM propositions WHERE id = ?)`,
-				proposition, proposition).Scan(&count, &statement); err != nil {
+				(SELECT statement FROM propositions WHERE id = ?),
+				(SELECT title FROM propositions WHERE id = ?)`,
+				proposition, proposition, proposition).Scan(&count, &statement, &propositionTitle); err != nil {
 				return core.Change{}, err
+			}
+			// A proposition seeded the moment it was made has no statement yet,
+			// and the template's first line would be a bare hash. The title is
+			// what somebody typed, so it stands in until the statement exists.
+			if strings.TrimSpace(statement) == "" {
+				statement = propositionTitle
 			}
 			if count >= maxDocuments {
 				return core.Change{}, ErrTooManyDocuments

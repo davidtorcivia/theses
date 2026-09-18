@@ -11,36 +11,42 @@ import (
 )
 
 // The page is rendered with the documents and their blocks, so the tabs and the
-// document under the board are there before the socket says anything.
+// document under the board are there before the socket says anything. A new
+// proposition is seeded with the three every episode has, so there is never a
+// document area with nothing in it.
 func TestShellCarriesTheDocuments(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	h.setupOwner()
 	owner := h.owner()
 
-	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
-	if err != nil {
-		t.Fatal(err)
-	}
-	document, err := h.srv.docs.CreateDocument(ctx, owner, e.EntityID, "Research")
-	if err != nil {
+	if _, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power"); err != nil {
 		t.Fatal(err)
 	}
 
 	state := h.payload("/")
-	if len(state.Documents) != 1 {
+	want := []string{"Research", "Script", "Show notes"}
+	if len(state.Documents) != len(want) {
 		t.Fatalf("the payload carries %+v", state.Documents)
 	}
-	if state.Documents[0].Name != "Research" || len(state.Documents[0].Blocks) == 0 {
-		t.Fatalf("the document is %+v", state.Documents[0])
+	for i, name := range want {
+		if state.Documents[i].Name != name || len(state.Documents[i].Blocks) == 0 {
+			t.Fatalf("document %d is %+v, wanted %s with blocks", i, state.Documents[i], name)
+		}
 	}
+	// Research starts from the workspace template. A proposition made a moment
+	// ago has no statement, so the template's placeholder takes its title.
+	if first := state.Documents[0].Blocks[0].Text; first != "# Tidal Power" {
+		t.Fatalf("Research starts with %q", first)
+	}
+	document := state.Documents[0]
 
 	// The history the page asks for is the same list the API serves, through
 	// the same membership test.
-	if _, err := h.srv.docs.CreateRevision(ctx, owner, document.EntityID, docs.ReasonManual); err != nil {
+	if _, err := h.srv.docs.CreateRevision(ctx, owner, document.ID, docs.ReasonManual); err != nil {
 		t.Fatal(err)
 	}
-	res, body := h.get("/documents/" + strconv.FormatInt(document.EntityID, 10) + "/revisions")
+	res, body := h.get("/documents/" + strconv.FormatInt(document.ID, 10) + "/revisions")
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("the history gave %d: %s", res.StatusCode, body)
 	}

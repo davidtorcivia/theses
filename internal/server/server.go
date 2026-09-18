@@ -135,6 +135,17 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return settings.Get[string](set, "defaults.document_template")
 	}, log)
 	s.api.Docs, s.hub.Docs = s.docs, s.docs
+	// A new proposition arrives with the three documents every episode has, so
+	// that nobody meets an empty document area and has to guess what goes in it.
+	// The first takes the workspace template; the other two are their heading.
+	s.board.Seed = func(ctx context.Context, a core.Actor, id int64) error {
+		for _, name := range []string{"Research", "Script", "Show notes"} {
+			if _, err := s.docs.CreateDocument(ctx, a, id, name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 
 	// Links and files hang off the same command service, registered after the
 	// board because they chain onto the reader it set and share its rule about

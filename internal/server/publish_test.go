@@ -143,11 +143,14 @@ func publishable(t *testing.T) (*harness, *transistorFake, int64) {
 	id := h.proposition("Tidal Power")
 	actor := core.Actor{Kind: core.KindUser, ID: 1, Name: "Ada Lovelace"}
 
-	doc, err := h.srv.docs.CreateDocument(ctx, actor, id, "Show notes")
-	if err != nil {
+	// Show notes is one of the three a proposition is seeded with, so the
+	// paragraph goes into that one rather than into a second of the same name.
+	var doc int64
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT id FROM documents WHERE proposition_id = ? AND name = 'Show notes'`, id).Scan(&doc); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.srv.docs.InsertBlock(ctx, actor, doc.EntityID, 0, "The tide comes in."); err != nil {
+	if _, err := h.srv.docs.InsertBlock(ctx, actor, doc, 0, "The tide comes in."); err != nil {
 		t.Fatal(err)
 	}
 	const audio = "twelve bytes"
@@ -354,14 +357,19 @@ func TestPublishRefusals(t *testing.T) {
 	})
 }
 
-// Nothing of the section is drawn before an owner has connected Transistor.
-func TestPublishSectionIsHiddenUntilTransistorIsConnected(t *testing.T) {
+// The section is drawn with no Transistor connected, saying why and with
+// nothing in it that can be pressed. A section that vanished left somebody
+// looking for a feature the page never mentions.
+func TestPublishSectionSaysWhyWhenTransistorIsNotConnected(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	at := strconv.FormatInt(h.proposition("Tidal Power"), 10)
 	_, page := h.get("/p/" + at + "/settings")
-	if strings.Contains(page, "Publish</h3>") {
-		t.Fatal("the Publish section is drawn with no Transistor connected")
+	for _, want := range []string{"Publish</h3>", "Transistor is not connected",
+		`<select name="document" disabled>`, `value="publish" disabled>`} {
+		if !strings.Contains(page, want) {
+			t.Fatalf("the Publish section has no %q", want)
+		}
 	}
 	res, _ := h.post("/p/"+at+"/publish", url.Values{
 		"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {"publish"}})

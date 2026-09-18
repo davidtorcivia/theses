@@ -159,9 +159,29 @@ const (
 
 // Propositions.
 
-// CreateProposition takes the next number, the columns the settings name and
-// the actor as its first member.
+// CreateProposition takes the next number, the columns the settings name, the
+// actor as its first member and whatever Seed fills it with. The seed runs in
+// the same transaction, so nobody ever opens a half made proposition.
 func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title string) (core.Event, error) {
+	var created core.Event
+	err := s.Together(ctx, func(ctx context.Context) error {
+		e, err := s.createProposition(ctx, a, title)
+		if err != nil {
+			return err
+		}
+		created = e
+		if s.Seed == nil {
+			return nil
+		}
+		return s.Seed(ctx, a, e.EntityID)
+	})
+	if err != nil {
+		return core.Event{}, err
+	}
+	return created, nil
+}
+
+func (s *Service) createProposition(ctx context.Context, a core.Actor, title string) (core.Event, error) {
 	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err

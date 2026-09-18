@@ -33,6 +33,10 @@ type Service struct {
 	// Defaults is read at the moment a proposition is created, so changing the
 	// setting changes the next one without a restart.
 	Defaults func() Defaults
+	// Seed fills a proposition the moment it is made, in the transaction that
+	// made it. The documents every proposition starts with live a layer above
+	// this package, so the wiring sets this rather than board calling them.
+	Seed func(ctx context.Context, a core.Actor, proposition int64) error
 }
 
 func New(c *core.Service, defaults func() Defaults) *Service {
