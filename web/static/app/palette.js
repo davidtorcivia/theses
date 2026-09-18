@@ -5,7 +5,7 @@
 // does are listed from here, so it is never empty and never waits.
 
 import { $, $$, el, clear, num, say } from './dom.js';
-import { state, emit } from './state.js';
+import { state, emit, material } from './state.js';
 import { openCard } from './drawer.js';
 import { openLink } from './links.js';
 import { openFile } from './files.js';
@@ -83,12 +83,21 @@ function remote(hit) {
   else if (hit.kind === 'user') row.go = state.can.settings ? () => { location.href = '/settings'; } : null;
   else if (!here) row.go = () => { location.href = '/p/' + hit.proposition_id; };
   else if (hit.kind === 'card') row.go = () => { closePalette(); openCard(hit.id); };
-  else if (hit.kind === 'link') row.go = () => { closePalette(); location.hash = 'links'; openLink(hit.id); };
-  else if (hit.kind === 'file') row.go = () => { closePalette(); location.hash = 'files'; openFile(hit.id); };
+  // The links and the files are two requests away and this tab may not have
+  // been on either pane. Opening the drawer before they are here is the drawer
+  // finding nothing and putting itself away again, so it waits for them.
+  else if (hit.kind === 'link') row.go = () => pane('links', () => openLink(hit.id));
+  else if (hit.kind === 'file') row.go = () => pane('files', () => openFile(hit.id));
   else if (hit.kind === 'block') row.go = () => openBlock(hit.id);
   // A comment's card is not in the hit, so the board is as close as this gets.
   else row.go = () => { closePalette(); location.hash = ''; };
   return row;
+}
+
+function pane(tab, open) {
+  closePalette();
+  location.hash = tab;
+  material().then(open).catch(() => {});
 }
 
 // openBlock opens the document holding a block and puts it on the screen. The
