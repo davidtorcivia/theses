@@ -358,7 +358,7 @@ func TestInvitationAcceptCreatesAUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := h.srv.auth.CreateInvitation(ctx, "mara@example.fm", auth.RoleEditor, owner.ID)
+	_, token, err := h.srv.auth.CreateInvitation(ctx, "mara@example.fm", auth.RoleEditor, owner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -916,7 +916,7 @@ func (h *harness) invited(role string) (token, secret, csrf string, id int64) {
 	if err != nil {
 		h.Fatal(err)
 	}
-	token, err = h.srv.auth.CreateInvitation(ctx, "mara@example.fm", role, owner.ID)
+	_, token, err = h.srv.auth.CreateInvitation(ctx, "mara@example.fm", role, owner.ID)
 	if err != nil {
 		h.Fatal(err)
 	}

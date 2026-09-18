@@ -56,7 +56,10 @@
     </form>
     <form class="form" method="post" action="/settings/test/storage">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <button class="lnk" type="submit">Test connection</button>
+      {{if .StorageResult}}<p class="notice{{if .StorageFailed}} bad{{end}}">{{.StorageResult}}</p>{{end}}
+      <button class="lnk" type="submit" name="prefix" value="storage.primary">Test the primary bucket</button>
+      <button class="lnk" type="submit" name="prefix" value="storage.recordings">Test the recordings bucket</button>
+      <p class="small dim">Writes, reads and deletes one probe object with the saved keys. Whether the CORS rule below is in place cannot be checked from here; that takes a preflight from the browser and comes with the upload code.</p>
     </form>
 
     <form class="form" method="post" action="/settings" id="mail">
@@ -80,7 +83,11 @@
     </form>
     <form class="form" method="post" action="/settings/test/mail">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
+      {{if .MailProblem}}<p class="notice bad">{{.MailProblem}}. Queued messages wait until then.</p>{{end}}
+      {{if .MailResult}}<p class="notice{{if .MailFailed}} bad{{end}}">{{.MailResult}}</p>{{end}}
+      <p class="small dim">Outbox: {{.Outbox.Pending}} waiting{{if .Outbox.GivenUp}}, {{.Outbox.GivenUp}} given up and kept for inspection{{end}}.{{if .Outbox.LastError}} Last failure: <span class="mono">{{.Outbox.LastError}}</span>{{end}}</p>
       <button class="lnk" type="submit">Send a test message</button>
+      <button class="lnk" type="submit" formaction="/settings/mail/retry">Retry the outbox now</button>
     </form>
 
     <form class="form" method="post" action="/settings" id="signin">
@@ -173,4 +180,7 @@
   <label class="f"><span class="l">Access key</span><input type="password" name="{{.Prefix}}.access_key" placeholder="{{if .AccessSet}}set, leave empty to keep{{end}}" autocomplete="off"></label>
   <label class="f"><span class="l">Secret key</span><input type="password" name="{{.Prefix}}.secret_key" placeholder="{{if .SecretSet}}set, leave empty to keep{{end}}" autocomplete="off"></label>
 </div>
-<label class="f"><span class="l">Public base URL</span><input name="{{.Prefix}}.public_base_url" value="{{.PublicBaseURL}}" spellcheck="false"><small>Optional, for a CDN in front of the bucket.</small></label>{{end}}
+<label class="f"><span class="l">Public base URL</span><input name="{{.Prefix}}.public_base_url" value="{{.PublicBaseURL}}" spellcheck="false"><small>Optional, for a CDN in front of the bucket.</small></label>
+<div class="f"><span class="l">CORS rule for {{.ProviderLabel}}</span>
+<pre class="cors">{{.CORS}}</pre>
+<small>Apply this on the bucket before the browser can upload to it. The origin is {{.Origin}}, from THESES_BASE_URL. B2 takes it through its CLI or API, R2 through the dashboard.</small></div>{{end}}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/config"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 	"github.com/davidtorcivia/theses/web"
@@ -32,6 +33,7 @@ type Server struct {
 	db       *store.DB
 	auth     *auth.Auth
 	settings *settings.Settings
+	mail     *mail.Outbox
 	log      *slog.Logger
 	version  string
 
@@ -68,6 +70,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		db:         db,
 		auth:       auth.New(db, cfg.SessionKey, cfg.TrustProxy, cfg.CookieSecure),
 		settings:   set,
+		mail:       mail.NewOutbox(db, set, log),
 		log:        log,
 		version:    version,
 		dev:        cfg.Dev,
@@ -93,6 +96,9 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.handler = s.chain(s.routes())
 	return s, nil
 }
+
+// Mail is the outbox worker. main runs it and stops it with the process.
+func (s *Server) Mail() *mail.Outbox { return s.mail }
 
 // AddCheck registers a readiness probe. Call it before the server starts serving.
 func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
@@ -144,6 +150,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /settings", s.requireOwner(s.postSettings))
 	mux.HandleFunc("POST /settings/test/storage", s.requireOwner(s.postTestStorage))
 	mux.HandleFunc("POST /settings/test/mail", s.requireOwner(s.postTestMail))
+	mux.HandleFunc("POST /settings/mail/retry", s.requireOwner(s.postMailRetry))
 	mux.HandleFunc("POST /settings/team/role", s.requireOwner(s.postRole))
 	mux.HandleFunc("POST /settings/team/invite", s.requireOwner(s.postInviteCreate))
 	mux.HandleFunc("POST /settings/team/invite/{id}/resend", s.requireOwner(s.postInviteResend))

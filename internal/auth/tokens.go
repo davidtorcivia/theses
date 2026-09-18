@@ -27,24 +27,27 @@ const (
 
 var validScopes = map[string]bool{ScopeRead: true, ScopeWrite: true, ScopeFiles: true, ScopeAdmin: true}
 
-// CreateInvitation stores a hashed one-time token and returns the clear token
-// for the accept link. The clear token is never stored and cannot be recovered.
-func (a *Auth) CreateInvitation(ctx context.Context, email, role string, invitedBy int64) (string, error) {
+// CreateInvitation stores a hashed one-time token and returns the new
+// invitation's id and the clear token for the accept link. The clear token is
+// never stored and cannot be recovered. The id is what the mail queued for this
+// invitation is filed under, so a later resend can find it.
+func (a *Auth) CreateInvitation(ctx context.Context, email, role string, invitedBy int64) (int64, string, error) {
 	if !ValidRole(role) {
-		return "", fmt.Errorf("%q is not a role", role)
+		return 0, "", fmt.Errorf("%q is not a role", role)
 	}
 	if !strings.Contains(email, "@") {
-		return "", fmt.Errorf("that does not look like an email address")
+		return 0, "", fmt.Errorf("that does not look like an email address")
 	}
 	token, err := randomToken()
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
 	expires := a.Now().Add(InviteValidity).Unix()
-	if _, err := store.CreateInvitation(ctx, a.db, email, role, invitedBy, a.mac(token), expires); err != nil {
-		return "", fmt.Errorf("create invitation: %w", err)
+	id, err := store.CreateInvitation(ctx, a.db, email, role, invitedBy, a.mac(token), expires)
+	if err != nil {
+		return 0, "", fmt.Errorf("create invitation: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(token), nil
+	return id, base64.RawURLEncoding.EncodeToString(token), nil
 }
 
 // ReissueInvitation is "resend": a new token and expiry, the old link dead.

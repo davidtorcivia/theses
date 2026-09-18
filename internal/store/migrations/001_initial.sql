@@ -288,7 +288,20 @@ CREATE TABLE mail_outbox (
   last_error TEXT    NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   next_at    INTEGER NOT NULL,
-  sent_at    INTEGER
+  sent_at    INTEGER,
+  -- When the message stops being worth sending, because the link it carries
+  -- dies: an hour for a password reset, a week for an invitation. NULL never
+  -- expires.
+  expires_at INTEGER,
+  -- When delivery was first attempted. The day of retries runs from here, not
+  -- from created_at, so a message queued before the workspace had an SMTP
+  -- server still gets its full day once one exists. NULL means never tried.
+  tried_at   INTEGER,
+  -- What the message is about, as 'invitation:<id>' or 'reset:<user id>'.
+  -- Queueing a newer message for the same ref abandons the ones still unsent,
+  -- because reissuing a token kills the link the older ones carry. Empty for
+  -- messages that replace nothing.
+  ref        TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX mail_outbox_pending ON mail_outbox(sent_at, next_at);
 

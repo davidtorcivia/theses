@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/blob"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -43,6 +46,8 @@ type bucketView struct {
 	PublicBaseURL            string
 	AccessSet, SecretSet     bool
 	Providers                []option
+	ProviderLabel            string
+	Origin, CORS             string
 }
 
 type envRow struct{ Name, Value, Why string }
@@ -53,6 +58,9 @@ var roleLabels = []option{
 	{Value: auth.RoleResearcher, Label: "Researcher"},
 	{Value: auth.RoleGuest, Label: "Guest"},
 }
+
+// blobProvider maps the settings vocabulary to internal/blob's.
+var blobProvider = map[string]string{"backblaze": "b2", "r2": "r2", "s3": "s3"}
 
 var providerLabels = []option{
 	{Value: "backblaze", Label: "Backblaze B2"},
@@ -141,6 +149,16 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 			Created: on(t.CreatedAt), Used: used})
 	}
 
+	outbox, err := s.mail.State(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The reason mail cannot go out yet, shown on the section that fixes it.
+	mailProblem := ""
+	if _, err := s.mail.Sender(ctx); err != nil {
+		mailProblem = err.Error()
+	}
+
 	data := map[string]any{
 		"S":           shown,
 		"Set":         isSet,
@@ -153,6 +171,8 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 		"Tokens":      tokens,
 		"InviteRoles": roleLabels[1:], // everything but owner
 		"Env":         s.envRows(),
+		"Outbox":      outbox,
+		"MailProblem": mailProblem,
 	}
 	return s.page(r, "Settings", merge(data, extra)), nil
 }
@@ -160,9 +180,14 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 func (s *Server) bucket(prefix string, shown map[string]string, isSet map[string]bool) bucketView {
 	providers := make([]option, len(providerLabels))
 	copy(providers, providerLabels)
+	label := ""
 	for i := range providers {
 		providers[i].On = providers[i].Value == shown[prefix+".provider"]
+		if providers[i].On {
+			label = providers[i].Label
+		}
 	}
+	origin := s.origin()
 	return bucketView{
 		Prefix:        prefix,
 		Endpoint:      shown[prefix+".endpoint"],
@@ -172,7 +197,29 @@ func (s *Server) bucket(prefix string, shown map[string]string, isSet map[string
 		AccessSet:     isSet[prefix+".access_key"],
 		SecretSet:     isSet[prefix+".secret_key"],
 		Providers:     providers,
+		ProviderLabel: label,
+		Origin:        origin,
+		CORS:          corsRule(shown[prefix+".provider"], origin),
 	}
+}
+
+// origin is the scheme and host of THESES_BASE_URL, which is what the bucket's
+// CORS rule has to allow: the browser sends the origin, never the path.
+func (s *Server) origin() string {
+	u, err := url.Parse(s.cfg.BaseURL)
+	if err != nil || u.Host == "" {
+		return s.cfg.BaseURL
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// corsRule is the document for the chosen provider. B2 keeps its own rule shape
+// even behind the S3 endpoint; everything else takes the S3 one.
+func corsRule(provider, origin string) string {
+	if provider == "backblaze" {
+		return blob.CORSRuleB2(origin)
+	}
+	return blob.CORSRuleR2(origin)
 }
 
 func (s *Server) envRows() []envRow {
@@ -214,15 +261,103 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings?saved=1", http.StatusSeeOther)
 }
 
+// postTestStorage writes, heads and deletes one probe object with the saved
+// credentials. Whether the bucket's CORS rule is right is not checked here; that
+// needs a preflight from the browser and belongs with the upload code.
 func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
+	prefix := r.PostFormValue("prefix")
+	if prefix != "storage.primary" && prefix != "storage.recordings" {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	cfg, err := s.bucketConfig(r.Context(), prefix)
+	refuse := func(msg string) {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"StorageResult": mail.Redact(msg, cfg.SecretKey), "StorageFailed": true,
+		})
+	}
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	c, err := blob.New(cfg)
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	defer cancel()
+	if err := c.Probe(ctx); err != nil {
+		refuse(err.Error())
+		return
+	}
 	s.renderSettings(w, r, http.StatusOK, map[string]any{
-		"Error": "Testing the bucket is not wired yet. It arrives with the files step.",
+		"StorageResult": "Wrote, read and deleted a probe object in " + cfg.Bucket + ".",
 	})
 }
 
+// probeTimeout bounds the whole three-call probe, so a bucket that accepts the
+// connection and then says nothing does not hold the settings page open.
+const probeTimeout = 30 * time.Second
+
+func (s *Server) bucketConfig(ctx context.Context, prefix string) (blob.Config, error) {
+	get := func(name string) string { return settings.Get[string](s.settings, prefix+"."+name) }
+	access, err := s.settings.Secret(ctx, prefix+".access_key")
+	if err != nil {
+		return blob.Config{}, err
+	}
+	secret, err := s.settings.Secret(ctx, prefix+".secret_key")
+	if err != nil {
+		return blob.Config{}, err
+	}
+	return blob.Config{
+		Provider:      blobProvider[get("provider")],
+		Endpoint:      get("endpoint"),
+		Region:        get("region"),
+		Bucket:        get("bucket"),
+		AccessKey:     access,
+		SecretKey:     secret,
+		PublicBaseURL: get("public_base_url"),
+	}, nil
+}
+
+// postTestMail sends to the owner who asked, there and then rather than through
+// the outbox, because the point is to see the SMTP server answer.
 func (s *Server) postTestMail(w http.ResponseWriter, r *http.Request) {
+	me := userOf(r)
+	refuse := func(msg string) {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"MailResult": msg, "MailFailed": true,
+		})
+	}
+	if me.Email == "" {
+		refuse("Your account has no email address, so there is nowhere to send it. Add one on your profile first.")
+		return
+	}
+	sender, err := s.mail.Sender(r.Context())
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	if err := sender.Send(r.Context(), mail.Message{
+		To:      []string{me.Email},
+		Subject: "THESES test message",
+		Text: "This is the test message from the Mail section of the THESES settings page." +
+			"\n\nIf it arrived, invitations, password resets and notifications will too.",
+	}); err != nil {
+		refuse(mail.Redact(err.Error(), sender.Password))
+		return
+	}
+	s.renderSettings(w, r, http.StatusOK, map[string]any{"MailResult": "Sent to " + me.Email + "."})
+}
+
+func (s *Server) postMailRetry(w http.ResponseWriter, r *http.Request) {
+	if err := s.mail.RetryNow(r.Context()); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	s.renderSettings(w, r, http.StatusOK, map[string]any{
-		"Error": "Sending a test message is not wired yet. It arrives with the mail step.",
+		"MailResult": "Every unsent message is back at the front of the queue.",
 	})
 }
 
@@ -276,15 +411,24 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
-	token, err := s.auth.CreateInvitation(r.Context(), email, r.PostFormValue("role"), userOf(r).ID)
+	role := r.PostFormValue("role")
+	id, token, err := s.auth.CreateInvitation(r.Context(), email, role, userOf(r).ID)
 	if err != nil {
 		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
-	if err := s.activity(r.Context(), userOf(r).ID, "invitation", email, "create", "", r.PostFormValue("role")); err != nil {
+	// ponytail: the invitation row is already committed by auth on its own
+	// handle, so this is a second transaction and a failure here leaves an
+	// invitation with no mail; give CreateInvitation and ReissueInvitation a
+	// store.Querier and pass this one when auth is next opened.
+	if err := s.write(r, "invitation", email, "create", "", role, func(q store.Querier) error {
+		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, email, role, token),
+			s.auth.Now().Add(auth.InviteValidity), inviteRef(id))
+	}); err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	s.mail.Nudge()
 	s.logInvite(email)
 	// Rendered rather than redirected, for the same reason as a new API token:
 	// this is the only time the link exists anywhere it can be read from.
@@ -301,15 +445,40 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
-	token, err := s.auth.ReissueInvitation(r.Context(), id)
+	// Read before the reissue, because the mail needs the address and the role
+	// and neither comes back with the new token.
+	inv, err := store.InvitationByID(r.Context(), s.db, id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if err := s.activity(r.Context(), userOf(r).ID, "invitation", itoa(id), "resend", "", ""); err != nil {
+	// An invitation that has already been accepted keeps its row, and reissuing
+	// it stores nothing, so the link would open nothing. The statement reports
+	// that it changed no row and this answers as if the invitation were gone.
+	token, err := s.auth.ReissueInvitation(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	// ponytail: the reissued token is committed separately, as on create.
+	if err := s.write(r, "invitation", itoa(id), "resend", "", "", func(q store.Querier) error {
+		// The ref abandons the mail from the last time, whose link the reissue
+		// above has just killed.
+		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, inv.Email, inv.Role, token),
+			s.auth.Now().Add(auth.InviteValidity), inviteRef(id))
+	}); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.mail.Nudge()
 	s.logInvite("invitation " + itoa(id))
 	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewInvite": s.inviteURL(token)})
 }
@@ -321,7 +490,11 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.write(r, "invitation", itoa(id), "revoke", "", "", func(q store.Querier) error {
-		return store.DeleteInvitation(r.Context(), q, id)
+		if err := store.DeleteInvitation(r.Context(), q, id); err != nil {
+			return err
+		}
+		// The token dies here, so the mail still carrying it dies with it.
+		return mail.Abandon(r.Context(), q, inviteRef(id), mail.Revoked)
 	}); err != nil {
 		s.fail(w, r, err)
 		return
@@ -331,9 +504,23 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) inviteURL(token string) string { return s.cfg.BaseURL + "/invite/" + token }
 
+// inviteRef files a queued invitation mail under the invitation it came from,
+// so a resend can abandon the one it replaces.
+func inviteRef(id int64) string { return "invitation:" + itoa(id) }
+
+func (s *Server) inviteMessage(r *http.Request, email, role, token string) mail.Message {
+	return mail.Invite{
+		To:      email,
+		Inviter: userOf(r).Name,
+		Role:    role,
+		URL:     s.inviteURL(token),
+		Expires: auth.InviteValidity,
+	}.Message()
+}
+
 // The link is deliberately not logged, because anything that can read the log
-// could accept the invitation with it. It is shown to the owner once, on the
-// page that made it, and mail will carry it once internal/mail lands.
+// could accept the invitation with it. The mail carries it, and the page that
+// made it shows it once so the owner can pass it on by hand as well.
 func (s *Server) logInvite(who string) {
 	s.log.Info("invitation issued", "to", who)
 }

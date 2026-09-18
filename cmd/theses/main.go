@@ -58,6 +58,15 @@ func run() error {
 		return err
 	}
 
+	// The outbox worker stops with ctx. A send caught by the cancellation
+	// leaves its row untouched and goes out again on the next start; the
+	// shutdown path waits here so the goroutine is gone before the process is.
+	mailDone := make(chan struct{})
+	go func() {
+		defer close(mailDone)
+		srv.Mail().Run(ctx)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:    cfg.Bind,
 		Handler: srv,
@@ -90,6 +99,7 @@ func run() error {
 		if err := httpSrv.Shutdown(shutdown); err != nil {
 			return fmt.Errorf("shutdown: %w", err)
 		}
+		<-mailDone
 		return <-done
 	}
 }

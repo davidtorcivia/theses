@@ -21,7 +21,7 @@ THESES_DEV=1 go run ./cmd/theses
 
 The first visit shows `/setup`: it creates the owner account, enrols an authenticator and signs you in. Until that is done every other route redirects there.
 
-Mail is wired in a later step, so nothing is sent yet. Creating or resending an invitation shows its accept link once, on the Team section of `/settings`, for the owner to pass on; it is not shown again and not written to the log. A password reset writes its token and says nothing, and nothing carries it anywhere, so until mail is wired a forgotten password cannot be recovered. An owner cannot work around it with a new invitation either, because acceptance refuses an address that already has an account.
+Mail goes out through the SMTP server set on the Mail section of `/settings`; until the host and the from address are filled in, messages sit in the outbox and the page says so. A forgotten password is recovered by mail once SMTP is configured: `/reset` queues a one-time link to the address on the account and says the same thing whether or not the account exists. Creating or resending an invitation both queues the accept link and shows it once, on the Team section of `/settings`, for the owner to pass on by hand as well; neither link is written to the log.
 
 Before every commit:
 
@@ -74,8 +74,9 @@ Six environment variables are the whole bootstrap; everything else the owner set
 | `POST /profile/delete` | Delete the account. The last owner cannot. |
 | `GET /settings` | Owner only: Workspace, Defaults, Storage, Mail, Sign-in, Team, Environment. |
 | `POST /settings` | Save every known key the form carried. |
-| `POST /settings/test/storage` | Not wired yet; arrives with the files step. |
-| `POST /settings/test/mail` | Not wired yet; arrives with the mail step. |
+| `POST /settings/test/storage` | Write, read and delete a probe object in the chosen bucket. |
+| `POST /settings/test/mail` | Send a test message to the signed-in owner through the configured SMTP. |
+| `POST /settings/mail/retry` | Put every unsent message back at the front of the outbox. |
 | `POST /settings/team/role` | Change someone's role. |
 | `POST /settings/team/invite` | Send an invitation. |
 | `POST /settings/team/invite/{id}/resend` | New token, new week, old link dead. |
