@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -696,5 +697,75 @@ func TestCommandsRefuseAFieldLongerThanTheFieldTakes(t *testing.T) {
 	// much of it as a field of plain text does.
 	if _, err := f.CreateProposition(ctx, owner, strings.Repeat("é", maxLine)); err != nil {
 		t.Errorf("a title of %d accented characters was refused: %v", maxLine, err)
+	}
+}
+
+// An ordering key is unique within its column. A card that leaves one frees
+// the key it held, and undoing that move has to notice when something else has
+// since been given it, or two cards sit on one key and their order is whatever
+// the database returns first.
+func TestUndoRefusesWhenTheOrderingKeyHasBeenTaken(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	editor := f.who["editor"]
+	moving := f.mustCard(t, f.cols[0].ID, "Call the engineer")
+
+	// The first card in any column takes the same first key, so moving this
+	// one out of its column and making another frees a key and gives it away.
+	move, err := f.MoveCard(ctx, editor, moving.ID, f.cols[1].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, err := f.CreateCard(ctx, editor, f.cols[0].ID, "Draft the opening", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taken, err := GetCard(ctx, f.db, made.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taken.Position != moving.Position {
+		t.Fatalf("the new card took %q, not the freed %q", taken.Position, moving.Position)
+	}
+
+	_, err = f.Undo(ctx, editor, move.Seq)
+	var conflict *core.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("undoing onto a taken key gave %v, want a conflict", err)
+	}
+	if conflict.Field != "position" {
+		t.Errorf("the conflict is %+v", conflict)
+	}
+
+	// Nothing moved, and the two cards are still one to a key.
+	b, err := Load(ctx, f.db, f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, c := range b.Cards {
+		key := fmt.Sprintf("%d/%s", c.ColumnID, c.Position)
+		if other, ok := seen[key]; ok {
+			t.Errorf("%q and %q are both at %s", other, c.Title, key)
+		}
+		seen[key] = c.Title
+	}
+	if len(b.Cards) != 2 {
+		t.Fatalf("cards are %+v", b.Cards)
+	}
+
+	// Once the key is free again the same undo goes through.
+	if _, err := f.MoveCard(ctx, editor, taken.ID, f.cols[2].ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, editor, move.Seq); err != nil {
+		t.Errorf("the undo was still refused with the key free: %v", err)
+	}
+	back, err := GetCard(ctx, f.db, moving.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.ColumnID != f.cols[0].ID || back.Position != moving.Position {
+		t.Errorf("the card came back to column %d at %q", back.ColumnID, back.Position)
 	}
 }

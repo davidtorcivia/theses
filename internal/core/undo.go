@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,14 +21,18 @@ import (
 // it, and unmaking a created one is a delete wearing a different name.
 type undoSpec struct {
 	table string
+	// scope is the column an ordering key is unique within, empty for a table
+	// ordered as a whole. Undo needs it to see whether the key it is about to
+	// put back has been taken since.
+	scope string
 	cols  []string
 }
 
 var undoable = map[string]undoSpec{
-	"proposition":    {"propositions", []string{"title", "statement", "blurb", "status", "episode", "target_date", "position", "archived_at"}},
-	"column":         {"columns", []string{"name", "position"}},
-	"card":           {"cards", []string{"column_id", "position", "title", "description_md", "question", "due_date", "done_at"}},
-	"checklist_item": {"checklist_items", []string{"text", "done", "position"}},
+	"proposition":    {"propositions", "", []string{"title", "statement", "blurb", "status", "episode", "target_date", "position", "archived_at"}},
+	"column":         {"columns", "proposition_id", []string{"name", "position"}},
+	"card":           {"cards", "column_id", []string{"column_id", "position", "title", "description_md", "question", "due_date", "done_at"}},
+	"checklist_item": {"checklist_items", "card_id", []string{"text", "done", "position"}},
 }
 
 // Undo puts back the before of one activity row and marks the row undone. The
@@ -86,7 +91,7 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		// before back would throw away whatever came after it and, for a
 		// position, put two rows on one ordering key. This is the same refusal
 		// a stale text edit gets, so the editor offers the same choice.
-		current, err := snapshot(ctx, tx, spec.table, spec.cols, id)
+		current, err := snapshot(ctx, tx, spec.table, spec.scope, spec.cols, id)
 		if err != nil {
 			return Change{}, err
 		}
@@ -97,6 +102,35 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 			return Change{}, &ConflictError{
 				Entity: entity, EntityID: id, Field: col,
 				Version: version(current), Current: text(current[col]),
+			}
+		}
+
+		// An ordering key is unique within its scope, and the key this undo
+		// would put back may have been given to something else since the row
+		// left it. Two rows on one key is an order that depends on which the
+		// database happens to return first, so this is a refusal rather than a
+		// thing to sort out afterwards. The scope is the one the row is going
+		// back to, which for a card is the column it came from.
+		if key, ok := fields["position"]; ok {
+			where, args := "position = ? AND id <> ?", []any{key, id}
+			if spec.scope != "" {
+				scope, ok := fields[spec.scope]
+				if !ok {
+					scope = current[spec.scope]
+				}
+				where = spec.scope + " = ? AND " + where
+				args = append([]any{scope}, args...)
+			}
+			var taken int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT count(*) FROM `+spec.table+` WHERE `+where, args...).Scan(&taken); err != nil {
+				return Change{}, err
+			}
+			if taken > 0 {
+				return Change{}, &ConflictError{
+					Entity: entity, EntityID: id, Field: "position",
+					Version: version(current), Current: text(current["position"]),
+				}
 			}
 		}
 
@@ -160,15 +194,18 @@ func (s *Service) whole(ctx context.Context, tx *sql.Tx, entity string, spec und
 			return nil, err
 		}
 	}
-	return snapshot(ctx, tx, spec.table, spec.cols, id)
+	return snapshot(ctx, tx, spec.table, spec.scope, spec.cols, id)
 }
 
 // snapshot reads one row as the map that goes into an activity payload. It is
 // generic so that core needs to know nothing about the board's row types.
-func snapshot(ctx context.Context, tx *sql.Tx, table string, cols []string, id int64) (map[string]any, error) {
+func snapshot(ctx context.Context, tx *sql.Tx, table, scope string, cols []string, id int64) (map[string]any, error) {
 	all := append([]string{"id"}, cols...)
 	if table == "cards" {
 		all = append(all, "version")
+	}
+	if scope != "" && !slices.Contains(all, scope) {
+		all = append(all, scope)
 	}
 	dest := make([]any, len(all))
 	values := make([]any, len(all))
