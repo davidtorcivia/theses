@@ -8,6 +8,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,6 +34,10 @@ type Meta struct {
 	KindGuessed  bool
 	Description  string
 	CanonicalURL string
+	// Partial is true when the page could not be parsed as a document and the
+	// fields come from a scan of its tags instead, so the caller knows the
+	// metadata may be short of what the page holds.
+	Partial bool
 }
 
 // maxBody is what Fetch will read from a page. Metadata lives in the head, so
@@ -70,18 +75,23 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) (Meta, error
 		// expand into a large one.
 		body = io.LimitReader(zr, maxBody)
 	}
+	final := rawURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		final = resp.Request.URL.String()
+	}
 	contentType := resp.Header.Get("Content-Type")
 	decoded, err := charset.NewReader(body, contentType)
+	if errors.Is(err, io.EOF) {
+		// An empty body is a page with nothing to say, not a failure: the link
+		// still saves, with whatever the host implies.
+		return Extract(final, nil, contentType), nil
+	}
 	if err != nil {
 		return Meta{}, fmt.Errorf("links: reading %s: %w", rawURL, err)
 	}
 	raw, err := io.ReadAll(decoded)
 	if err != nil {
 		return Meta{}, fmt.Errorf("links: reading %s: %w", rawURL, err)
-	}
-	final := rawURL
-	if resp.Request != nil && resp.Request.URL != nil {
-		final = resp.Request.URL.String()
 	}
 	return Extract(final, raw, contentType), nil
 }
@@ -92,8 +102,9 @@ func Fetch(ctx context.Context, client *http.Client, rawURL string) (Meta, error
 func Extract(finalURL string, body []byte, contentType string) Meta {
 	host, path := hostAndPath(finalURL)
 	var p page
+	var partial bool
 	if isHTML(contentType, body) {
-		p = parse(body)
+		p, partial = parse(body)
 	}
 	ld := p.linkedData()
 	hasCitation := len(p.all("citation_title")) > 0 || len(p.all("citation_author")) > 0
@@ -106,6 +117,7 @@ func Extract(finalURL string, body []byte, contentType string) Meta {
 		CanonicalURL: first(p.one("og:url"), p.canonical),
 		Published: parseDate(first(p.one("citation_publication_date"), p.one("citation_date"),
 			ld.published, p.one("article:published_time"))),
+		Partial: partial,
 	}
 	m.Kind, m.KindGuessed = kind(host, path, hasCitation, p.one("og:type"), ld.kind)
 	return m
@@ -213,48 +225,90 @@ func (p page) one(key string) string {
 	return ""
 }
 
-func parse(body []byte) page {
-	p := page{meta: map[string][]string{}}
+// element records what one tag contributes. text is the tag's text content,
+// which only title and script use.
+func (p *page) element(tag string, attrs []html.Attribute, text string) {
+	switch tag {
+	case "meta":
+		key := attrOf(attrs, "property")
+		if key == "" {
+			key = attrOf(attrs, "name")
+		}
+		if key = strings.ToLower(strings.TrimSpace(key)); key != "" {
+			p.meta[key] = append(p.meta[key], strings.TrimSpace(attrOf(attrs, "content")))
+		}
+	case "title":
+		if p.title == "" {
+			p.title = strings.TrimSpace(text)
+		}
+	case "link":
+		if p.canonical == "" && hasToken(attrOf(attrs, "rel"), "canonical") {
+			p.canonical = strings.TrimSpace(attrOf(attrs, "href"))
+		}
+	case "script":
+		if strings.Contains(strings.ToLower(attrOf(attrs, "type")), "ld+json") {
+			p.scripts = append(p.scripts, text)
+		}
+	}
+}
+
+// parse reads a page. It returns partial true when the document could not be
+// built, which x/net/html refuses to do past 512 open elements, in which case
+// the tags are scanned instead of walked.
+func parse(body []byte) (p page, partial bool) {
+	p = page{meta: map[string][]string{}}
 	doc, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
-		return p
+		return scan(body), true
 	}
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode {
-			switch n.Data {
-			case "meta":
-				key := attr(n, "property")
-				if key == "" {
-					key = attr(n, "name")
-				}
-				if key = strings.ToLower(strings.TrimSpace(key)); key != "" {
-					p.meta[key] = append(p.meta[key], strings.TrimSpace(attr(n, "content")))
-				}
-			case "title":
-				if p.title == "" {
-					p.title = strings.TrimSpace(textOf(n))
-				}
-			case "link":
-				if p.canonical == "" && hasToken(attr(n, "rel"), "canonical") {
-					p.canonical = strings.TrimSpace(attr(n, "href"))
-				}
-			case "script":
-				if strings.Contains(strings.ToLower(attr(n, "type")), "ld+json") {
-					p.scripts = append(p.scripts, textOf(n))
-				}
+			var text string
+			if n.Data == "title" || n.Data == "script" {
+				text = textOf(n)
 			}
+			p.element(n.Data, n.Attr, text)
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			walk(c)
 		}
 	}
 	walk(doc)
-	return p
+	return p, false
 }
 
-func attr(n *html.Node, name string) string {
-	for _, a := range n.Attr {
+// scan reads the same tags with the tokenizer, which keeps no stack of open
+// elements and so gets through a page the parser gives up on.
+func scan(body []byte) page {
+	p := page{meta: map[string][]string{}}
+	z := html.NewTokenizer(bytes.NewReader(body))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return p
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, hasAttr := z.TagName()
+			tag := string(name)
+			var attrs []html.Attribute
+			for hasAttr {
+				key, val, more := z.TagAttr()
+				attrs = append(attrs, html.Attribute{Key: string(key), Val: string(val)})
+				hasAttr = more
+			}
+			var text string
+			if tag == "title" || tag == "script" {
+				if z.Next() == html.TextToken {
+					text = string(z.Text())
+				}
+			}
+			p.element(tag, attrs, text)
+		}
+	}
+}
+
+func attrOf(attrs []html.Attribute, name string) string {
+	for _, a := range attrs {
 		if strings.EqualFold(a.Key, name) {
 			return a.Val
 		}

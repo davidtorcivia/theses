@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/safehttp"
+	"golang.org/x/net/html"
 )
 
 func date(t *testing.T, layout, value string) time.Time {
@@ -388,5 +389,55 @@ func TestAuthorFromProfileLinkIsDropped(t *testing.T) {
 		`<meta property="article:author" content="https://facebook.com/someone"></head></html>`)
 	if got := Extract("https://blog.example/post", body, "text/html"); got.Author != "" {
 		t.Errorf("Author = %q, want it dropped", got.Author)
+	}
+}
+
+// A 200 with nothing in it is a link worth saving, not an error.
+func TestFetchEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	meta, err := Fetch(t.Context(), safehttp.Client(safehttp.AllowLoopback()), srv.URL)
+	if err != nil {
+		t.Fatalf("Fetch of an empty body = %v", err)
+	}
+	if meta.Title != "" || meta.Kind != "article" || !meta.KindGuessed {
+		t.Errorf("Fetch = %+v, want an empty article with a guessed kind", meta)
+	}
+}
+
+// x/net/html refuses to build a document past 512 open elements. The metadata
+// sits in the head, well before that, so it is read with the tokenizer and the
+// caller is told the page was only scanned.
+func TestExtractDeeplyNestedPage(t *testing.T) {
+	body := []byte(`<!DOCTYPE html><html><head>` +
+		`<title>Deep page</title>` +
+		`<meta property="og:title" content="Deep page">` +
+		`<meta property="article:published_time" content="2021-06-01">` +
+		`<meta name="author" content="Someone">` +
+		`<link rel="canonical" href="https://deep.example/page">` +
+		`</head><body>` + strings.Repeat("<div>", 600) + `text`)
+
+	if _, err := html.Parse(bytes.NewReader(body)); err == nil {
+		t.Fatal("html.Parse handled 600 unclosed divs, so this test no longer covers the fallback")
+	}
+	got := Extract("https://deep.example/page", body, "text/html")
+	if !got.Partial {
+		t.Error("Partial = false, want true")
+	}
+	if got.Title != "Deep page" {
+		t.Errorf("Title = %q, want %q", got.Title, "Deep page")
+	}
+	if got.CanonicalURL != "https://deep.example/page" {
+		t.Errorf("CanonicalURL = %q, want the canonical link", got.CanonicalURL)
+	}
+	if got.Author != "Someone" {
+		t.Errorf("Author = %q, want %q", got.Author, "Someone")
+	}
+	if got.Published.Format("2006-01-02") != "2021-06-01" {
+		t.Errorf("Published = %v, want 2021-06-01", got.Published)
 	}
 }
