@@ -155,8 +155,10 @@ back to `/api/events` with the session cookie it already has.
 ## `GET /api/v1/propositions/{id}/documents`
 
 Scope `read`, and the proposition has to be one the token's owner is a member
-of; any other answers `404`. Every document of that proposition with the
-blocks still in it, in the order the tabs above the document area stand.
+of. An owner reads every proposition; for everybody else one they are not a
+member of answers `404`, the same as one that is not there. Every document of
+that proposition with the blocks still in it, in the order the tabs above the
+document area stand.
 
 ```json
 {"documents": [
@@ -189,7 +191,8 @@ a client need not read the document back:
 ```json
 {"event": {"seq": 88, "proposition": 10, "entity": "document", "entity_id": 7,
            "action": "create", "at": 1758067200,
-           "actor": {"kind": "user", "id": 1, "name": "Ada Lovelace"},
+           "actor": {"kind": "user", "id": 1, "name": "Ada Lovelace",
+                     "via": "token:research agent"},
            "after": {"id": 7, "proposition_id": 10, "name": "Interviews",
                      "slug": "interviews", "position": 2, "created_by": 1,
                      "created_at": 1758067200, "revision": 0}}}
@@ -351,9 +354,9 @@ bucket and verified, and `ready` after that.
 {"files": [
   {"id": 8, "proposition_id": 10, "name": "hearing.wav",
    "folder": "Recordings", "kind": "wav", "size": 734003200,
-   "object_key": "10-student-debt/8-hearing.wav", "version_of": null,
-   "duration_ms": 5400000, "width": null, "height": null, "uploaded_by": 1,
-   "state": "ready", "created_at": 1758067200}],
+   "object_key": "10-student-debt-is-a-policy-choice/8/hearing.wav",
+   "version_of": null, "duration_ms": 5400000, "width": null, "height": null,
+   "uploaded_by": 1, "state": "ready", "created_at": 1758067200}],
  "folders": ["Documents", "Reading", "Recordings", "Art"]}
 ```
 
@@ -370,10 +373,11 @@ it:
 ```json
 {"file": {"id": 9, "proposition_id": 10, "name": "tides.md",
           "folder": "Documents", "kind": "md", "size": 12,
-          "object_key": "10-student-debt/9-tides.md", "version_of": null,
-          "duration_ms": null, "width": null, "height": null,
-          "uploaded_by": 1, "state": "uploading", "created_at": 1758067200},
- "url": "https://example.com/bucket/10-student-debt/9-tides.md?...",
+          "object_key": "10-student-debt-is-a-policy-choice/9/tides.md",
+          "version_of": null, "duration_ms": null, "width": null,
+          "height": null, "uploaded_by": 1, "state": "uploading",
+          "created_at": 1758067200},
+ "url": "https://example.com/10-student-debt-is-a-policy-choice/9/tides.md?...",
  "headers": {"Content-Type": "text/markdown; charset=utf-8"},
  "expires_at": 1758070800, "ttl_seconds": 3600}
 ```
@@ -385,9 +389,12 @@ and a batch of sixty four presigned part URLs:
 {"file": {"id": 8, "name": "hearing.wav", "size": 734003200,
           "state": "uploading"},
  "upload_id": 3, "part_size": 67108864,
- "parts": [{"number": 1, "url": "https://example.com/bucket/...&partNumber=1"}],
- "done": [], "expires_at": 1758070800, "ttl_seconds": 3600}
+ "parts": [{"number": 1, "url": "https://example.com/...&partNumber=1"}],
+ "expires_at": 1758070800, "ttl_seconds": 3600}
 ```
+
+A `done` list comes with it once the bucket already holds parts, which is the
+resume; on a first answer there are none and it is left out.
 
 `expires_at` is when those URLs stop working by this server's clock, and
 `ttl_seconds` is how long they last from the moment the answer arrives, which
@@ -435,7 +442,7 @@ current name on it so a browser saves it under that rather than under its
 object key. A file that is not `ready` is `422`.
 
 ```json
-{"url": "https://example.com/bucket/10-student-debt/9-tides.md?..."}
+{"url": "https://example.com/10-student-debt-is-a-policy-choice/9/tides.md?..."}
 ```
 
 ## `GET /api/v1/files/{id}/thumb`
@@ -450,12 +457,12 @@ that replaced, and so on. The file itself is not in the list, and a file that
 replaced nothing answers an empty one.
 
 ```json
-{"versions": [{"id": 6, "proposition_id": 10, "name": "tides.md",
-               "folder": "Documents", "kind": "md", "size": 11,
-               "object_key": "10-student-debt/6-tides.md", "version_of": null,
-               "duration_ms": null, "width": null, "height": null,
-               "uploaded_by": 1, "state": "ready",
-               "created_at": 1757980800}]}
+{"versions": [
+  {"id": 6, "proposition_id": 10, "name": "tides.md", "folder": "Documents",
+   "kind": "md", "size": 11,
+   "object_key": "10-student-debt-is-a-policy-choice/6/tides.md",
+   "version_of": null, "duration_ms": null, "width": null, "height": null,
+   "uploaded_by": 1, "state": "ready", "created_at": 1757980800}]}
 ```
 
 ## `PATCH /api/v1/files/{id}`
@@ -498,9 +505,9 @@ Scope `write`. The same for a file.
 ## `GET /api/v1/me/notifications`
 
 Scope `read`. The channels the token's owner has, every event they can be told
-about, and which channels are ticked for each one. No secret is in it: a
-Pushover user key and a webhook secret are reported as set, an ntfy token as
-`token_set`, and a channel's label carries the last four characters of a key,
+about, and which channels are ticked for each one. No secret is in it: an ntfy
+token comes back as `token_set` and a webhook secret as `secret_set`, and a
+Pushover channel's label carries the last four characters of its user key,
 which is what tells two of them apart and nothing else.
 
 ```json

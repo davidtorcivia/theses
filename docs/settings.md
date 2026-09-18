@@ -73,11 +73,10 @@ hours and its rules on its profile page.
 Webhooks the workspace fires whoever caused the thing, which is how a chat
 room or anything else is wired up without an integration of its own. Each has
 a URL, a secret each message is signed with when one is set, the events it
-fires on, and optionally one
-column: a card move then fires only when the card lands there. A webhook is
-sent nothing until a test message has reached it, and the page tests one as it
-is saved, so a URL that refuses says so on the spot. The secret is stored on
-the same terms as the rest of this page.
+fires on, and optionally one column: a card move then fires only when the card
+lands there. A webhook is sent nothing until a test message has reached it, and
+the page tests one as it is saved, so a URL that refuses says so on the spot.
+The secret is stored on the same terms as the rest of this page.
 
 ## Backups
 
