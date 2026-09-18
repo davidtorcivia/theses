@@ -216,7 +216,9 @@ func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor
 	// The row and the cache are written under one lock, so that two writers of
 	// the same key cannot commit in one order and update the cache in the other
 	// and leave the two disagreeing. Writes are rare and readers hold the lock
-	// for a map lookup, so the wait costs nothing worth measuring.
+	// for a map lookup, so the wait costs nothing worth measuring, and no caller
+	// reads a setting while holding a database connection, which is what could
+	// turn this into a deadlock on the pool.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

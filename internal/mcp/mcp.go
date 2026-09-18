@@ -244,7 +244,7 @@ func (s *Server) setSetting(ctx context.Context, req *sdk.CallToolRequest, in se
 	// Until the activity table records it, the via is written here, so that an
 	// owner reading the log can find which client made a change.
 	s.log.Info("mcp write", "tool", "set_setting", "key", def.Key,
-		"user", p.User.ID, "via", who.Via)
+		"user", p.User.ID, "via", who.Via, "protocol", req.ProtocolVersion())
 	if err := s.set.SetAs(ctx, def.Key, []string{in.Value}, who); err != nil {
 		if errors.Is(err, settings.ErrStorage) {
 			return nil, api.SettingView{}, s.failed("save the setting", err)

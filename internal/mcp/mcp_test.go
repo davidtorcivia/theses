@@ -330,6 +330,9 @@ func TestToolsCarryTheirHints(t *testing.T) {
 		if a.OpenWorldHint == nil || *a.OpenWorldHint {
 			t.Errorf("%s reaches outside the workspace", tool.Name)
 		}
+		if tool.OutputSchema == nil {
+			t.Errorf("%s has no output schema", tool.Name)
+		}
 		if tool.Name == "set_setting" {
 			if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint || !a.IdempotentHint {
 				t.Errorf("set_setting = %+v", a)
@@ -338,9 +341,6 @@ func TestToolsCarryTheirHints(t *testing.T) {
 		}
 		if !a.ReadOnlyHint {
 			t.Errorf("%s is not marked read only", tool.Name)
-		}
-		if tool.OutputSchema == nil {
-			t.Errorf("%s has no output schema", tool.Name)
 		}
 	}
 }

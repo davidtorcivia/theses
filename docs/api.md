@@ -14,12 +14,15 @@ Authorization: Bearer thes_...
 ```
 
 Scopes are `read`, `write`, `files` and `admin`. `admin` implies the others. A
-route says which scope it needs; a token without it is refused.
+route says which scope it needs; a token without it is refused. A token also
+cannot do what the person it belongs to may not do, so demoting someone refuses
+their tokens too: after a demotion to guest, their admin token is refused the
+settings routes and keeps the ones that only read.
 
 | Status | When |
 | --- | --- |
 | 401 | no `Authorization: Bearer` header, or the token is unknown or revoked |
-| 403 | the token is valid but does not have the scope the route needs |
+| 403 | the token does not have the scope the route needs, or the person it belongs to no longer has the standing that scope implies |
 | 404 | no such endpoint, or no such settings key |
 | 413 | the request body is over 64 KiB, which `/api/v1` and `/mcp` both allow |
 | 429 | over 300 requests a minute for one token |

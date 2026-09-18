@@ -165,6 +165,10 @@ func TestMCPNegotiatesTheNewestRevision(t *testing.T) {
 	if got := transport.lastVersion(); got != theProtocolRevision {
 		t.Errorf("the call was made at revision %q, want %q", got, theProtocolRevision)
 	}
+	// What the server settled on, not what the client asked for.
+	if logged := h.log.String(); !strings.Contains(logged, "protocol="+theProtocolRevision) {
+		t.Errorf("the server did not serve the call at %s: %s", theProtocolRevision, logged)
+	}
 	if got := sdk.SupportedProtocolVersions()[0]; got != theProtocolRevision {
 		t.Errorf("the SDK's newest revision is %q, want %q", got, theProtocolRevision)
 	}
