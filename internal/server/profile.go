@@ -15,35 +15,22 @@ var profileSections = map[string]bool{"you": true, "security": true, "notificati
 
 // profileTo is the profile page's half of settingsTo.
 func profileTo(section string, saved bool) string {
-	to := "/profile"
-	if saved {
-		to += "?saved=1"
-	}
-	if profileSections[section] {
-		to += "#" + section
-	}
-	return to
+	return pageTo("/profile", section, profileSections[section], saved)
 }
 
-func (s *Server) renderProfile(w http.ResponseWriter, r *http.Request, extra map[string]any) {
+func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
 	notifications, err := s.notifyProfile(r)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, "profile.html", s.page(r, "Profile", merge(merge(map[string]any{
+	data := s.page(r, "Profile", merge(map[string]any{
 		"Plain":    true,
+		"Section":  "",
 		"Swatches": swatches(u.Colour),
-	}, notifications), extra)))
-}
-
-func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
-	extra := s.pending.takeFlash(w, r, s.cfg.CookieSecure)
-	if r.URL.Query().Get("saved") != "" {
-		extra["Notice"] = "Saved."
-	}
-	s.renderProfile(w, r, extra)
+	}, notifications))
+	s.render(w, r, http.StatusOK, "profile.html", s.said(w, r, data, profileSections))
 }
 
 func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +134,7 @@ func (s *Server) postSignOutEverywhere(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.pending.clearFlash(w, s.cfg.CookieSecure)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 

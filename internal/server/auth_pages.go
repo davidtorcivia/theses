@@ -136,6 +136,9 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	// Whatever the last form had to say goes with the session, so the next
+	// person to use this browser is not handed it.
+	s.pending.clearFlash(w, s.cfg.CookieSecure)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 

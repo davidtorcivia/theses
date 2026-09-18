@@ -180,7 +180,7 @@ func (s *Server) postNotificationRules(w http.ResponseWriter, r *http.Request) {
 		s.back(w, r, "/profile#notifications", map[string]any{"Error": err.Error()})
 		return
 	}
-	http.Redirect(w, r, "/profile?saved=1#notifications", http.StatusSeeOther)
+	http.Redirect(w, r, profileTo("notifications", true), http.StatusSeeOther)
 }
 
 // channelFrom reads a channel out of a posted form, keeping the secrets that
@@ -254,7 +254,7 @@ func (s *Server) postChannel(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.saveAndTest(w, r, c, u.Email, "/profile#notifications", "/profile?saved=1#notifications")
+	s.saveAndTest(w, r, c, u.Email, "/profile#notifications", profileTo("notifications", true))
 }
 
 // saveAndTest is the one path a channel is written by, whoever it belongs to.
@@ -314,7 +314,7 @@ func (s *Server) postChannelDelete(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/profile?saved=1#notifications", http.StatusSeeOther)
+	http.Redirect(w, r, profileTo("notifications", true), http.StatusSeeOther)
 }
 
 // channelOf reads the channel a path names and refuses one that is not the
@@ -352,7 +352,7 @@ func (s *Server) postNotifyDefaults(w http.ResponseWriter, r *http.Request) {
 		s.back(w, r, "/settings#notifications", map[string]any{"Error": err.Error()})
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#notifications", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("notifications", true), http.StatusSeeOther)
 }
 
 // postWorkspaceWebhook saves one of the workspace's webhooks, which belong to
@@ -374,7 +374,7 @@ func (s *Server) postWorkspaceWebhook(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	s.saveAndTest(w, r, c, "", "/settings#integrations", "/settings?saved=1#integrations")
+	s.saveAndTest(w, r, c, "", "/settings#integrations", settingsTo("integrations", true))
 }
 
 func (s *Server) postWorkspaceWebhookTest(w http.ResponseWriter, r *http.Request) {
@@ -400,5 +400,5 @@ func (s *Server) postWorkspaceWebhookDelete(w http.ResponseWriter, r *http.Reque
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }

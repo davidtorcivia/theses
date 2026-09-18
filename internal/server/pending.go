@@ -131,11 +131,25 @@ func (p *pendingStore) clear(w http.ResponseWriter, secure bool) {
 // reason the enrollment cookie is: a new API token and a new invitation link
 // both pass through it, and neither may sit in a readable cookie or in an
 // address the browser keeps in its history.
+//
+// It names who it is for, when it stops being true and which page it belongs
+// on, and all three are checked before a word of it is printed. A browser two
+// people share would otherwise show the second one the first one's token, and
+// a cookie with no expiry of its own would still show it days later.
+type flash struct {
+	UserID  int64          `json:"u"`
+	Path    string         `json:"p"`
+	Section string         `json:"s"`
+	Expires int64          `json:"x"`
+	Say     map[string]any `json:"y"`
+}
+
 const flashCookie = "theses_flash"
 const flashValidity = time.Minute
 
-func (p *pendingStore) putFlash(w http.ResponseWriter, secure bool, say map[string]any) error {
-	value, err := p.seal(say)
+func (p *pendingStore) putFlash(w http.ResponseWriter, secure bool, f *flash) error {
+	f.Expires = time.Now().Add(flashValidity).Unix()
+	value, err := p.seal(f)
 	if err != nil {
 		return err
 	}
@@ -152,17 +166,29 @@ func (p *pendingStore) putFlash(w http.ResponseWriter, secure bool, say map[stri
 }
 
 // takeFlash reads it and clears it: what a form said is said once, on the page
-// it posted from, and not again on the next one.
-func (p *pendingStore) takeFlash(w http.ResponseWriter, r *http.Request, secure bool) map[string]any {
-	say := map[string]any{}
+// it posted from, to the account that posted it, and not again afterwards. One
+// that is still good but belongs on the other page is left where it is, since
+// that page has not been asked for yet and the minute is short.
+func (p *pendingStore) takeFlash(w http.ResponseWriter, r *http.Request, secure bool, userID int64) *flash {
 	c, err := r.Cookie(flashCookie)
 	if err != nil {
-		return say
+		return nil
 	}
+	var f flash
+	live := p.unseal(c.Value, &f) && f.UserID == userID && f.Expires > time.Now().Unix()
+	if live && f.Path != r.URL.Path {
+		return nil
+	}
+	p.clearFlash(w, secure)
+	if !live {
+		return nil
+	}
+	return &f
+}
+
+func (p *pendingStore) clearFlash(w http.ResponseWriter, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name: flashCookie, Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
-	p.unseal(c.Value, &say)
-	return say
 }

@@ -194,7 +194,7 @@ func (s *Server) getDriveCallback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }
 
 // postDriveDisconnect throws the token away. The client id and secret stay, so
@@ -204,7 +204,7 @@ func (s *Server) postDriveDisconnect(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }
 
 func (s *Server) postTransistorDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +212,7 @@ func (s *Server) postTransistorDisconnect(w http.ResponseWriter, r *http.Request
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }
 
 func (s *Server) postTestDrive(w http.ResponseWriter, r *http.Request) {

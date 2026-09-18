@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -89,11 +90,12 @@ var providerLabels = []option{
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	extra := s.pending.takeFlash(w, r, s.cfg.CookieSecure)
-	if r.URL.Query().Get("saved") != "" {
-		extra["Notice"] = "Saved."
+	data, err := s.settingsData(r, nil)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	s.renderSettings(w, r, extra)
+	s.render(w, r, http.StatusOK, "settings.html", s.said(w, r, data, settingsSections))
 }
 
 // settingsSections are the anchors a form on the settings page may send the
@@ -104,17 +106,59 @@ var settingsSections = map[string]bool{
 }
 
 // settingsTo is where a form on the settings page sends the browser: the
-// section it posted from, with the saved notice on the way if it saved.
+// section it posted from, with the saved notice on the way if it saved. The
+// section is in the query as well as the fragment, because the fragment never
+// reaches this process and the notice has to be printed in the right section.
 func settingsTo(section string, saved bool) string {
-	to := "/settings"
-	if saved {
-		to += "?saved=1"
+	return pageTo("/settings", section, settingsSections[section], saved)
+}
+
+func pageTo(path, section string, known, saved bool) string {
+	if !known {
+		section = ""
 	}
-	if settingsSections[section] {
+	to := path
+	if saved {
+		to += "?saved=" + cmp.Or(section, "1")
+	}
+	if section != "" {
 		to += "#" + section
 	}
 	return to
 }
+
+// sectionOf is which section of the page a form posted from, taken from the
+// address a redirect built.
+func sectionOf(to string, known map[string]bool) string {
+	_, section, _ := strings.Cut(to, "#")
+	if !known[section] {
+		return ""
+	}
+	return section
+}
+
+// said adds what the last form had to say to a page that is about to render:
+// the saved notice the address carries, and the flash. The flash is spent here
+// rather than at the top of the handler so that a page which cannot be built
+// does not eat the one thing it was meant to print.
+func (s *Server) said(w http.ResponseWriter, r *http.Request, data map[string]any, known map[string]bool) map[string]any {
+	if v := r.URL.Query().Get("saved"); v != "" {
+		data["Notice"] = "Saved."
+		if known[v] {
+			data["Section"] = v
+		}
+	}
+	if f := s.pending.takeFlash(w, r, s.cfg.CookieSecure, userOf(r).ID); f != nil {
+		data["Section"] = f.Section
+		merge(data, f.Say)
+	}
+	return data
+}
+
+// flashValueMax is how much of one value the cookie carries. A provider is
+// free to answer with kilobytes, and a cookie over about four of them is one
+// the browser drops without a word, taking the whole notice with it.
+const flashValueMax = 1024
 
 // back is how every form on the settings and profile pages answers. The
 // browser goes to the section it posted from, carrying what the form has to
@@ -123,21 +167,27 @@ func settingsTo(section string, saved bool) string {
 // a reload or the Back button found nothing at all.
 func (s *Server) back(w http.ResponseWriter, r *http.Request, to string, say map[string]any) {
 	if len(say) > 0 {
-		if err := s.pending.putFlash(w, s.cfg.CookieSecure, say); err != nil {
+		path, _, _ := strings.Cut(to, "#")
+		path, _, _ = strings.Cut(path, "?")
+		known := settingsSections
+		if path == "/profile" {
+			known = profileSections
+		}
+		for k, v := range say {
+			text, ok := v.(string)
+			if !ok || len(text) <= flashValueMax {
+				continue
+			}
+			s.log.Warn("a notice was too long for the page to carry", "key", k, "said", text)
+			say[k] = text[:flashValueMax] + "… The rest is in the log."
+		}
+		f := &flash{UserID: userOf(r).ID, Path: path, Section: sectionOf(to, known), Say: say}
+		if err := s.pending.putFlash(w, s.cfg.CookieSecure, f); err != nil {
 			s.fail(w, r, err)
 			return
 		}
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
-}
-
-func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, extra map[string]any) {
-	data, err := s.settingsData(r, extra)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.render(w, r, http.StatusOK, "settings.html", data)
 }
 
 func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string]any, error) {
@@ -216,6 +266,7 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 
 	data := map[string]any{
 		"Plain":       true,
+		"Section":     "",
 		"S":           shown,
 		"Set":         isSet,
 		"Days":        []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"},
@@ -571,7 +622,7 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("team", true), http.StatusSeeOther)
 }
 
 func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
@@ -679,7 +730,7 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("team", true), http.StatusSeeOther)
 }
 
 func (s *Server) inviteURL(token string) string { return s.cfg.BaseURL + "/invite/" + token }
@@ -733,7 +784,7 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#tokens", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("tokens", true), http.StatusSeeOther)
 }
 
 // activity records a mutation that could not share a transaction with its

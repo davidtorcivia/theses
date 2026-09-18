@@ -7,13 +7,14 @@
   </nav>
   <div class="apane">
     <h2>Settings</h2>
-    {{template "notice" .}}
+    {{if not .Section}}{{template "notice" .}}{{end}}
 
     <form class="form" method="post" action="/settings" id="workspace">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="workspace">
       <section class="fs">
         <div class="fsh"><h3>Workspace</h3><p>The workspace these propositions belong to, and when an episode is due.</p></div>
         <div class="fsb">
+          {{if eq .Section "workspace"}}{{template "notice" .}}{{end}}
           <div class="row3">
             <label class="f"><span class="l">Name</span><input name="workspace.name" value="{{index .S "workspace.name"}}"></label>
             <label class="f"><span class="l">Episode numbering starts at</span><input name="workspace.episode_start" value="{{index .S "workspace.episode_start"}}"></label>
@@ -33,6 +34,7 @@
       <section class="fs">
         <div class="fsh"><h3>Defaults</h3><p>What a new proposition starts with. Existing boards and documents keep their own.</p></div>
         <div class="fsb">
+          {{if eq .Section "defaults"}}{{template "notice" .}}{{end}}
           <label class="f"><span class="l">Board columns</span><textarea name="defaults.columns" rows="6" spellcheck="false">{{index .S "defaults.columns"}}</textarea><small>One per line, in order.</small></label>
           <label class="f"><span class="l">Statuses</span><textarea name="defaults.statuses" rows="5" spellcheck="false">{{index .S "defaults.statuses"}}</textarea><small>These are the rail groups and the filter.</small></label>
           <label class="f"><span class="l">Question labels</span><textarea name="defaults.question_labels" rows="4" spellcheck="false">{{index .S "defaults.question_labels"}}</textarea><small>The four questions a card can be tagged with, I to IV.</small></label>
@@ -47,6 +49,7 @@
       <section class="fs">
         <div class="fsh"><h3>Storage</h3><p>Where files and recordings live. Changing a bucket does not move what is already in the old one. The bucket needs a CORS rule allowing PUT, GET and HEAD from this origin, because the browser talks to it directly.</p></div>
         <div class="fsb">
+          {{if eq .Section "storage"}}{{template "notice" .}}{{end}}
           {{template "bucket" .Primary}}
           <h3 class="sub">Recordings</h3>
           <p class="small dim">Leave the bucket empty to keep recordings in the primary bucket.</p>
@@ -73,6 +76,7 @@
       <section class="fs">
         <div class="fsh"><h3>Mail</h3><p>Invitations, password resets and notifications go out through this server. Sending is queued, so a hiccup never fails a request.</p></div>
         <div class="fsb">
+          {{if eq .Section "mail"}}{{template "notice" .}}{{end}}
           <div class="row3">
             <label class="f"><span class="l">SMTP host</span><input name="mail.host" value="{{index .S "mail.host"}}" spellcheck="false"></label>
             <label class="f"><span class="l">Port</span><input name="mail.port" value="{{index .S "mail.port"}}"></label>
@@ -103,6 +107,7 @@
       <section class="fs">
         <div class="fsh"><h3>Sign-in</h3><p>Account name, password and an authenticator code, in one form. There is no other way in.</p></div>
         <div class="fsb">
+          {{if eq .Section "signin"}}{{template "notice" .}}{{end}}
           <div class="row3">
             <label class="f"><span class="l">Require an authenticator</span><select name="signin.require_totp"><option value="all"{{if eq (index .S "signin.require_totp") "all"}} selected{{end}}>Everyone</option><option value="owners"{{if eq (index .S "signin.require_totp") "owners"}} selected{{end}}>Owners only</option></select><small>Owners are always required to enroll.</small></label>
             <label class="f"><span class="l">Session length</span><input name="signin.session_days" value="{{index .S "signin.session_days"}}"><small>Days a sign-in lasts.</small></label>
@@ -118,6 +123,7 @@
       <section class="fs">
         <div class="fsh"><h3>Backups</h3><p>Every night the database and the markdown mirror go to the bucket under the <span class="mono">{{.Backups.Prefix}}</span> prefix, as one archive encrypted with a key derived from THESES_SECRET_KEY: a restore needs that variable and nothing else. Three things are set up on the bucket, because none of them can be done from here. One, an application key restricted to that prefix with write and list but no delete, which is the key below. Two, Object Lock in compliance mode with a retention of the keep window, so nothing, including the account owner, can remove a backup before it expires. Three, server-side encryption on the bucket. Old archives are expired by the bucket's lifecycle rule; nothing here ever deletes one.</p></div>
         <div class="fsb">
+          {{if eq .Section "backups"}}{{template "notice" .}}{{end}}
           <div class="row3">
             <label class="f"><span class="l">Nightly backup</span><select name="backups.enabled"><option value="off"{{if not .Backups.Enabled}} selected{{end}}>Off</option><option value="on"{{if .Backups.Enabled}} selected{{end}}>On</option></select><small>The first one runs as soon as it is switched on.</small></label>
             <label class="f"><span class="l">Time of day</span><input name="backups.time" value="{{index .S "backups.time"}}"><small>24 hour, in the workspace time zone.</small></label>
@@ -139,7 +145,7 @@
       <p class="small dim">{{.Backups.State}}{{if .Backups.Running}} One is running now.{{end}}{{if .Backups.Failure}} Last failure: <span class="mono">{{.Backups.Failure}}</span>{{end}}</p>
       <div class="tests">
         <button class="lnk" type="submit">Test backup key</button>
-        <button class="btn" type="submit" formaction="/settings/backups/now">Back up now</button>
+        <button class="act" type="submit" formaction="/settings/backups/now">Back up now</button>
       </div>
       <p class="small dim">The test writes and lists one object under {{.Backups.Prefix}} and then tries to delete it. A refused delete is the pass: it is what says this key cannot take the history with it.</p>
       {{if .Backups.ListError}}<p class="notice bad">{{.Backups.ListError}}</p>{{end}}
@@ -165,6 +171,7 @@
     <section class="fs" id="team">
       <div class="fsh"><h3>Team</h3><p>Owners change roles and settings. Editors do everything else. Researchers cannot delete. Guests read.</p></div>
       <div class="fsb">
+        {{if eq .Section "team"}}{{template "notice" .}}{{end}}
         <table class="team"><thead><tr><th>Person</th><th>Email</th><th>Role</th><th>Last seen</th></tr></thead><tbody>
           {{range .Members}}<tr>
             <td>{{template "initials" .}}<span>{{.Name}}</span></td>
@@ -179,13 +186,13 @@
           </tr>{{end}}
         </tbody></table>
 
-        <p class="small dim">The invitation link appears here, once, as soon as it is made, whether or not the mail goes out.</p>
         <form class="invite" method="post" action="/settings/team/invite">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <label class="f"><span class="l">Email</span><input type="email" name="email" placeholder="someone@example.com" spellcheck="false" required></label>
           <label class="f"><span class="l">Role</span><select name="role">{{range .InviteRoles}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select></label>
-          <button class="btn" type="submit">Send invite</button>
+          <button class="act" type="submit">Send invite</button>
         </form>
+        <p class="small dim">The invitation link appears here, once, as soon as it is made, whether or not the mail goes out.</p>
         {{if .NewInvite}}<p class="notice">{{.InviteSaid}} The link is shown here once and not again.
           <span class="once" id="new-invite">{{.NewInvite}}</span>
           <button class="lnk" type="button" data-copy="new-invite">Copy</button></p>{{end}}
@@ -201,7 +208,8 @@
         </ul>
 
         <h3 class="sub" id="tokens">API tokens</h3>
-        <p class="small dim">A token carries the permissions of the account that made it. It is shown here once, as soon as it is made.</p>
+        {{if eq .Section "tokens"}}{{template "notice" .}}{{end}}
+        <p class="small dim">A token carries the permissions of the account that made it.</p>
         <ul class="pending">
           {{range .Tokens}}<li>
             <span>{{.Name}}</span>
@@ -213,8 +221,9 @@
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <label class="f"><span class="l">Name</span><input name="name" placeholder="What is it for" required></label>
           <label class="f"><span class="l">Scopes</span><select name="scopes"><option value="read">read</option><option value="read write">read and write</option><option value="read write files">read, write and files</option><option value="read write files admin">everything</option></select></label>
-          <button class="btn" type="submit">Create a token</button>
+          <button class="act" type="submit">Create a token</button>
         </form>
+        <p class="small dim">The token appears here, once, as soon as it is made.</p>
         {{if .NewToken}}<p class="notice">The token is shown here once and not again.
           <span class="once" id="new-token">{{.NewToken}}</span>
           <button class="lnk" type="button" data-copy="new-token">Copy</button></p>{{end}}
@@ -226,6 +235,7 @@
       <section class="fs">
         <div class="fsh"><h3>Notifications</h3><p>What the workspace holds for everybody: the Pushover application, the ntfy server and the hour the digest and the date pass run.</p></div>
         <div class="fsb">
+          {{if eq .Section "notifications"}}{{template "notice" .}}{{end}}
           {{if .NotifyResult}}<p class="notice{{if .NotifyFailed}} bad{{end}}">{{.NotifyResult}}</p>{{end}}
           <div class="row3">
             <label class="f"><span class="l">Pushover application token</span><input type="password" name="notify.pushover_token" autocomplete="off" placeholder="{{if index .Set "notify.pushover_token"}}set{{else}}not set{{end}}"><small>Members then paste only their own user key. Empty keeps what is stored.</small></label>
@@ -252,6 +262,7 @@
     <section class="fs" id="integrations">
       <div class="fsh"><h3>Integrations</h3><p>The services this workspace reaches. Each keeps its own keys, stored the way every other secret on this page is. Webhooks are below them: the workspace fires those whoever caused them, signed with their own secret, which is how Slack and anything else is wired without an integration of its own.</p></div>
       <div class="fsb">
+        {{if eq .Section "integrations"}}{{template "notice" .}}{{end}}
         {{if .IntegrationResult}}<p class="notice{{if .IntegrationFailed}} bad{{end}}">{{.IntegrationResult}}</p>{{end}}
         <ul class="ints">
           <li>
@@ -281,7 +292,7 @@
             <span class="mono">{{.URL}}</span>
             <span class="chanacts"><button class="lnk" type="button" data-dialog="hook-{{.ID}}">Configure</button><button class="lnk" type="submit" form="hook-test-{{.ID}}">Test</button></span>
           </li>{{end}}{{end}}
-          <li><b>Webhook</b><span class="mono dim">not set</span><span>POST JSON on the events you choose</span><span class="chanacts"><button class="btn" type="button" data-dialog="hook-new">Add a webhook</button></span></li>
+          <li><b>Webhook</b><span class="mono dim">not set</span><span>POST JSON on the events you choose</span><span class="chanacts"><button class="act" type="button" data-dialog="hook-new">Add a webhook</button></span></li>
         </ul>
         {{range .Hooks}}{{if .ID}}<form method="post" action="/settings/integrations/webhook/{{.ID}}/test" id="hook-test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}{{end}}
         <form method="post" action="/settings/integrations/drive/connect" id="drive-connect" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
