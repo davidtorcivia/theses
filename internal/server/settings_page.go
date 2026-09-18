@@ -248,13 +248,19 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	// The last owner is safe without a count here: only an owner reaches this
-	// handler and the case above refuses changing your own role, so any other
-	// owner being demoted means there are at least two.
+	kept := false
 	if err := s.write(r, "user", itoa(id), "role", u.Role, role, func(q store.Querier) error {
-		return store.SetUserRole(r.Context(), q, id, role)
+		var err error
+		kept, err = store.SetUserRoleKeepingAnOwner(r.Context(), q, id, role)
+		return err
 	}); err != nil {
 		s.fail(w, r, err)
+		return
+	}
+	if !kept {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"Error": "That is the last owner. Make someone else an owner first.",
+		})
 		return
 	}
 	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)

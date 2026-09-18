@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -79,4 +81,126 @@ func TestPasswordResetIsSingleUse(t *testing.T) {
 	if ok, err := UsePasswordReset(ctx, db, r.ID); err != nil || ok {
 		t.Fatalf("second use accepted: ok=%v err=%v", ok, err)
 	}
+}
+
+// Several owners all demoting themselves at once. The guard is one statement,
+// so whatever order they land in, the last one is refused.
+func TestConcurrentDemotionsLeaveAnOwner(t *testing.T) {
+	ctx := context.Background()
+	for round := 0; round < 20; round++ {
+		db := OpenTemp(t)
+		const owners = 8
+		ids := make([]int64, owners)
+		for i := range ids {
+			ids[i] = newOwner(t, db, fmt.Sprintf("owner%d", i))
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, id := range ids {
+			wg.Add(1)
+			go func(id int64) {
+				defer wg.Done()
+				<-start
+				if _, err := SetUserRoleKeepingAnOwner(ctx, db, id, "editor"); err != nil {
+					t.Error(err)
+				}
+			}(id)
+		}
+		close(start)
+		wg.Wait()
+
+		if left := countOwners(t, db); left != 1 {
+			t.Fatalf("round %d left %d owners, want 1", round, left)
+		}
+		db.Close()
+	}
+}
+
+// The same for deletion.
+func TestConcurrentDeletionsLeaveAnOwner(t *testing.T) {
+	ctx := context.Background()
+	for round := 0; round < 20; round++ {
+		db := OpenTemp(t)
+		const owners = 8
+		ids := make([]int64, owners)
+		for i := range ids {
+			ids[i] = newOwner(t, db, fmt.Sprintf("owner%d", i))
+		}
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for _, id := range ids {
+			wg.Add(1)
+			go func(id int64) {
+				defer wg.Done()
+				<-start
+				if _, err := DeleteUserKeepingAnOwner(ctx, db, id); err != nil {
+					t.Error(err)
+				}
+			}(id)
+		}
+		close(start)
+		wg.Wait()
+
+		if left := countOwners(t, db); left != 1 {
+			t.Fatalf("round %d left %d owners, want 1", round, left)
+		}
+		db.Close()
+	}
+}
+
+func TestTheGuardRefusesTheOnlyOwner(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+	only := newOwner(t, db, "dt")
+
+	if ok, err := SetUserRoleKeepingAnOwner(ctx, db, only, "editor"); err != nil || ok {
+		t.Errorf("demoting the only owner: ok=%v err=%v", ok, err)
+	}
+	if ok, err := DeleteUserKeepingAnOwner(ctx, db, only); err != nil || ok {
+		t.Errorf("deleting the only owner: ok=%v err=%v", ok, err)
+	}
+	if owners := countOwners(t, db); owners != 1 {
+		t.Errorf("%d owners left, want the one that was refused", owners)
+	}
+}
+
+func TestTheGuardLetsGoWhenAnotherOwnerRemains(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+	newOwner(t, db, "dt")
+	b := newOwner(t, db, "mara")
+
+	if ok, err := SetUserRoleKeepingAnOwner(ctx, db, b, "editor"); err != nil || !ok {
+		t.Fatalf("demoting the second owner: ok=%v err=%v", ok, err)
+	}
+	if ok, err := DeleteUserKeepingAnOwner(ctx, db, b); err != nil || !ok {
+		t.Fatalf("deleting a non-owner: ok=%v err=%v", ok, err)
+	}
+	if owners := countOwners(t, db); owners != 1 {
+		t.Errorf("%d owners left", owners)
+	}
+}
+
+func newOwner(t *testing.T, db *DB, handle string) int64 {
+	t.Helper()
+	id, err := CreateUser(context.Background(), db, &User{
+		Handle: handle, Email: handle + "@example.com", Name: handle,
+		Initials: "XX", Colour: "#111", Role: "owner", PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func countOwners(t *testing.T, db *DB) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM users WHERE role = 'owner'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

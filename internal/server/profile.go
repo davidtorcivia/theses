@@ -135,23 +135,21 @@ func (s *Server) postSignOutEverywhere(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) postDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
-	if u.Role == auth.RoleOwner {
-		owners, err := store.CountOwners(r.Context(), s.db)
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		if owners < 2 {
-			s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
-				"Error": "You are the last owner. Make someone else an owner first.",
-			})
-			return
-		}
-	}
+	// Counting first and deleting after let two owners delete themselves at the
+	// same moment and leave nobody, so the count is part of the delete.
+	deleted := false
 	if err := s.write(r, "user", itoa(u.ID), "delete", u.Handle, "", func(q store.Querier) error {
-		return store.DeleteUser(r.Context(), q, u.ID)
+		var err error
+		deleted, err = store.DeleteUserKeepingAnOwner(r.Context(), q, u.ID)
+		return err
 	}); err != nil {
 		s.fail(w, r, err)
+		return
+	}
+	if !deleted {
+		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"Error": "You are the last owner. Make someone else an owner first.",
+		})
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

@@ -92,12 +92,6 @@ func CountUsers(ctx context.Context, q Querier) (int, error) {
 	return n, err
 }
 
-func CountOwners(ctx context.Context, q Querier) (int, error) {
-	var n int
-	err := q.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE role = 'owner'`).Scan(&n)
-	return n, err
-}
-
 func UpdateProfile(ctx context.Context, q Querier, id int64, handle, name, initials, colour, email string) error {
 	_, err := q.ExecContext(ctx,
 		`UPDATE users SET handle = ?, name = ?, initials = ?, colour = ?, email = ? WHERE id = ?`,
@@ -108,6 +102,33 @@ func UpdateProfile(ctx context.Context, q Querier, id int64, handle, name, initi
 func SetUserRole(ctx context.Context, q Querier, id int64, role string) error {
 	_, err := q.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, id)
 	return err
+}
+
+// SetUserRoleKeepingAnOwner changes a role but never leaves the workspace
+// without an owner, and reports whether it did. The count and the write are one
+// statement, so two owners demoting each other at the same moment cannot both
+// pass their own check and leave nobody able to reach the settings.
+func SetUserRoleKeepingAnOwner(ctx context.Context, q Querier, id int64, role string) (bool, error) {
+	res, err := q.ExecContext(ctx, `UPDATE users SET role = ?
+		WHERE id = ? AND (role <> 'owner'
+			OR (SELECT count(*) FROM users WHERE role = 'owner' AND id <> ?) > 0)`, role, id, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// DeleteUserKeepingAnOwner is the same guard for deleting an account.
+func DeleteUserKeepingAnOwner(ctx context.Context, q Querier, id int64) (bool, error) {
+	res, err := q.ExecContext(ctx, `DELETE FROM users
+		WHERE id = ? AND (role <> 'owner'
+			OR (SELECT count(*) FROM users WHERE role = 'owner' AND id <> ?) > 0)`, id, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func SetPasswordHash(ctx context.Context, q Querier, id int64, hash string) error {
