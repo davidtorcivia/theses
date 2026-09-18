@@ -210,10 +210,11 @@ func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title str
 				return core.Change{}, err
 			}
 		}
+		// The creator is a member, written here rather than by a second
+		// command because every later command on this proposition is
+		// authorised against the row, including the one that would add it.
 		if a.Kind == core.KindUser && a.ID != 0 {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO proposition_members (proposition_id, user_id) VALUES (?, ?)`,
-				id, a.ID); err != nil {
+			if err := addMember(ctx, tx, id, a.ID); err != nil {
 				return core.Change{}, err
 			}
 		}
@@ -356,9 +357,7 @@ func (s *Service) member(ctx context.Context, a core.Actor, proposition, user in
 			if exists == 0 {
 				return core.Change{}, core.ErrNotFound
 			}
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO proposition_members (proposition_id, user_id) VALUES (?, ?)`,
-				proposition, user); err != nil {
+			if err := addMember(ctx, tx, proposition, user); err != nil {
 				return core.Change{}, err
 			}
 			return core.Change{Entity: "member", EntityID: user, Action: "add", After: row}, nil
@@ -370,6 +369,15 @@ func (s *Service) member(ctx context.Context, a core.Actor, proposition, user in
 		}
 		return core.Change{Entity: "member", EntityID: user, Action: "remove", Before: row}, nil
 	})
+}
+
+// addMember is the one statement that puts somebody on a proposition, so the
+// create and the member command cannot come to disagree about what that means.
+func addMember(ctx context.Context, tx *sql.Tx, proposition, user int64) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO proposition_members (proposition_id, user_id) VALUES (?, ?)`,
+		proposition, user)
+	return err
 }
 
 // Columns.

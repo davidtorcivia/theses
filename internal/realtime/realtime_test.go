@@ -640,3 +640,49 @@ func TestLongPollHoldsOpenAndMissesNothingInTheWindow(t *testing.T) {
 		t.Fatal("the fallback never answered a change made while it waited")
 	}
 }
+
+// A proposition somebody makes is a proposition they are on, so their other
+// open tab hears about it rather than waiting for a reload. The membership row
+// goes in with the proposition, not through a member command, because every
+// later command on it is authorised against that row.
+func TestCreatorsOtherTabSeesTheNewProposition(t *testing.T) {
+	r := newRig(t)
+	one := r.mustDial("grace")
+	read(t, one, "presence")
+	two := r.mustDial("grace")
+	read(t, two, "presence")
+
+	send(t, one, command{ID: 1, Cmd: "proposition.create", Args: args{Title: "Harbour Walls"}})
+	made := read(t, one, "ack")
+	if made.Event == nil {
+		t.Fatalf("the create was answered with %+v", made)
+	}
+
+	for {
+		e := read(t, two, "event")
+		if e.Event.Entity != "proposition" {
+			continue
+		}
+		if e.Event.EntityID != made.Event.EntityID {
+			t.Fatalf("the other tab saw proposition %d, want %d", e.Event.EntityID, made.Event.EntityID)
+		}
+		var p board.Proposition
+		if err := json.Unmarshal(e.Event.After, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Title != "Harbour Walls" || len(p.Members) != 1 || p.Members[0] != r.users["grace"].ID {
+			t.Errorf("the other tab saw %+v", p)
+		}
+		break
+	}
+
+	// Somebody else's new proposition still does not reach them.
+	stranger, err := r.dialProposition("stranger", 0)
+	if err != nil {
+		t.Fatalf("a tab with nothing open could not connect: %v", err)
+	}
+	defer stranger.Close()
+	send(t, one, command{ID: 2, Cmd: "proposition.create", Args: args{Title: "Tide Tables"}})
+	read(t, one, "ack")
+	readNothing(t, stranger)
+}

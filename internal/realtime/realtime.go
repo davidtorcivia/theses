@@ -265,6 +265,17 @@ func (c *client) forward(sub *core.Subscription) {
 // removed from the one they have open, so a removed member stops receiving on
 // the same command that removed them.
 func (c *client) membership(e core.Event) {
+	// A proposition somebody makes is a proposition they are on. The row that
+	// says so is written with the proposition rather than by a member command,
+	// so this is where another tab of theirs learns about it, and it has to
+	// happen before the event is filtered or the tab would never see the
+	// proposition it just made.
+	if e.Entity == "proposition" && e.Action == "create" && e.Actor.ID == c.user.ID {
+		c.mu.Lock()
+		c.member[e.Proposition] = true
+		c.mu.Unlock()
+		return
+	}
 	if e.Entity != "member" || e.EntityID != c.user.ID {
 		return
 	}
