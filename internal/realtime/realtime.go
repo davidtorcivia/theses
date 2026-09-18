@@ -353,9 +353,10 @@ func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable", http.StatusInternalServerError)
 		return
 	}
-	if len(events) == 0 {
+	if len(events) == 0 && r.URL.Query().Get("wait") != "0" {
 		// Nothing yet, so hold the request open until something happens or the
-		// browser would give up on it anyway.
+		// browser would give up on it anyway. A tab catching up after a
+		// reconnect asks with wait=0 and takes the empty answer.
 		sub := h.board.Bus.Subscribe(proposition)
 		defer sub.Close()
 		timer := time.NewTimer(pollWait)

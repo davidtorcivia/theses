@@ -59,7 +59,7 @@
           <ul class="cols">
             {{range .Columns}}<li>
               <input name="name-{{.ID}}" value="{{.Name}}" aria-label="Column name">
-              <span class="mono cnt">{{.Cards}} cards</span>
+              <span class="mono cnt">{{.Cards}} card{{if ne .Cards 1}}s{{end}}</span>
               <button class="lnk quiet" type="submit" name="up" value="{{.ID}}"{{if .First}} disabled{{end}}>Up</button>
               <button class="lnk quiet" type="submit" name="down" value="{{.ID}}"{{if .Last}} disabled{{end}}>Down</button>
               <button class="lnk del" type="submit" name="remove" value="{{.ID}}">Remove</button>
@@ -106,4 +106,12 @@
       </form>
     </dialog>{{end}}
   </section>
-</main>{{end}}
+</main>
+<div id="palette" hidden><div class="pal">
+  <input type="search" placeholder="Search, jump, do…" spellcheck="false" aria-label="Search this workspace">
+  <ul></ul>
+</div></div>
+<p id="netbar" class="mono" hidden>Offline. Your changes are kept on this device.</p>
+<script type="application/json" id="payload">{{.Payload}}</script>{{end}}
+
+{{define "scripts"}}<script type="module" src="{{asset "app/settings.js"}}"></script>{{end}}

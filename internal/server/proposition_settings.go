@@ -104,12 +104,21 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The page carries the same payload the board does, so the rail beside it,
+	// the initials in the top bar and the palette are the same live ones.
+	payload, err := s.shellPayload(r, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
 	statuses := make([]option, 0, 5)
 	for _, st := range settings.Get[[]string](s.settings, "defaults.statuses") {
 		statuses = append(statuses, option{Value: st, Label: st, On: st == p.Status})
 	}
 
 	data := s.page(r, number(p.Number)+" "+p.Title, merge(map[string]any{
+		"Payload":  payload,
 		"P":        p,
 		"Num":      number(p.Number),
 		"Episode":  deref(p.Episode),

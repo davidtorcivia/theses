@@ -88,6 +88,20 @@ func (s *Server) workspacePage(w http.ResponseWriter, r *http.Request, open int6
 	}))
 }
 
+// shellPayload is the same state, ready to render into a script element. The
+// per proposition settings page carries it for the rail and the presence.
+func (s *Server) shellPayload(r *http.Request, open int64) (template.JS, error) {
+	state, err := s.shellState(r, open)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+	return template.JS(payload), nil
+}
+
 func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 	ctx := r.Context()
 	me := userOf(r)
