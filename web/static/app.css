@@ -578,3 +578,7 @@ body.plain #top .show{display:inline;margin-right:auto;min-width:0;overflow:hidd
 .invite .f{flex:1 1 200px;margin:0}
 /* 8: a value the page shows once, selectable in one click beside its Copy. */
 .once{display:block;font-family:var(--monof);font-size:12px;letter-spacing:.05em;color:var(--p);overflow-wrap:anywhere;user-select:all;margin:.4rem 0 .3rem}
+/* 3 and 13: below 640 the account link hid its own initials along with the
+   name, so the one route to the account and, beside it, to the settings was a
+   link nothing drew. The initials stay. */
+#top .acct .u{display:inline-flex}
