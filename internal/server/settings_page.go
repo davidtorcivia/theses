@@ -297,6 +297,10 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
 	}
+	if !s.auth.Allow(auth.BucketInvite, s.auth.ClientIP(r), "invitation "+itoa(id)) {
+		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
+		return
+	}
 	token, err := s.auth.ReissueInvitation(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)

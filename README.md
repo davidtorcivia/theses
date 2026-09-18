@@ -21,7 +21,7 @@ THESES_DEV=1 go run ./cmd/theses
 
 The first visit shows `/setup`: it creates the owner account, enrols an authenticator and signs you in. Until that is done every other route redirects there.
 
-Mail is wired in a later step, so nothing is sent yet. Creating or resending an invitation shows its accept link once, on the Team section of `/settings`, for the owner to pass on; it is not shown again and not written to the log. A password reset writes its token and says nothing, so until mail lands a forgotten password is reset by an owner issuing a fresh invitation.
+Mail is wired in a later step, so nothing is sent yet. Creating or resending an invitation shows its accept link once, on the Team section of `/settings`, for the owner to pass on; it is not shown again and not written to the log. A password reset writes its token and says nothing, and nothing carries it anywhere, so until mail is wired a forgotten password cannot be recovered. An owner cannot work around it with a new invitation either, because acceptance refuses an address that already has an account.
 
 Before every commit:
 
