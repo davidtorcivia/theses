@@ -238,6 +238,9 @@ func parse(def Def, values []string) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %q is not a number", def.Label, first)
 		}
+		if def.Max != 0 && (n < def.Min || n > def.Max) {
+			return nil, fmt.Errorf("%s: %d is outside %d to %d", def.Label, n, def.Min, def.Max)
+		}
 		return n, nil
 	case KindChoice:
 		for _, c := range def.Choices {

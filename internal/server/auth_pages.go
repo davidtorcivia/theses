@@ -39,10 +39,16 @@ func swatches(selected string) map[string]any {
 	return map[string]any{"Colours": Palette, "Selected": selected}
 }
 
+// sessionDays clamps as well as reads. The registry bounds what can be saved,
+// but a row written before that bound existed would otherwise build an expiry
+// that overflows and signs everyone out for good.
 func (s *Server) sessionDays() int {
 	days := settings.Get[int](s.settings, "signin.session_days")
 	if days < 1 {
-		days = 30
+		return 1
+	}
+	if days > settings.MaxSessionDays {
+		return settings.MaxSessionDays
 	}
 	return days
 }

@@ -152,3 +152,40 @@ func TestSetValidates(t *testing.T) {
 		})
 	}
 }
+
+func TestIntegerSettingsAreBounded(t *testing.T) {
+	ctx := context.Background()
+	s := open(t, store.OpenTemp(t), key)
+
+	// A session length past a year overflows the duration that builds the cookie
+	// expiry, which wrote an already expired session on every sign-in.
+	if err := s.Set(ctx, "signin.session_days", []string{"200000"}, 0); err == nil {
+		t.Fatal("a session length of 200000 days was accepted")
+	} else if !strings.Contains(err.Error(), "outside 1 to 365") {
+		t.Errorf("error %q does not name the bounds", err)
+	}
+	if err := s.Set(ctx, "signin.session_days", []string{"0"}, 0); err == nil {
+		t.Error("a session length of zero days was accepted")
+	}
+	if err := s.Set(ctx, "signin.session_days", []string{"365"}, 0); err != nil {
+		t.Fatalf("365 days was refused: %v", err)
+	}
+	if got := Get[int](s, "signin.session_days"); got != 365 {
+		t.Errorf("signin.session_days = %d", got)
+	}
+
+	for _, c := range []struct{ key, value string }{
+		{"mail.port", "0"},
+		{"mail.port", "70000"},
+		{"signin.handle_min_length", "1"},
+		{"signin.handle_min_length", "40"},
+		{"workspace.episode_start", "-1"},
+	} {
+		if err := s.Set(ctx, c.key, []string{c.value}, 0); err == nil {
+			t.Errorf("%s=%s was accepted", c.key, c.value)
+		}
+	}
+	if err := s.Set(ctx, "mail.port", []string{"465"}, 0); err != nil {
+		t.Errorf("a real port was refused: %v", err)
+	}
+}

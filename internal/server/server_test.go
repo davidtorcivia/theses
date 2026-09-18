@@ -838,3 +838,41 @@ func code(t *testing.T, secret string) string {
 	}
 	return c
 }
+
+// A row written before the registry bounded the key would otherwise build an
+// expiry that overflows, so every sign-in wrote an already expired session and
+// a cookie with a negative max age, and nobody could get in again.
+func TestAnOutOfRangeSessionLengthStillSignsYouIn(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	password, secret := h.setupOwner()
+	h.signOut()
+
+	if err := store.PutSetting(ctx, h.db, "signin.session_days", "200000", false, 0); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := settings.Open(ctx, h.db, []byte("a settings key of at least thirty-two bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.srv.settings = reloaded
+	if got := h.srv.sessionDays(); got != settings.MaxSessionDays {
+		t.Fatalf("sessionDays = %d, want it clamped to %d", got, settings.MaxSessionDays)
+	}
+
+	res, _ := h.post("/login", url.Values{
+		"csrf": {h.csrf("/login")}, "handle": {"dt"}, "password": {password},
+		"code": {code(t, secret)},
+	})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login gave %d", res.StatusCode)
+	}
+	for _, c := range res.Cookies() {
+		if c.Name == auth.SessionCookie && c.MaxAge <= 0 {
+			t.Errorf("the session cookie was set with max age %d", c.MaxAge)
+		}
+	}
+	if res, _ := h.get("/"); res.StatusCode != http.StatusOK {
+		t.Errorf("the session did not survive the redirect: %d", res.StatusCode)
+	}
+}

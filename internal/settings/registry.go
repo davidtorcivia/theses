@@ -12,15 +12,22 @@ const (
 )
 
 // Def describes one known setting. Label and Hint are what /settings prints.
+// Min and Max bound a KindInt; a Max of zero means the key is unbounded.
 type Def struct {
-	Key     string
-	Kind    Kind
-	Default any
-	Secret  bool
-	Label   string
-	Hint    string
-	Choices []string
+	Key      string
+	Kind     Kind
+	Default  any
+	Secret   bool
+	Label    string
+	Hint     string
+	Choices  []string
+	Min, Max int
 }
+
+// MaxSessionDays is the longest a sign-in may last. Past a year the expiry
+// stops being a session and starts being a liability, and a large enough value
+// overflows the duration that builds the cookie.
+const MaxSessionDays = 365
 
 var days = []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 var providers = []string{"backblaze", "r2", "s3"}
@@ -28,7 +35,7 @@ var providers = []string{"backblaze", "r2", "s3"}
 // Registry is every setting the app knows. A key not here cannot be written.
 var Registry = []Def{
 	{Key: "workspace.name", Kind: KindString, Default: "We All Fall Down", Label: "Name"},
-	{Key: "workspace.episode_start", Kind: KindInt, Default: 1, Label: "Episode numbering starts at"},
+	{Key: "workspace.episode_start", Kind: KindInt, Default: 1, Min: 0, Max: 10000, Label: "Episode numbering starts at"},
 	{Key: "workspace.release_day", Kind: KindChoice, Default: "Monday", Choices: days, Label: "Release day"},
 	{Key: "workspace.release_time", Kind: KindString, Default: "06:00", Label: "Release time", Hint: "24 hour, in the workspace time zone."},
 	{Key: "workspace.timezone", Kind: KindString, Default: "America/New_York", Label: "Time zone", Hint: "An IANA name, for example America/New_York."},
@@ -55,15 +62,15 @@ var Registry = []Def{
 	{Key: "storage.recordings.public_base_url", Kind: KindString, Default: "", Label: "Public base URL"},
 
 	{Key: "mail.host", Kind: KindString, Default: "", Label: "SMTP host"},
-	{Key: "mail.port", Kind: KindInt, Default: 587, Label: "Port"},
+	{Key: "mail.port", Kind: KindInt, Default: 587, Min: 1, Max: 65535, Label: "Port"},
 	{Key: "mail.tls", Kind: KindChoice, Default: "starttls", Choices: []string{"starttls", "tls", "none"}, Label: "TLS"},
 	{Key: "mail.user", Kind: KindString, Default: "", Label: "Username"},
 	{Key: "mail.password", Kind: KindString, Default: "", Secret: true, Label: "Password"},
 	{Key: "mail.from", Kind: KindString, Default: "", Label: "From address"},
 
 	{Key: "signin.require_totp", Kind: KindChoice, Default: "all", Choices: []string{"all", "owners"}, Label: "Require an authenticator", Hint: "Owners are always required to enrol."},
-	{Key: "signin.session_days", Kind: KindInt, Default: 30, Label: "Session length", Hint: "Days a sign-in lasts before it has to be repeated."},
-	{Key: "signin.handle_min_length", Kind: KindInt, Default: 2, Label: "Shortest account name", Hint: "Account names are lowercase letters, digits and hyphens, up to 32 characters."},
+	{Key: "signin.session_days", Kind: KindInt, Default: 30, Min: 1, Max: MaxSessionDays, Label: "Session length", Hint: "Days a sign-in lasts before it has to be repeated, 1 to 365."},
+	{Key: "signin.handle_min_length", Kind: KindInt, Default: 2, Min: 2, Max: 32, Label: "Shortest account name", Hint: "Account names are lowercase letters, digits and hyphens, up to 32 characters."},
 }
 
 var byKey = func() map[string]Def {
