@@ -18,10 +18,15 @@ list with the reasoning beside each one.
 Generate both keys with `openssl rand -hex 32`. Startup refuses a weak one.
 
 `THESES_DEV` and `THESES_LOG_LEVEL` are optional and read by the binary.
-`THESES_BIND_HOST`, `THESES_PORT`, `TZ` and `THESES_VERSION` are read by
+`THESES_BIND_HOST`, `THESES_PORT` and `THESES_VERSION` are read by
 `docker-compose.yml` and by nothing else. `/settings` lists the variables the
 binary reads, read-only under Environment, with a line each on why it cannot
 be edited there.
+
+`TZ` sets the container's local time zone. `internal/config` never reads it;
+the Go runtime does, which is what puts a local offset on the Date header of
+outgoing mail. Release times and the digest run on the workspace time zone
+set on `/settings`, not on this.
 
 ## Compose
 
