@@ -119,6 +119,19 @@ func configure(t *testing.T, set *settings.Settings, host string, port int) {
 	}
 }
 
+// deadPort is a port nothing listens on, so a dial to it fails at once.
+func deadPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	ln.Close()
+	n, _ := strconv.Atoi(port)
+	return n
+}
+
 func countRows(t *testing.T, db *store.DB, where string, args ...any) int {
 	t.Helper()
 	var n int
@@ -196,15 +209,7 @@ func TestOutboxSendsAndMarksSent(t *testing.T) {
 
 func TestOutboxRecordsFailureAndBacksOff(t *testing.T) {
 	o, db, set := newTestOutbox(t)
-	// A port nothing listens on: the dial fails at once.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, port, _ := net.SplitHostPort(ln.Addr().String())
-	ln.Close()
-	dead, _ := strconv.Atoi(port)
-	configure(t, set, "127.0.0.1", dead)
+	configure(t, set, "127.0.0.1", deadPort(t))
 
 	ctx := context.Background()
 	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
@@ -235,10 +240,10 @@ func TestOutboxRecordsFailureAndBacksOff(t *testing.T) {
 		t.Errorf("the row that failed was not kept: %d", n)
 	}
 
-	// Ready again, but past the day: the batch no longer sees it, and it stays
-	// for inspection with its error.
+	// Ready again, but a day past that first attempt: the batch no longer sees
+	// it, and it stays for inspection with its error.
 	if _, err := db.ExecContext(ctx,
-		`UPDATE mail_outbox SET created_at = unixepoch() - ?, next_at = unixepoch()`,
+		`UPDATE mail_outbox SET tried_at = unixepoch() - ?, next_at = unixepoch()`,
 		int64(25*time.Hour/time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -412,5 +417,57 @@ func TestMarkSentSurvivesCancellation(t *testing.T) {
 	}
 	if n := countRows(t, db, `sent_at IS NULL`); n != 0 {
 		t.Error("the row is still unsent, so the next start would deliver it twice")
+	}
+}
+
+func TestARowThatWaitedKeepsItsFullDayOnceItIsTried(t *testing.T) {
+	o, db, set := newTestOutbox(t)
+	configure(t, set, "127.0.0.1", deadPort(t))
+	ctx := context.Background()
+
+	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
+	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	// Thirty hours of waiting for a server, which is longer than the day of
+	// retries a message gets once one exists.
+	if _, err := db.ExecContext(ctx, `UPDATE mail_outbox
+		SET created_at = unixepoch() - ?, next_at = unixepoch() - ?`,
+		int64(30*time.Hour/time.Second), int64(30*time.Hour/time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	var triedAt *int64
+	if err := db.QueryRowContext(ctx, `SELECT attempts, tried_at FROM mail_outbox`).Scan(&attempts, &triedAt); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || triedAt == nil {
+		t.Fatalf("after the first attempt: attempts = %d, tried_at = %v", attempts, triedAt)
+	}
+
+	// The row is still claimable, because the day runs from that attempt and
+	// not from an enqueue thirty hours ago.
+	if _, err := db.ExecContext(ctx, `UPDATE mail_outbox SET next_at = unixepoch()`); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT attempts FROM mail_outbox`).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d; the row was abandoned on its enqueue time", attempts)
+	}
+	st, err := o.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending != 1 || st.GivenUp != 0 {
+		t.Errorf("state = %+v, want the row still waiting", st)
 	}
 }

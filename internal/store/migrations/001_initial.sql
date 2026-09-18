@@ -292,7 +292,11 @@ CREATE TABLE mail_outbox (
   -- When the message stops being worth sending, because the link it carries
   -- dies: an hour for a password reset, a week for an invitation. NULL never
   -- expires.
-  expires_at INTEGER
+  expires_at INTEGER,
+  -- When delivery was first attempted. The day of retries runs from here, not
+  -- from created_at, so a message queued before the workspace had an SMTP
+  -- server still gets its full day once one exists. NULL means never tried.
+  tried_at   INTEGER
 );
 CREATE INDEX mail_outbox_pending ON mail_outbox(sent_at, next_at);
 

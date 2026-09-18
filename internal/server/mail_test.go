@@ -290,8 +290,9 @@ func TestRetryNowPutsUnsentRowsBackAtTheFront(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	if _, err := h.db.ExecContext(ctx, `INSERT INTO mail_outbox
-		(to_addr, subject, body_text, attempts, last_error, created_at, next_at)
-		VALUES ('ana@example.fm', 'Old', 'Old', 4, 'refused', unixepoch() - 90000, unixepoch() + 3600)`); err != nil {
+		(to_addr, subject, body_text, attempts, last_error, created_at, next_at, tried_at)
+		VALUES ('ana@example.fm', 'Old', 'Old', 4, 'refused',
+			unixepoch() - 90000, unixepoch() + 3600, unixepoch() - 90000)`); err != nil {
 		t.Fatal(err)
 	}
 	_, body := h.get("/settings")
@@ -304,13 +305,15 @@ func TestRetryNowPutsUnsentRowsBackAtTheFront(t *testing.T) {
 		t.Fatalf("retry said nothing:\n%s", body)
 	}
 	var attempts int
-	var next, created int64
+	var next, now int64
+	var triedAt *int64
 	if err := h.db.QueryRowContext(ctx,
-		`SELECT attempts, next_at, created_at FROM mail_outbox`).Scan(&attempts, &next, &created); err != nil {
+		`SELECT attempts, next_at, tried_at, unixepoch() FROM mail_outbox`).
+		Scan(&attempts, &next, &triedAt, &now); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 0 || next > created {
-		t.Errorf("attempts = %d, next_at = %d, created_at = %d", attempts, next, created)
+	if attempts != 0 || triedAt != nil || next > now {
+		t.Errorf("attempts = %d, tried_at = %v, next_at = %d, now = %d", attempts, triedAt, next, now)
 	}
 	if !strings.Contains(body, "1 waiting") {
 		t.Errorf("the panel still counts it as given up:\n%s", body)

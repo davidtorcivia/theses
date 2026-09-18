@@ -32,12 +32,10 @@ const expired = "the link it carries expired before it could be sent"
 // sendable is the part of the WHERE clause that says a row is still worth
 // trying. It takes now and the give up cutoff, in that order.
 //
-// A row that has never been tried is always claimable, so a message queued
-// while the workspace had no SMTP server still goes out once one is configured,
-// however long that took. Once a row has been tried, the day runs from its
-// enqueue, which means a long wait for a server leaves it few attempts; retry
-// now restarts the clock for those.
-const sendable = `(expires_at IS NULL OR expires_at > ?) AND (attempts = 0 OR created_at > ?)`
+// The day runs from the first attempt, so a message queued before the workspace
+// had an SMTP server waits as long as it takes and then gets its full day of
+// retries once one exists.
+const sendable = `(expires_at IS NULL OR expires_at > ?) AND (tried_at IS NULL OR tried_at > ?)`
 
 // Enqueue writes one row per recipient through q, which may be a transaction,
 // so that a message and whatever caused it commit together or not at all.
@@ -165,7 +163,8 @@ func (o *Outbox) once(ctx context.Context) error {
 		}
 		next := time.Now().Add(backoff(q.attempts + 1)).Unix()
 		if _, err := o.db.ExecContext(ctx,
-			`UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, next_at = ? WHERE id = ?`,
+			`UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, next_at = ?,
+				tried_at = coalesce(tried_at, unixepoch()) WHERE id = ?`,
 			Redact(err.Error(), sender.Password), next, q.id); err != nil {
 			return err
 		}
@@ -243,16 +242,13 @@ func (o *Outbox) State(ctx context.Context) (State, error) {
 }
 
 // RetryNow puts every unsent row that has not expired back at the front of the
-// queue. It restarts the day as well, because a row that has run out of it is
-// picked up by nothing. A row whose link has died is left where it is: sending
-// it would deliver a URL that no longer works.
-//
-// ponytail: restarting the day loses when the row was first queued, which is
-// half of what keeping it for inspection was for; a gave_up_at column would
-// hold both, and belongs in the next migration this schema opens anyway.
+// queue and clears its first attempt, which is what gives it another day. The
+// enqueue time is left alone, so a row still says when it was first queued. A
+// row whose link has died is left where it is: sending it would deliver a URL
+// that no longer works.
 func (o *Outbox) RetryNow(ctx context.Context) error {
 	if _, err := o.db.ExecContext(ctx, `UPDATE mail_outbox
-		SET attempts = 0, next_at = unixepoch(), created_at = unixepoch()
+		SET attempts = 0, next_at = unixepoch(), tried_at = NULL
 		WHERE sent_at IS NULL AND (expires_at IS NULL OR expires_at > unixepoch())`); err != nil {
 		return fmt.Errorf("mail: retry: %w", err)
 	}
