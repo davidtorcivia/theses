@@ -28,6 +28,20 @@ const (
 // Kinds is the order the profile page offers them in.
 var Kinds = []string{KindEmail, KindPushover, KindNtfy, KindWebhook}
 
+// ErrStorage is a failure to read or write, as against a channel or a matrix
+// the rules will not take. A surface tells the two apart by this, the way it
+// does for settings: what the rules refuse is the caller's to correct, and a
+// failure here is this side's to log.
+var ErrStorage = errors.New("notify: storage")
+
+// A Refusal is the other half: a channel or a matrix the rules will not take.
+// It is a type rather than a sentinel so that the words a caller is shown are
+// the words the rule wrote, with nothing prefixed to them, because the profile
+// page prints them as they are.
+type Refusal string
+
+func (r Refusal) Error() string { return string(r) }
+
 // Config is every field any channel takes. One struct rather than four,
 // because a channel is a row in one table and the kind says which fields mean
 // anything.
@@ -120,22 +134,22 @@ func (c Channel) Validate() error {
 		// The address is the account's own, so there is nothing else to check.
 	case KindPushover:
 		if c.Config.UserKey == "" {
-			return errors.New("Pushover needs your user key")
+			return Refusal("Pushover needs your user key")
 		}
 	case KindNtfy:
 		if c.Config.Topic == "" {
-			return errors.New("ntfy needs a topic")
+			return Refusal("ntfy needs a topic")
 		}
 		if strings.ContainsAny(c.Config.Topic, "/ ?#") {
-			return errors.New("an ntfy topic is one word, without a slash")
+			return Refusal("an ntfy topic is one word, without a slash")
 		}
 	case KindWebhook:
 		u, err := url.Parse(c.Config.URL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return errors.New("a webhook needs an http or https URL")
+			return Refusal("a webhook needs an http or https URL")
 		}
 	default:
-		return fmt.Errorf("%q is not a kind of channel", c.Kind)
+		return Refusal(fmt.Sprintf("%q is not a kind of channel", c.Kind))
 	}
 	return checkWindow(c.QuietFrom, c.QuietTo)
 }
@@ -147,7 +161,7 @@ func ListChannels(ctx context.Context, q store.Querier, set *settings.Settings, 
 		quiet_from, quiet_to, digest, created_at, coalesce(verified_at, 0)
 		FROM notification_channels WHERE coalesce(user_id, 0) = ? ORDER BY id`, user)
 	if err != nil {
-		return nil, fmt.Errorf("notify: list channels: %w", err)
+		return nil, fmt.Errorf("%w: list channels: %w", ErrStorage, err)
 	}
 	defer rows.Close()
 	out := []Channel{}
@@ -158,7 +172,10 @@ func ListChannels(ctx context.Context, q store.Querier, set *settings.Settings, 
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: list channels: %w", ErrStorage, err)
+	}
+	return out, nil
 }
 
 // GetChannel reads one channel by id.
@@ -180,14 +197,19 @@ func scanChannel(r scanner, set *settings.Settings) (Channel, error) {
 	var stored string
 	if err := r.Scan(&c.ID, &c.UserID, &c.Kind, &stored, &c.QuietFrom, &c.QuietTo,
 		&c.Digest, &c.CreatedAt, &c.VerifiedAt); err != nil {
-		return Channel{}, err
+		// sql.ErrNoRows travels on as itself, because GetChannel turns it into
+		// the one refusal a caller can act on.
+		if errors.Is(err, sql.ErrNoRows) {
+			return Channel{}, err
+		}
+		return Channel{}, fmt.Errorf("%w: read channel: %w", ErrStorage, err)
 	}
 	plain, err := set.Unseal(configContext, stored)
 	if err != nil {
-		return Channel{}, fmt.Errorf("notify: channel %d config %w", c.ID, err)
+		return Channel{}, fmt.Errorf("%w: channel %d config %w", ErrStorage, c.ID, err)
 	}
 	if err := json.Unmarshal([]byte(plain), &c.Config); err != nil {
-		return Channel{}, fmt.Errorf("notify: channel %d config: %w", c.ID, err)
+		return Channel{}, fmt.Errorf("%w: channel %d config: %w", ErrStorage, c.ID, err)
 	}
 	return c, nil
 }
@@ -214,11 +236,11 @@ func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Ch
 	}
 	body, err := json.Marshal(c.Config)
 	if err != nil {
-		return Channel{}, err
+		return Channel{}, fmt.Errorf("%w: channel config: %w", ErrStorage, err)
 	}
 	sealed, err := set.Seal(configContext, string(body))
 	if err != nil {
-		return Channel{}, err
+		return Channel{}, fmt.Errorf("%w: seal channel config: %w", ErrStorage, err)
 	}
 	var owner any
 	if c.UserID != 0 {
@@ -234,10 +256,10 @@ func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Ch
 			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?)`,
 			owner, c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified)
 		if err != nil {
-			return Channel{}, fmt.Errorf("notify: save channel: %w", err)
+			return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
 		}
 		if c.ID, err = res.LastInsertId(); err != nil {
-			return Channel{}, err
+			return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
 		}
 		return c, nil
 	}
@@ -246,7 +268,7 @@ func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Ch
 		WHERE id = ? AND coalesce(user_id, 0) = ?`,
 		c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified, c.ID, c.UserID)
 	if err != nil {
-		return Channel{}, fmt.Errorf("notify: save channel: %w", err)
+		return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return Channel{}, store.ErrNotFound
@@ -260,7 +282,7 @@ func DeleteChannel(ctx context.Context, db *store.DB, id, user int64) error {
 	res, err := db.ExecContext(ctx,
 		`DELETE FROM notification_channels WHERE id = ? AND coalesce(user_id, 0) = ?`, id, user)
 	if err != nil {
-		return fmt.Errorf("notify: delete channel: %w", err)
+		return fmt.Errorf("%w: delete channel: %w", ErrStorage, err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return store.ErrNotFound
@@ -396,7 +418,7 @@ func Rules(ctx context.Context, q store.Querier, user int64) (map[string][]int64
 	rows, err := q.QueryContext(ctx, `SELECT event, channel_id FROM notification_rules
 		WHERE user_id = ? AND enabled = 1`, user)
 	if err != nil {
-		return nil, fmt.Errorf("notify: rules: %w", err)
+		return nil, fmt.Errorf("%w: rules: %w", ErrStorage, err)
 	}
 	defer rows.Close()
 	out := map[string][]int64{}
@@ -404,11 +426,14 @@ func Rules(ctx context.Context, q store.Querier, user int64) (map[string][]int64
 		var event string
 		var id int64
 		if err := rows.Scan(&event, &id); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: rules: %w", ErrStorage, err)
 		}
 		out[event] = append(out[event], id)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: rules: %w", ErrStorage, err)
+	}
+	return out, nil
 }
 
 // SetRules replaces one account's matrix with the cells that are ticked. Rows
@@ -425,25 +450,28 @@ func SetRules(ctx context.Context, db *store.DB, set *settings.Settings, user in
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: rules: %w", ErrStorage, err)
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM notification_rules WHERE user_id = ?`, user); err != nil {
-		return fmt.Errorf("notify: clear rules: %w", err)
+		return fmt.Errorf("%w: clear rules: %w", ErrStorage, err)
 	}
 	for event, ids := range ticked {
 		if _, ok := LookupEvent(event); !ok {
-			return fmt.Errorf("%q is not an event", event)
+			return Refusal(fmt.Sprintf("%q is not an event", event))
 		}
 		for _, id := range ids {
 			if !mine[id] {
-				return errors.New("that is not one of your channels")
+				return Refusal("that is not one of your channels")
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_rules
 				(user_id, event, channel_id, enabled) VALUES (?, ?, ?, 1)`, user, event, id); err != nil {
-				return fmt.Errorf("notify: save rules: %w", err)
+				return fmt.Errorf("%w: save rules: %w", ErrStorage, err)
 			}
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: rules: %w", ErrStorage, err)
+	}
+	return nil
 }

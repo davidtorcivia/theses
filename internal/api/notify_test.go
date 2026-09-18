@@ -144,3 +144,44 @@ func TestTestingSomebodyElsesChannelIsNotFound(t *testing.T) {
 		t.Errorf("a channel that does not exist gave %d", w.Code)
 	}
 }
+
+// A channel the rules will not take is the caller's to correct; a failure to
+// read or write is this side's, logged rather than repeated back.
+func TestANotificationRefusalIsToldApartFromAFailure(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"a kind that is not one", `{"channels":[{"kind":"pigeon"}]}`, http.StatusUnprocessableEntity},
+		{"ntfy with no topic", `{"channels":[{"kind":"ntfy"}]}`, http.StatusUnprocessableEntity},
+		{"a webhook that is not a URL", `{"channels":[{"kind":"webhook","url":"nowhere"}]}`,
+			http.StatusUnprocessableEntity},
+		{"quiet hours that are not a time",
+			`{"channels":[{"kind":"email","quiet_from":"bedtime","quiet_to":"07:00"}]}`,
+			http.StatusUnprocessableEntity},
+		{"a body that is not JSON", `nonsense`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := h.do("PUT", "/api/v1/me/notifications", token, tc.body); w.Code != tc.want {
+				t.Fatalf("answered %d, want %d: %s", w.Code, tc.want, w.Body)
+			}
+		})
+	}
+
+	// With the table gone, the matrix cannot be written, which is a fault on
+	// this side rather than a body to correct.
+	if _, err := h.db.ExecContext(ctx, `DROP TABLE notification_rules`); err != nil {
+		t.Fatal(err)
+	}
+	w := h.do("PUT", "/api/v1/me/notifications", token, `{"rules":{}}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("a failure to write answered %d: %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "notification_rules") {
+		t.Errorf("the answer carries the driver's detail: %s", w.Body)
+	}
+}

@@ -31,6 +31,9 @@ var (
 	ErrTooLong = errors.New("that is longer than this field takes")
 	// ErrQuestion is a card filed under something that is not one of the four.
 	ErrQuestion = errors.New("that is not one of the four questions")
+	// ErrStatus is a proposition moved to a status the workspace does not have,
+	// which the rail would have no column to draw it in.
+	ErrStatus = errors.New("that is not one of the workspace's statuses")
 )
 
 // What a field on the board holds. A status or a date is a word, a title is a
@@ -268,6 +271,12 @@ func (s *Service) SetStatus(ctx context.Context, a core.Actor, id int64, status 
 	}
 	if status == "" {
 		return core.Event{}, ErrEmpty
+	}
+	// The rail groups by status, so a word that is not on the workspace's list
+	// is a proposition it has nowhere to draw. A workspace that names no
+	// statuses at all is one nothing can be checked against.
+	if known := s.Defaults().Statuses; len(known) > 0 && !slices.Contains(known, status) {
+		return core.Event{}, ErrStatus
 	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "status", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
 		_, err := tx.ExecContext(ctx, `UPDATE propositions SET status = ? WHERE id = ?`, status, id)

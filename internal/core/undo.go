@@ -76,31 +76,37 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		return Event{}, err
 	}
 
-	spec, ok := undoable[entity]
-	if !ok || !before.Valid || !after.Valid || undoneAt.Valid ||
-		action == "create" || (action == "delete" && !spec.tombstone) || action == "undo" {
-		return Event{}, ErrNotUndoable
-	}
-	id, err := strconv.ParseInt(entityID, 10, 64)
-	if err != nil {
-		return Event{}, ErrNotUndoable
-	}
-	fields, err := decode(before.String)
-	if err != nil {
-		return Event{}, err
-	}
-	applied, err := decode(after.String)
-	if err != nil {
-		return Event{}, err
-	}
-	// A change that moved none of the columns undo can write moved something
-	// else: an assignee, a note. Putting the columns back would mark the row
-	// undone without undoing anything.
-	if unchanged(spec.cols, fields, applied) {
-		return Event{}, ErrNotUndoable
-	}
-
 	return s.Do(ctx, a, proposition.Int64, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+		// Whether this row can be put back is asked after the actor has been
+		// authorised for the proposition it belongs to, not before. Answering
+		// that a change cannot be undone to somebody who may not read the
+		// proposition would tell them the row is there, and activity ids are
+		// dense enough to walk. A refusal here rolls the transaction back and
+		// writes no activity row of its own.
+		spec, ok := undoable[entity]
+		if !ok || !before.Valid || !after.Valid || undoneAt.Valid ||
+			action == "create" || (action == "delete" && !spec.tombstone) || action == "undo" {
+			return Change{}, ErrNotUndoable
+		}
+		id, err := strconv.ParseInt(entityID, 10, 64)
+		if err != nil {
+			return Change{}, ErrNotUndoable
+		}
+		fields, err := decode(before.String)
+		if err != nil {
+			return Change{}, err
+		}
+		applied, err := decode(after.String)
+		if err != nil {
+			return Change{}, err
+		}
+		// A change that moved none of the columns undo can write moved
+		// something else: an assignee, a note. Putting the columns back would
+		// mark the row undone without undoing anything.
+		if unchanged(spec.cols, fields, applied) {
+			return Change{}, ErrNotUndoable
+		}
+
 		// An undo is a write, so whatever rule the layer above has about
 		// writing to this proposition applies to it, asked here rather than
 		// before the transaction so the answer cannot go stale between.

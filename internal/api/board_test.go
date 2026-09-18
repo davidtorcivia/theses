@@ -321,13 +321,27 @@ func TestUndoOverTheAPIIsRefusedTheSameWay(t *testing.T) {
 	}
 
 	// Somebody who is not a member is told the row is not there rather than
-	// that they may not undo it.
+	// that they may not undo it, and a row that cannot be undone answers the
+	// same way: 409 for one of those and 404 for the rest would say which
+	// activity ids are real and what they are about.
 	if _, err := h.board.RestoreProposition(ctx, owner, h.prop); err != nil {
 		t.Fatal(err)
 	}
 	stranger := h.tokenFor(h.stranger, auth.ScopeRead, auth.ScopeWrite)
-	if w := h.do("POST", fmt.Sprintf("/api/v1/activity/%d/undo", again.Seq), stranger, ""); w.Code != http.StatusNotFound {
-		t.Errorf("a member of nothing undid a change: %d %s", w.Code, w.Body)
+	for _, seq := range []int64{again.Seq, created.Seq, 9999} {
+		if w := h.do("POST", fmt.Sprintf("/api/v1/activity/%d/undo", seq), stranger, ""); w.Code != http.StatusNotFound {
+			t.Errorf("a member of nothing was told about activity %d: %d %s", seq, w.Code, w.Body)
+		}
+	}
+	// And the refused undo wrote no activity row of its own.
+	var rows int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM activity WHERE action = 'undo' AND actor_id = ?`,
+		strconv.FormatInt(h.stranger.ID, 10)).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("a refused undo left %d rows behind", rows)
 	}
 }
 
@@ -423,6 +437,31 @@ func TestBoardRoutesAreScopedAndAuthorised(t *testing.T) {
 			name: "an id that is not a number is not found", method: "GET",
 			target: "/api/v1/cards/x", token: both, want: http.StatusNotFound,
 		},
+		{
+			name: "a move that names no column is the caller's mistake", method: "POST",
+			target: "/api/v1/cards/" + card + "/move", body: `{"after":0}`,
+			token: both, want: http.StatusBadRequest,
+		},
+		{
+			name: "a status the workspace does not have is refused", method: "PATCH",
+			target: "/api/v1/propositions/" + prop, body: `{"status":"shipped"}`,
+			token: both, want: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "a member of nothing cannot add somebody to a proposition", method: "POST",
+			target: "/api/v1/propositions/" + prop + "/members/" +
+				strconv.FormatInt(h.user.ID, 10),
+			token: stranger, want: http.StatusNotFound,
+		},
+		{
+			name: "nor delete it", method: "DELETE",
+			target: "/api/v1/propositions/" + prop, token: stranger, want: http.StatusNotFound,
+		},
+		{
+			name: "somebody who is not in the workspace cannot be added", method: "POST",
+			target: "/api/v1/propositions/" + prop + "/members/9999",
+			token:  both, want: http.StatusNotFound,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if w := h.do(tc.method, tc.target, tc.token, tc.body); w.Code != tc.want {
@@ -514,5 +553,60 @@ func TestABoardWriteThroughATokenIsAttributed(t *testing.T) {
 	var note board.Comment
 	if err := json.Unmarshal(e.After, &note); err != nil || note.Body != "From a script." {
 		t.Fatalf("after = %s: %v", e.After, err)
+	}
+}
+
+// Membership and the delete a proposition has are routes of their own, so the
+// API can do what the socket and the page can.
+func TestMembershipAndDeleteOverREST(t *testing.T) {
+	ctx := context.Background()
+	h := newBoardHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+	prop := strconv.FormatInt(h.prop, 10)
+	who := strconv.FormatInt(h.stranger.ID, 10)
+
+	if w := h.do("POST", "/api/v1/propositions/"+prop+"/members/"+who, token, ""); w.Code != http.StatusOK {
+		t.Fatalf("adding a member gave %d: %s", w.Code, w.Body)
+	}
+	one, err := board.GetProposition(ctx, h.db, h.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one.Members) != 2 {
+		t.Fatalf("members = %v", one.Members)
+	}
+	// Now a member, they read it.
+	theirs := h.tokenFor(h.stranger, auth.ScopeRead, auth.ScopeWrite)
+	if w := h.do("GET", "/api/v1/propositions/"+prop, theirs, ""); w.Code != http.StatusOK {
+		t.Fatalf("a member could not read the proposition: %d %s", w.Code, w.Body)
+	}
+
+	if w := h.do("DELETE", "/api/v1/propositions/"+prop+"/members/"+who, token, ""); w.Code != http.StatusOK {
+		t.Fatalf("removing a member gave %d: %s", w.Code, w.Body)
+	}
+	if w := h.do("GET", "/api/v1/propositions/"+prop, theirs, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("somebody taken off still reads it: %d %s", w.Code, w.Body)
+	}
+
+	// A researcher may edit and not delete, and is told the proposition is not
+	// there rather than that the role is wrong.
+	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`,
+		auth.RoleResearcher, h.stranger.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.board.AddMember(ctx,
+		core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}, h.prop, h.stranger.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := h.do("DELETE", "/api/v1/propositions/"+prop,
+		h.tokenFor(h.stranger, auth.ScopeRead, auth.ScopeWrite), ""); w.Code != http.StatusNotFound {
+		t.Fatalf("a researcher deleted a proposition: %d %s", w.Code, w.Body)
+	}
+
+	if w := h.do("DELETE", "/api/v1/propositions/"+prop, token, ""); w.Code != http.StatusOK {
+		t.Fatalf("deleting gave %d: %s", w.Code, w.Body)
+	}
+	if w := h.do("GET", "/api/v1/propositions/"+prop, token, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("the proposition is still there: %d %s", w.Code, w.Body)
 	}
 }

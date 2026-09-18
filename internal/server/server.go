@@ -120,7 +120,8 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		if len(statuses) > 0 {
 			status = statuses[0]
 		}
-		return board.Defaults{Status: status, Columns: settings.Get[[]string](set, "defaults.columns")}
+		return board.Defaults{Status: status, Statuses: statuses,
+			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {

@@ -40,7 +40,7 @@ func newRig(t *testing.T) *rig {
 	db := store.OpenTemp(t)
 	a := auth.New(db, []byte("a session key of at least thirty-two bytes"), false, false)
 	boards := board.New(core.New(db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research", "Outline"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research", "Outline"}}
 	})
 	hub := New(boards, a, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	hub.Docs = docs.New(boards.Service, "", func() string { return "" },

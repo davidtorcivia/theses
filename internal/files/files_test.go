@@ -40,7 +40,7 @@ func setup(t *testing.T) *fixture {
 	db := store.OpenTemp(t)
 	c := core.New(db, core.NewBus())
 	b := board.New(c, func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 
 	primary, recordings := buckets(t)

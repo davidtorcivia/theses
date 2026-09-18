@@ -125,13 +125,13 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 
 	if body.Channels != nil {
 		if err := a.saveChannels(r, p, *body.Channels); err != nil {
-			a.refuseInvalid(w, r, err)
+			a.refuse(w, r, err)
 			return
 		}
 	}
 	if body.Rules != nil {
 		if err := notify.SetRules(r.Context(), a.db, a.set, p.User.ID, *body.Rules); err != nil {
-			a.refuseInvalid(w, r, err)
+			a.refuse(w, r, err)
 			return
 		}
 	}

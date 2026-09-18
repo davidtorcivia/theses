@@ -25,6 +25,9 @@ func (a *API) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/propositions/{id}/archive", a.scoped(auth.ScopeWrite, a.archiveProposition))
 	mux.HandleFunc("POST /api/v1/propositions/{id}/restore", a.scoped(auth.ScopeWrite, a.restoreProposition))
 	mux.HandleFunc("POST /api/v1/propositions/{id}/move", a.scoped(auth.ScopeWrite, a.moveProposition))
+	mux.HandleFunc("DELETE /api/v1/propositions/{id}", a.scoped(auth.ScopeWrite, a.deleteProposition))
+	mux.HandleFunc("POST /api/v1/propositions/{id}/members/{user}", a.scoped(auth.ScopeWrite, a.addMember))
+	mux.HandleFunc("DELETE /api/v1/propositions/{id}/members/{user}", a.scoped(auth.ScopeWrite, a.removeMember))
 
 	mux.HandleFunc("GET /api/v1/propositions/{id}/columns", a.scoped(auth.ScopeRead, a.listColumns))
 	mux.HandleFunc("POST /api/v1/propositions/{id}/columns", a.scoped(auth.ScopeWrite, a.createColumn))
@@ -244,6 +247,34 @@ func (a *API) moveProposition(w http.ResponseWriter, r *http.Request, p Principa
 	})
 }
 
+// deleteProposition takes the proposition and everything under it. The command
+// asks for the standing to delete, which a researcher does not have, so a
+// refusal is the same 404 as a proposition that is not there.
+func (a *API) deleteProposition(w http.ResponseWriter, r *http.Request, p Principal) {
+	a.onProposition(w, r, p, a.Board.DeleteProposition)
+}
+
+func (a *API) addMember(w http.ResponseWriter, r *http.Request, p Principal) {
+	a.onMember(w, r, p, a.Board.AddMember)
+}
+
+func (a *API) removeMember(w http.ResponseWriter, r *http.Request, p Principal) {
+	a.onMember(w, r, p, a.Board.RemoveMember)
+}
+
+// onMember is the shape both membership routes have. Somebody who is not in the
+// workspace is 404, the same as a proposition that is not there.
+func (a *API) onMember(w http.ResponseWriter, r *http.Request, p Principal,
+	run func(context.Context, core.Actor, int64, int64) (core.Event, error)) {
+	id, ok := a.pathID(w, r, "proposition")
+	if !ok {
+		return
+	}
+	a.applied(w, r, p, func() (core.Event, error) {
+		return run(r.Context(), actorOf(p), id, path(r, "user"))
+	})
+}
+
 // Columns.
 
 func (a *API) listColumns(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -436,6 +467,12 @@ func (a *API) moveCard(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	body, ok := a.boardBody(w, r)
 	if !ok {
+		return
+	}
+	// A card always lands in a column, and a body that names none would reach
+	// the command as column zero and come back as a column that is not there.
+	if body.Column == 0 {
+		a.fail(w, http.StatusBadRequest, "name the column to move it into")
 		return
 	}
 	a.applied(w, r, p, func() (core.Event, error) {

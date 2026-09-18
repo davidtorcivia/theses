@@ -668,6 +668,10 @@ Scope `read`. One proposition with its members.
 Scope `write`. Changes the fields the body names: `title`, `statement`,
 `blurb`, `status`, `episode`, `target_date`. A field left out keeps what is
 there; a field sent empty clears it. A body that names none of them is `400`.
+`status` has to be one of the workspace's statuses, which `GET
+/api/v1/settings` reports as `defaults.statuses`; a word that is not on the
+list is `422`, because the rail groups by status and would have nowhere to draw
+the proposition.
 The fields land as one transaction, so a refusal partway through leaves
 nothing behind.
 
@@ -701,6 +705,25 @@ rail, or `0` for the head of it. An `after` that is not a proposition is
 POST /api/v1/propositions/10/move
 {"after": 11}
 ```
+
+## `DELETE /api/v1/propositions/{id}`
+
+Scope `write`, and the role has to be one that may delete, which a researcher
+is not. A token whose owner may not delete is answered `404`, the same as a
+proposition that is not there. The board, the documents, the links and the
+files go with it, and the record of the deletion is filed with no proposition
+so that it survives the cascade.
+
+## `POST /api/v1/propositions/{id}/members/{user}`
+
+Scope `write`. Puts somebody on the proposition, which is what lets them read
+it at all. Somebody who is not in the workspace is `404`. Adding somebody
+already on it changes nothing and answers `200`.
+
+## `DELETE /api/v1/propositions/{id}/members/{user}`
+
+Scope `write`. Takes them off again, after which the proposition answers `404`
+to their tokens.
 
 ## `GET /api/v1/propositions/{id}/columns`
 
@@ -789,8 +812,9 @@ PATCH /api/v1/cards/7
 
 ## `POST /api/v1/cards/{id}/move`
 
-Scope `write`. Takes `column` and `after`. The column has to be on the same
-proposition, and one that is not is `404`. `after` is the card to sit behind,
+Scope `write`. Takes `column` and `after`. A body that names no column is
+`400`. The column has to be on the same proposition, and one that is not is
+`404`. `after` is the card to sit behind,
 or `0` for the head of the column. Moves never conflict; the last one wins by
 server order.
 
@@ -914,7 +938,7 @@ one endpoint serves every tool.
 | `list_propositions` | `read` | Lists the propositions this token's owner may read. |
 | `get_proposition` | `read` | Reads one proposition and its schedule. |
 | `create_proposition` | `write` | Starts a proposition with the default columns. |
-| `set_status` | `write` | Moves one proposition to another status. |
+| `set_status` | `write` | Moves one proposition to one of the workspace's statuses. |
 | `list_cards` | `read` | Lists the columns and cards of one proposition, with the sequence number. |
 | `create_card` | `write` | Adds a card at the end of a column. |
 | `move_card` | `write` | Moves a card into a column on the same proposition. |

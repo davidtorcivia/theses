@@ -8,6 +8,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
+	"github.com/davidtorcivia/theses/internal/notify"
 )
 
 // refuse is the one place a command's error becomes a status, for every route
@@ -38,25 +39,10 @@ func (a *API) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	a.serverError(w, r, err)
 }
 
-// refuseInvalid is refuse for a path whose package does not say which of its
-// errors the caller caused: one refuse has no status for is answered 422 rather
-// than logged as a fault, because the body reached the rules and the rules
-// turned it down.
-//
-// ponytail: the notification package returns a database failure and a channel
-// it will not take as the same kind of error, so a failure on that path is
-// answered 422 as well. Upgrade path: a sentinel in notify the way settings has
-// ErrStorage, after which every caller uses refuse and this goes.
-func (a *API) refuseInvalid(w http.ResponseWriter, r *http.Request, err error) {
-	if a.answer(w, err) {
-		return
-	}
-	a.fail(w, http.StatusUnprocessableEntity, err.Error())
-}
-
 // answer writes the status this error means and reports whether it had one.
 func (a *API) answer(w http.ResponseWriter, err error) bool {
 	var clash *core.ConflictError
+	var refused notify.Refusal
 	switch {
 	case errors.As(err, &clash):
 		a.writeJSON(w, http.StatusConflict, map[string]any{
@@ -70,8 +56,17 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		a.fail(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, files.ErrNoBucket):
 		a.fail(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, notify.ErrStorage):
+		// A failure to read or write is this side's, and its detail says
+		// nothing to a client, so it falls through to the log and a 500. The
+		// notification package names it so that a channel the rules will not
+		// take is not answered the same way.
+		return false
+	case errors.As(err, &refused):
+		a.fail(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong),
-		errors.Is(err, board.ErrQuestion), errors.Is(err, docs.ErrNameTaken),
+		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
+		errors.Is(err, docs.ErrNameTaken),
 		errors.Is(err, docs.ErrReason), errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
 		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),

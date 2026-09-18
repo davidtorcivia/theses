@@ -40,7 +40,7 @@ func (h *harness) withFiles(t *testing.T) (int64, int64, string) {
 
 	c := core.New(h.db, core.NewBus())
 	b := board.New(c, func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	svc := files.New(c, func(context.Context, string) (*blob.Client, error) { return bucket, nil },
 		safehttp.Client(safehttp.AllowLoopback()))

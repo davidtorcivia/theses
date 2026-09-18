@@ -57,7 +57,7 @@ func newHarness(t *testing.T) *harness {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	restAPI := api.New(db, a, set, log)
 	boards := board.New(core.New(db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	restAPI.Docs = docs.New(boards.Service, "", func() string { return "" }, log)
 	return &harness{T: t, db: db, set: set, auth: a, user: user, board: boards,
@@ -372,7 +372,7 @@ func TestSearchShowsOnlyThePropositionsTheOwnerIsAMemberOf(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")

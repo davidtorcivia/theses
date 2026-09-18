@@ -55,7 +55,7 @@ func newHarness(t *testing.T) *harness {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	api := New(db, a, set, log)
 	b := board.New(core.New(db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	api.Docs = docs.New(b.Service, "", func() string { return "" }, log)
 	api.Board = b
@@ -650,7 +650,7 @@ func TestSearchAndActivityShowOnlyWhatMembershipAllows(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")
@@ -742,7 +742,7 @@ func TestADeletedPropositionIsNotReadableByEverybody(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")

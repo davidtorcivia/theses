@@ -296,6 +296,14 @@ func TestBoardToolsAreScopedAndAuthorised(t *testing.T) {
 		}
 	}
 
+	// A status the workspace does not have is refused, because the rail would
+	// have nowhere to draw it.
+	if res := h.call(h.connect(auth.ScopeRead, auth.ScopeWrite), "set_status",
+		map[string]any{"proposition": f.prop, "status": "shipped"}, nil); !res.IsError ||
+		!strings.Contains(say(res), "statuses") {
+		t.Errorf("a status the workspace does not have said %q", say(res))
+	}
+
 	// A card cannot move to a column on another proposition.
 	other, err := h.board.CreateProposition(ctx,
 		core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}, "Deep Water")

@@ -89,6 +89,7 @@ func (s *Server) refusal(what string, err error) error {
 		return errors.New("that is not there, or this token's owner may not touch it")
 	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrEmpty),
 		errors.Is(err, board.ErrTooLong), errors.Is(err, board.ErrQuestion),
+		errors.Is(err, board.ErrStatus),
 		errors.Is(err, board.ErrColumnNotEmpty), errors.Is(err, board.ErrNotYours),
 		errors.Is(err, core.ErrNotUndoable),
 		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrReason),
