@@ -377,7 +377,7 @@ it:
           "version_of": null, "duration_ms": null, "width": null,
           "height": null, "uploaded_by": 1, "state": "uploading",
           "created_at": 1758067200},
- "url": "https://example.com/10-student-debt-is-a-policy-choice/9/tides.md?...",
+ "url": "https://example.com/theses/10-student-debt-is-a-policy-choice/9/tides.md?...",
  "headers": {"Content-Type": "text/markdown; charset=utf-8"},
  "expires_at": 1758070800, "ttl_seconds": 3600}
 ```
@@ -389,7 +389,7 @@ and a batch of sixty four presigned part URLs:
 {"file": {"id": 8, "name": "hearing.wav", "size": 734003200,
           "state": "uploading"},
  "upload_id": 3, "part_size": 67108864,
- "parts": [{"number": 1, "url": "https://example.com/...&partNumber=1"}],
+ "parts": [{"number": 1, "url": "https://example.com/theses/...&partNumber=1"}],
  "expires_at": 1758070800, "ttl_seconds": 3600}
 ```
 
@@ -442,7 +442,7 @@ current name on it so a browser saves it under that rather than under its
 object key. A file that is not `ready` is `422`.
 
 ```json
-{"url": "https://example.com/10-student-debt-is-a-policy-choice/9/tides.md?..."}
+{"url": "https://example.com/theses/10-student-debt-is-a-policy-choice/9/tides.md?..."}
 ```
 
 ## `GET /api/v1/files/{id}/thumb`
