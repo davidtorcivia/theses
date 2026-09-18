@@ -220,7 +220,18 @@ func TestFileRoutesAuthorisation(t *testing.T) {
 			token: h.token(h.owner, auth.ScopeRead), want: http.StatusNotFound,
 		},
 		{
-			name:   "a part number outside the upload is refused",
+			// The file above is four bytes, so it has one part and there is
+			// nothing after it. This is the case the part number bound answers,
+			// and the only one that reaches it.
+			name:   "a part number past the end of the upload is refused",
+			method: "GET", target: "/api/v1/files/1/parts?after=1",
+			token: h.token(h.owner, auth.ScopeFiles), want: http.StatusUnprocessableEntity,
+		},
+		{
+			// Clamped to the beginning rather than refused, so it gets as far
+			// as looking for the upload, which a file small enough for one PUT
+			// does not have.
+			name:   "a negative part number is the beginning",
 			method: "GET", target: "/api/v1/files/1/parts?after=-1",
 			token: h.token(h.owner, auth.ScopeFiles), want: http.StatusNotFound,
 		},
