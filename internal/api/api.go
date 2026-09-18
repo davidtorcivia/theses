@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/search"
@@ -30,6 +31,9 @@ type API struct {
 	// Files is the links and files service, set the same way. Its routes live
 	// on this mux rather than the server's, so one mux owns /api/v1.
 	Files *files.Service
+	// Board is the proposition and board commands, set the same way. Every
+	// board route is one of them with a token's actor.
+	Board *board.Service
 }
 
 func New(db *store.DB, a *auth.Auth, set *settings.Settings, log *slog.Logger) *API {
@@ -208,6 +212,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/settings/{key}", a.scoped(auth.ScopeAdmin, a.putSetting))
 	a.documentRoutes(mux)
 	a.fileRoutes(mux)
+	a.boardRoutes(mux)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})

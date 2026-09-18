@@ -1,9 +1,6 @@
 package api
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strconv"
 
@@ -228,18 +225,5 @@ func (a *API) pathID(w http.ResponseWriter, r *http.Request, what string) (int64
 // that a delete or a move to the head need send nothing.
 func (a *API) documentBody(w http.ResponseWriter, r *http.Request) (documentBody, bool) {
 	var body documentBody
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		if errors.Is(err, io.EOF) {
-			return body, true
-		}
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return body, false
-		}
-		a.fail(w, http.StatusBadRequest, "the body must be JSON")
-		return body, false
-	}
-	return body, true
+	return body, a.decode(w, r, &body)
 }

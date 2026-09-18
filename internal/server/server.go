@@ -134,7 +134,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	// client, which is the only outbound fetch the app makes.
 	s.blobs = newBuckets()
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
-	s.api.Files = s.files
+	s.api.Board, s.api.Files = s.board, s.files
 	mcp.Files(s.mcp, s.files)
 
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {

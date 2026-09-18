@@ -58,6 +58,7 @@ func newHarness(t *testing.T) *harness {
 		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
 	})
 	api.Docs = docs.New(b.Service, "", func() string { return "" }, log)
+	api.Board = b
 	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), user: user,
 		board: b, docs: api.Docs}
 }
