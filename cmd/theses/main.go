@@ -67,6 +67,14 @@ func run() error {
 		srv.Mail().Run(ctx)
 	}()
 
+	// The scheduler stops with ctx too. It holds no row and writes nothing until
+	// the configured minute, so a cancellation between two ticks costs nothing.
+	backupDone := make(chan struct{})
+	go func() {
+		defer close(backupDone)
+		srv.Backups().Schedule(ctx)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:    cfg.Bind,
 		Handler: srv,
@@ -100,6 +108,7 @@ func run() error {
 			return fmt.Errorf("shutdown: %w", err)
 		}
 		<-mailDone
+		<-backupDone
 		return <-done
 	}
 }

@@ -87,8 +87,8 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	}
 
 	// From here the app answers writes with 503 until the files are in place.
-	b.frozen.Store(true)
-	defer b.frozen.Store(false)
+	b.Freeze(true)
+	defer b.Freeze(false)
 
 	aside := b.db.Path() + "." + stamp + ".aside"
 	if err := b.db.Swap(ctx, dbPath, aside); err != nil {

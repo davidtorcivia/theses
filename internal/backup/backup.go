@@ -96,6 +96,9 @@ type Backup struct {
 	busy   atomic.Bool // one archive or restore at a time
 	frozen atomic.Bool // writes are refused while a restore swaps the file
 
+	// restored is what the last restore said, for the settings page to print.
+	restored atomic.Pointer[string]
+
 	mu       sync.Mutex
 	storeAt  time.Time // when the object store was last asked
 	storeErr error     // and what it said
@@ -152,6 +155,37 @@ func (b *Backup) Now(ctx context.Context) error {
 	return nil
 }
 
+// Running reports whether an archive or a restore is in progress.
+func (b *Backup) Running() bool { return b.busy.Load() }
+
+// LastRestore is what the last restore said, success or failure.
+func (b *Backup) LastRestore() string {
+	if p := b.restored.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// RestoreNow starts a restore in the background. Like an archive it outlives
+// the request that asked for it: the archive has to come down, be decrypted,
+// be checked and be unpacked before any file changes place.
+func (b *Backup) RestoreNow(ctx context.Context, key string, actorID int64) error {
+	if b.busy.Load() {
+		return ErrBusy
+	}
+	run, cancel := context.WithTimeout(context.WithoutCancel(ctx), runTimeout)
+	go func() {
+		defer cancel()
+		msg := "Restored " + path.Base(key) + "."
+		if err := b.Restore(run, key, actorID); err != nil {
+			msg = "The restore failed and nothing was changed: " + err.Error()
+			b.log.Error("restore", "key", key, "err", err)
+		}
+		b.restored.Store(&msg)
+	}()
+	return nil
+}
+
 // Schedule runs the backup at the configured time of day until ctx is cancelled.
 func (b *Backup) Schedule(ctx context.Context) {
 	t := time.NewTicker(tickEvery)
@@ -173,7 +207,7 @@ func (b *Backup) tick(ctx context.Context, now time.Time) {
 		// A time or a zone that will not parse is a settings mistake. Recording
 		// it puts it on the page; the same message every minute writes nothing,
 		// because storing a setting that has not changed is a no-op.
-		b.set.Set(context.WithoutCancel(ctx), "backups.last_error", []string{err.Error()}, 0)
+		_ = b.set.Set(context.WithoutCancel(ctx), "backups.last_error", []string{err.Error()}, 0)
 		return
 	}
 	if !due {
@@ -221,6 +255,10 @@ func (b *Backup) configured() bool {
 // Frozen is what the write middleware checks: true while a restore is replacing
 // the database.
 func (b *Backup) Frozen() bool { return b.frozen.Load() }
+
+// Freeze stops and restarts writes. Restore holds it over the swap; the only
+// other caller is the test that checks the middleware refuses a write.
+func (b *Backup) Freeze(on bool) { b.frozen.Store(on) }
 
 // client builds the client for the backups prefix: the primary bucket's
 // provider, endpoint and region, the bucket named in the Backups section when

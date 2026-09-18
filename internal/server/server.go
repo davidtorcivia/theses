@@ -15,6 +15,8 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/backup"
+	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/config"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
@@ -36,6 +38,7 @@ type Server struct {
 	auth     *auth.Auth
 	settings *settings.Settings
 	mail     *mail.Outbox
+	backups  *backup.Backup
 	log      *slog.Logger
 	version  string
 
@@ -89,10 +92,16 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.api = api.New(db, s.auth, set, log)
 	s.mcp = mcp.New(s.api, db, set, log, version)
 
+	s.backups = backup.New(cfg, db, set, log, version, func(ctx context.Context) (blob.Config, error) {
+		return s.bucketConfig(ctx, "storage.primary")
+	})
+
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {
 		var n int
 		return db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&n)
 	}})
+	s.AddCheck(Check{Name: "object store", Run: s.backups.CheckStore})
+	s.AddCheck(Check{Name: "backup age", Run: s.backups.CheckAge})
 
 	n, err := store.CountUsers(context.Background(), db)
 	if err != nil {
@@ -106,6 +115,9 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 
 // Mail is the outbox worker. main runs it and stops it with the process.
 func (s *Server) Mail() *mail.Outbox { return s.mail }
+
+// Backups is the archive scheduler. main runs it and stops it with the process.
+func (s *Server) Backups() *backup.Backup { return s.backups }
 
 // AddCheck registers a readiness probe. Call it before the server starts serving.
 func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
@@ -163,6 +175,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /settings/test/storage", s.requireOwner(s.postTestStorage))
 	mux.HandleFunc("POST /settings/test/mail", s.requireOwner(s.postTestMail))
 	mux.HandleFunc("POST /settings/mail/retry", s.requireOwner(s.postMailRetry))
+	mux.HandleFunc("POST /settings/test/backups", s.requireOwner(s.postTestBackupKey))
+	mux.HandleFunc("POST /settings/backups/now", s.requireOwner(s.postBackupNow))
+	mux.HandleFunc("POST /settings/backups/restore", s.requireOwner(s.postRestore))
 	mux.HandleFunc("POST /settings/team/role", s.requireOwner(s.postRole))
 	mux.HandleFunc("POST /settings/team/invite", s.requireOwner(s.postInviteCreate))
 	mux.HandleFunc("POST /settings/team/invite/{id}/resend", s.requireOwner(s.postInviteResend))
