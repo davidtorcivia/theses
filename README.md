@@ -2,6 +2,10 @@
 
 A workspace per proposition: a board on top, shared markdown documents underneath, links and files beside them, several people editing live, and agents as first-class authors through a REST API and MCP.
 
+## Status
+
+Pre-alpha. Shipped so far: accounts with authenticator enrolment, invitations and password reset by mail, the settings registry with encrypted secrets, scoped API tokens, the REST API and the MCP server, search, and the S3 client with its CORS rule and probe. Coming next: the board, documents, links and files, live editing, and backups.
+
 ## How it works
 
 One Go binary and one process, with SQLite as the only database. Files go from the browser straight to S3-compatible object storage over presigned URLs, so no upload passes through the server. Documents are block lists in the database, merged three ways on the server and mirrored to markdown on disk. Six environment variables bootstrap the process and the owner configures the rest in the UI, where credentials are encrypted at rest. Every page is served under a strict CSP: no inline scripts, no third-party JavaScript, fonts self-hosted.

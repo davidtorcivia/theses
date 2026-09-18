@@ -9,8 +9,8 @@ and the API and MCP listings report it the same way rather than returning it.
 ## Workspace
 
 The name the workspace is known by, the number episode numbering starts at,
-the release day and release time, and the IANA time zone those and the digest
-schedule are read in.
+the release day and release time, and the IANA time zone the release time is
+read in.
 
 ## Defaults
 
@@ -47,9 +47,10 @@ puts every unsent message back at the front of the outbox.
 
 ## Sign-in
 
-Whether everyone or only owners has to enrol an authenticator, how many days a
-sign-in lasts before it has to be repeated, and the shortest account name
-allowed. Owners are always required to enrol.
+How many days a sign-in lasts before it has to be repeated, and the shortest
+account name allowed. Both are applied. The choice of whether everyone or only
+owners has to enrol an authenticator is stored but not yet enforced: setup and
+the invitation flow enrol everyone.
 
 ## Team
 

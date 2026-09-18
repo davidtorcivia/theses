@@ -111,7 +111,7 @@ func (n *mention) Dump(source []byte, level int) {
 }
 
 // A note is an aside in square brackets, either addressed to someone by their
-// initials, [DF: ask about this], or a check, [check the date].
+// initials, [AL: ask about this], or a check, [check the date].
 type note struct {
 	ast.BaseInline
 	by   string
@@ -160,7 +160,7 @@ func (noteParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) a
 	if m == nil {
 		return nil
 	}
-	// [DF: see this](url) is a link with an odd label, not a note.
+	// [AL: see this](url) is a link with an odd label, not a note.
 	if len(line) > m[1] && (line[m[1]] == '(' || line[m[1]] == '[') {
 		return nil
 	}

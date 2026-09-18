@@ -55,8 +55,8 @@ func TestRenderBlock(t *testing.T) {
 		},
 		{
 			name: "note addressed to someone",
-			in:   "The date is wrong. [DF: check the transcript]",
-			want: "<p>The date is wrong. <mark class=\"note\" data-by=\"DF\">DF: check the transcript</mark></p>\n",
+			in:   "The date is wrong. [AL: check the transcript]",
+			want: "<p>The date is wrong. <mark class=\"note\" data-by=\"AL\">AL: check the transcript</mark></p>\n",
 		},
 		{
 			name: "check note",
@@ -65,8 +65,8 @@ func TestRenderBlock(t *testing.T) {
 		},
 		{
 			name: "a link that reads like a note stays a link",
-			in:   "[DF: the paper](https://example.com)",
-			want: "<p><a href=\"https://example.com\">DF: the paper</a></p>\n",
+			in:   "[AL: the paper](https://example.com)",
+			want: "<p><a href=\"https://example.com\">AL: the paper</a></p>\n",
 		},
 		{
 			name: "heading and list",
@@ -121,8 +121,8 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 		},
 		{
 			name: "markup inside a note",
-			in:   `[DF: <script>x</script> & "q"]`,
-			want: "<p><mark class=\"note\" data-by=\"DF\">DF: &lt;script&gt;x&lt;/script&gt; &amp; &quot;q&quot;</mark></p>\n",
+			in:   `[AL: <script>x</script> & "q"]`,
+			want: "<p><mark class=\"note\" data-by=\"AL\">AL: &lt;script&gt;x&lt;/script&gt; &amp; &quot;q&quot;</mark></p>\n",
 		},
 		{
 			name: "angle brackets in text",
@@ -164,7 +164,7 @@ func TestPlain(t *testing.T) {
 		{"link text without the target", "See [the paper](https://example.com/x).", "See the paper."},
 		{"autolink keeps the url", "See https://example.com/x", "See https://example.com/x"},
 		{"mention", "Ask @ada about it.", "Ask @ada about it."},
-		{"notes", "[DF: check this] and [check the date]", "DF: check this and check the date"},
+		{"notes", "[AL: check this] and [check the date]", "AL: check this and check the date"},
 		{"footnote marker dropped", "A claim.[^1]\n\n[^1]: The source.", "A claim.\n\nThe source."},
 		{"code span", "Run `go test ./...` first.", "Run go test ./... first."},
 		{"table cells", "| a | b |\n| --- | --- |\n| 1 | 2 |", "a\n\nb\n\n1\n\n2"},

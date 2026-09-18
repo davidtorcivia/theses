@@ -207,7 +207,7 @@ func TestRequestGoesToTheCheckedAddress(t *testing.T) {
 
 func TestNtfyRefusesPrivateAddresses(t *testing.T) {
 	// The admin port of a service on the same host.
-	err := (Ntfy{Server: "http://127.0.0.1:2019", Topic: "load"}).Send(context.Background(), note)
+	err := (Ntfy{Server: "http://127.0.0.1:9000", Topic: "load"}).Send(context.Background(), note)
 	if err == nil {
 		t.Fatal("want a refusal")
 	}

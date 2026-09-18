@@ -5,7 +5,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 
 | Route | What it is |
 | --- | --- |
-| `GET /` | The app shell. The rail and the board arrive with the board step. |
+| `GET /` | The app shell. |
 | `GET POST /setup` | First run only: create the owner. Every other route redirects here until one exists. |
 | `GET POST /setup/authenticator` | Scan the QR code and confirm a code. The account is written only when the code matches. |
 | `GET POST /login` | Account name, password and authenticator code, in one form. |
