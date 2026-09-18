@@ -321,8 +321,14 @@ func TestNoInlineScriptsOrStyles(t *testing.T) {
 		if strings.Contains(body, " on") && regexp.MustCompile(`\son(click|submit|load|change)=`).MatchString(body) {
 			t.Errorf("%s carries an inline event handler", p)
 		}
-		for _, tag := range regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`).FindAllStringSubmatch(body, -1) {
-			if strings.TrimSpace(tag[1]) != "" {
+		for _, tag := range regexp.MustCompile(`(?s)<script([^>]*)>(.*?)</script>`).FindAllStringSubmatch(body, -1) {
+			// A script element the browser will not execute is a data block,
+			// which is how the page carries its initial state. The CSP has
+			// nothing to say about one and neither has this rule.
+			if strings.Contains(tag[1], `type="application/json"`) {
+				continue
+			}
+			if strings.TrimSpace(tag[2]) != "" {
 				t.Errorf("%s has a script with a body", p)
 			}
 		}

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -40,6 +42,18 @@ func (rec *recorder) WriteHeader(code int) {
 		rec.status, rec.written = code, true
 		rec.ResponseWriter.WriteHeader(code)
 	}
+}
+
+// Hijack hands the raw connection to the websocket upgrade. Embedding the
+// ResponseWriter interface promotes only its three methods, so without this the
+// upgrade fails on every socket that goes through the middleware chain.
+func (rec *recorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := rec.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("this response writer cannot be hijacked")
+	}
+	rec.written = true
+	return h.Hijack()
 }
 
 func (rec *recorder) Write(b []byte) (int, error) {

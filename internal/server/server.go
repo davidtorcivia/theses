@@ -17,9 +17,12 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/blob"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/config"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
+	"github.com/davidtorcivia/theses/internal/realtime"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 	"github.com/davidtorcivia/theses/web"
@@ -41,6 +44,9 @@ type Server struct {
 	backups  *backup.Backup
 	log      *slog.Logger
 	version  string
+
+	board *board.Service
+	hub   *realtime.Hub
 
 	dev        bool
 	assets     *assets
@@ -95,6 +101,18 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.backups = backup.New(cfg, db, set, log, version, func(ctx context.Context) (blob.Config, error) {
 		return s.bucketConfig(ctx, "storage.primary")
 	})
+
+	// One bus, one command service, one hub. Everything that mutates goes
+	// through the first and everything watching hangs off the second.
+	s.board = board.New(core.New(db, core.NewBus()), func() board.Defaults {
+		statuses := settings.Get[[]string](set, "defaults.statuses")
+		status := "idea"
+		if len(statuses) > 0 {
+			status = statuses[0]
+		}
+		return board.Defaults{Status: status, Columns: settings.Get[[]string](set, "defaults.columns")}
+	})
+	s.hub = realtime.New(s.board, s.auth, log)
 
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {
 		var n int
@@ -160,6 +178,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /invite/{token}/authenticator", s.postEnrol)
 
 	mux.HandleFunc("GET /{$}", s.requireUser(s.getShell))
+	mux.HandleFunc("GET /p/{id}", s.requireUser(s.getProposition))
+	mux.HandleFunc("GET /p/{id}/settings", s.requireUser(s.getPropositionSettings))
+	mux.HandleFunc("POST /p/{id}/settings", s.requireUser(s.postPropositionSettings))
+
+	// Both of these authenticate the session themselves, because one of them
+	// answers on a connection the handler chain never gets to write to.
+	mux.Handle("GET /ws", s.hub.Handler())
+	mux.HandleFunc("GET /api/events", s.hub.Events)
 
 	mux.HandleFunc("GET /profile", s.requireUser(s.getProfile))
 	mux.HandleFunc("POST /profile", s.requireUser(s.postProfile))

@@ -3,9 +3,11 @@ package board
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -710,5 +712,54 @@ func (s *Service) DeleteComment(ctx context.Context, a core.Actor, id int64) (co
 			return core.Change{}, err
 		}
 		return core.Change{Entity: "comment", EntityID: id, Action: "delete", Before: was}, nil
+	})
+}
+
+// Document settings.
+
+// DocumentSettings are the three switches the per proposition settings page
+// keeps for the document under the board. They live in the settings table
+// rather than a column because nothing else reads them yet and the document
+// itself lands in the next step.
+type DocumentSettings struct {
+	OpenEditing bool `json:"open_editing"`
+	History     bool `json:"history"`
+	Publish     bool `json:"publish"`
+}
+
+func documentKey(proposition int64) string {
+	return "proposition." + strconv.FormatInt(proposition, 10) + ".document"
+}
+
+// GetDocumentSettings reads them, or the defaults the mockup draws checked.
+func GetDocumentSettings(ctx context.Context, q store.Querier, proposition int64) (DocumentSettings, error) {
+	d := DocumentSettings{OpenEditing: true, History: true}
+	row, err := store.GetSetting(ctx, q, documentKey(proposition))
+	if errors.Is(err, store.ErrNotFound) {
+		return d, nil
+	}
+	if err != nil {
+		return d, err
+	}
+	return d, json.Unmarshal([]byte(row.ValueJSON), &d)
+}
+
+func (s *Service) SetDocumentSettings(ctx context.Context, a core.Actor, proposition int64, d DocumentSettings) (core.Event, error) {
+	return s.Do(ctx, a, proposition, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+		was, err := GetDocumentSettings(ctx, tx, proposition)
+		if err != nil {
+			return core.Change{}, err
+		}
+		value, err := json.Marshal(d)
+		if err != nil {
+			return core.Change{}, err
+		}
+		if err := store.PutSetting(ctx, tx, documentKey(proposition), string(value), false, a.ID); err != nil {
+			return core.Change{}, err
+		}
+		// The entity is its own kind, not "proposition", so that undo does not
+		// try to write these three switches into columns of that name.
+		return core.Change{Entity: "document_settings", EntityID: proposition,
+			Action: "edit", Before: was, After: d}, nil
 	})
 }

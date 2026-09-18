@@ -1,0 +1,374 @@
+// Package realtime is the one websocket per tab. It carries presence, the
+// events every applied command publishes on the bus, and the commands a tab
+// sends, which are dispatched to the same board functions an HTTP handler or an
+// MCP tool would call, with the session's actor.
+package realtime
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"sync"
+	"time"
+
+	"golang.org/x/net/websocket"
+
+	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/store"
+)
+
+// outBuffer is how many messages a tab may be behind before it is cut off. A
+// tab that far behind is one whose socket has stopped draining.
+const outBuffer = 64
+
+// pollWait is how long the fallback holds a request open with nothing to say.
+const pollWait = 25 * time.Second
+
+type Hub struct {
+	board *board.Service
+	auth  *auth.Auth
+	log   *slog.Logger
+
+	mu    sync.Mutex
+	rooms map[int64]map[*client]struct{}
+}
+
+func New(b *board.Service, a *auth.Auth, log *slog.Logger) *Hub {
+	return &Hub{board: b, auth: a, log: log, rooms: map[int64]map[*client]struct{}{}}
+}
+
+// Person is one tab's occupant as the other tabs see them.
+type Person struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Initials string `json:"initials"`
+	Colour   string `json:"colour"`
+	Where    string `json:"where"`
+}
+
+// message is every frame the server sends. Only one of the payloads is set.
+type message struct {
+	Type     string              `json:"type"`
+	ID       int64               `json:"id,omitempty"`
+	Event    *core.Event         `json:"event,omitempty"`
+	Conflict *core.ConflictError `json:"conflict,omitempty"`
+	Error    string              `json:"error,omitempty"`
+	People   []Person            `json:"people,omitempty"`
+}
+
+// command is every frame a tab sends. ID is the tab's own request number, which
+// comes back on the answer so an optimistic change knows which reply is its own.
+type command struct {
+	ID   int64  `json:"id"`
+	Cmd  string `json:"cmd"`
+	Args args   `json:"args"`
+}
+
+// args is one flat struct for every command rather than one struct each: the
+// commands share most of their fields and none of them is ambiguous.
+type args struct {
+	Proposition int64   `json:"proposition"`
+	Card        int64   `json:"card"`
+	Column      int64   `json:"column"`
+	Item        int64   `json:"item"`
+	Comment     int64   `json:"comment"`
+	User        int64   `json:"user"`
+	After       int64   `json:"after"`
+	Activity    int64   `json:"activity"`
+	Base        int64   `json:"base"`
+	Assignees   []int64 `json:"assignees"`
+	Text        string  `json:"text"`
+	Title       string  `json:"title"`
+	Statement   string  `json:"statement"`
+	Blurb       string  `json:"blurb"`
+	Status      string  `json:"status"`
+	Episode     string  `json:"episode"`
+	Target      string  `json:"target"`
+	Due         string  `json:"due"`
+	Question    string  `json:"question"`
+	Done        bool    `json:"done"`
+	Where       string  `json:"where"`
+}
+
+type client struct {
+	hub         *Hub
+	ws          *websocket.Conn
+	user        *store.User
+	proposition int64
+	out         chan []byte
+	done        chan struct{}
+	closeOnce   sync.Once
+
+	mu    sync.Mutex
+	where string
+}
+
+// Handler is the websocket endpoint. Everything is refused in the handshake
+// rather than after it, so a tab that may not be here is told 403 instead of
+// being handed a socket that closes on it.
+func (h *Hub) Handler() http.Handler {
+	return websocket.Server{Handshake: h.handshake, Handler: h.serve}
+}
+
+func (h *Hub) handshake(config *websocket.Config, r *http.Request) error {
+	// The default handshake only checks that the origin parses. A session
+	// cookie is sent on a websocket request from any page, so without
+	// comparing the origin to the host, any site could open a socket that
+	// writes to the board.
+	origin, err := websocket.Origin(config, r)
+	if err != nil {
+		return err
+	}
+	config.Origin = origin
+	if origin != nil && origin.Host != r.Host {
+		return fmt.Errorf("origin %s is not %s", origin.Host, r.Host)
+	}
+	user, err := h.auth.SessionUser(r.Context(), r)
+	if err != nil {
+		return errors.New("no session")
+	}
+	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
+	ok, err := CanRead(r.Context(), h.board.DB, user, proposition)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no access to proposition %d", proposition)
+	}
+	return nil
+}
+
+func (h *Hub) serve(ws *websocket.Conn) {
+	defer ws.Close()
+	r := ws.Request()
+	ctx := r.Context()
+
+	// The handshake has already refused anyone who may not be here; this reads
+	// the person back, because a handshake cannot hand anything to the handler.
+	user, err := h.auth.SessionUser(ctx, r)
+	if err != nil {
+		return
+	}
+	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
+
+	c := &client{hub: h, ws: ws, user: user, proposition: proposition,
+		out: make(chan []byte, outBuffer), done: make(chan struct{})}
+	defer c.close()
+	go c.write()
+
+	// The subscription takes every proposition so that the rail stays live, and
+	// the filter below decides what this tab is entitled to see.
+	sub := h.board.Bus.Subscribe(0)
+	defer sub.Close()
+	go func() {
+		for e := range sub.C {
+			if c.wants(e) {
+				c.send(message{Type: "event", Event: &e})
+			}
+		}
+		// The bus dropped events on the way here, which means this tab's view
+		// has a hole in it and it is told to fill it from the activity table.
+		if sub.Dropped() > 0 {
+			c.send(message{Type: "gap"})
+		}
+	}()
+
+	h.join(c)
+	defer h.leave(c)
+
+	for {
+		var raw string
+		if err := websocket.Message.Receive(ws, &raw); err != nil {
+			return
+		}
+		var cmd command
+		if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
+			c.send(message{Type: "error", Error: "that was not a command"})
+			continue
+		}
+		h.dispatch(ctx, c, cmd)
+	}
+}
+
+// wants is what this tab may see: everything on the proposition it has open,
+// plus the rail entries themselves for anyone whose role reaches every
+// proposition. A guest reading one proposition sees only that one.
+func (c *client) wants(e core.Event) bool {
+	if e.Proposition == c.proposition {
+		return true
+	}
+	if e.Entity != "proposition" && e.Entity != "member" {
+		return false
+	}
+	return c.user.Role == auth.RoleOwner || c.user.Role == auth.RoleEditor
+}
+
+func (c *client) write() {
+	for {
+		select {
+		case b := <-c.out:
+			if err := websocket.Message.Send(c.ws, string(b)); err != nil {
+				c.close()
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
+}
+
+func (c *client) send(v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	select {
+	case <-c.done:
+	case c.out <- b:
+	default:
+		// The tab has stopped draining its socket, so there is nothing to wait
+		// for. Closing it makes the page reconnect and reload the board.
+		c.close()
+	}
+}
+
+func (c *client) close() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		c.ws.Close()
+	})
+}
+
+func (h *Hub) join(c *client) {
+	h.mu.Lock()
+	if h.rooms[c.proposition] == nil {
+		h.rooms[c.proposition] = map[*client]struct{}{}
+	}
+	h.rooms[c.proposition][c] = struct{}{}
+	h.mu.Unlock()
+	h.announce(c.proposition)
+}
+
+func (h *Hub) leave(c *client) {
+	h.mu.Lock()
+	if room := h.rooms[c.proposition]; room != nil {
+		delete(room, c)
+		if len(room) == 0 {
+			delete(h.rooms, c.proposition)
+		}
+	}
+	h.mu.Unlock()
+	h.announce(c.proposition)
+}
+
+// Presence is who is on a proposition and what they have open, which is what
+// the initials in the top bar and the marker beside a card are drawn from. One
+// person in two tabs is one person, showing whichever of them moved last.
+func (h *Hub) Presence(proposition int64) []Person {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	byUser := map[int64]Person{}
+	order := []int64{}
+	for c := range h.rooms[proposition] {
+		c.mu.Lock()
+		where := c.where
+		c.mu.Unlock()
+		if _, seen := byUser[c.user.ID]; !seen {
+			order = append(order, c.user.ID)
+		}
+		p := Person{ID: c.user.ID, Name: c.user.Name, Initials: c.user.Initials, Colour: c.user.Colour}
+		if where != "" {
+			p.Where = where
+		} else if seen, ok := byUser[c.user.ID]; ok {
+			p.Where = seen.Where
+		}
+		byUser[c.user.ID] = p
+	}
+	out := make([]Person, 0, len(order))
+	for _, id := range order {
+		out = append(out, byUser[id])
+	}
+	return out
+}
+
+func (h *Hub) announce(proposition int64) {
+	people := h.Presence(proposition)
+	h.mu.Lock()
+	room := make([]*client, 0, len(h.rooms[proposition]))
+	for c := range h.rooms[proposition] {
+		room = append(room, c)
+	}
+	h.mu.Unlock()
+	for _, c := range room {
+		c.send(message{Type: "presence", People: people})
+	}
+}
+
+// CanRead is the read side of the same rule core enforces on writes: an owner
+// sees every proposition, everybody else sees the ones they are a member of.
+func CanRead(ctx context.Context, q store.Querier, u *store.User, proposition int64) (bool, error) {
+	if u == nil || proposition == 0 {
+		return false, nil
+	}
+	if u.Role == auth.RoleOwner {
+		var exists int
+		err := q.QueryRowContext(ctx, `SELECT count(*) FROM propositions WHERE id = ?`, proposition).Scan(&exists)
+		return exists == 1, err
+	}
+	var one int
+	err := q.QueryRowContext(ctx,
+		`SELECT 1 FROM proposition_members WHERE proposition_id = ? AND user_id = ?`,
+		proposition, u.ID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Events is the fallback for a network that will not hold a socket: the same
+// stream, read out of the activity table, one request at a time.
+func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, err := h.auth.SessionUser(ctx, r)
+	if err != nil {
+		http.Error(w, "sign in", http.StatusUnauthorized)
+		return
+	}
+	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
+	if ok, err := CanRead(ctx, h.board.DB, user, proposition); err != nil || !ok {
+		http.Error(w, "no access", http.StatusForbidden)
+		return
+	}
+	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+
+	events, err := h.board.Since(ctx, proposition, since, 200)
+	if err != nil {
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+		return
+	}
+	if len(events) == 0 {
+		// Nothing yet, so hold the request open until something happens or the
+		// browser would give up on it anyway.
+		sub := h.board.Bus.Subscribe(proposition)
+		defer sub.Close()
+		timer := time.NewTimer(pollWait)
+		defer timer.Stop()
+		select {
+		case e := <-sub.C:
+			events = append(events, e)
+		case <-timer.C:
+		case <-ctx.Done():
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]any{"events": events})
+}

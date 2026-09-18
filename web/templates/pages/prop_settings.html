@@ -1,0 +1,109 @@
+{{define "content"}}<main id="work">
+  <div class="whead">
+    <div class="wid"><span id="wnum" class="mono">{{.Num}}</span><h1 id="wtitle">{{.P.Title}}</h1></div>
+    <p id="wstate">{{.P.Statement}}</p>
+    <div class="wmeta"><span id="wstatus" class="status">{{.P.Status}}</span>{{if .Episode}}<span id="wep" class="mono">Episode {{.Episode}}{{if .Target}} · target {{.Target}}{{end}}</span>{{else}}<span id="wep" class="mono">Not scheduled</span>{{end}}</div>
+    <nav class="tabs">
+      <a class="tab" href="/p/{{.P.ID}}">Board</a><a class="tab" href="/p/{{.P.ID}}#links">Links</a><a class="tab" href="/p/{{.P.ID}}#files">Files</a><a class="tab on" href="/p/{{.P.ID}}/settings">Settings</a>
+    </nav>
+  </div>
+
+  <section class="pane">
+    <div class="ph"><h2>Settings</h2><span class="mono">This proposition</span></div>
+    {{template "notice" .}}
+
+    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="proposition">
+      <section class="fs">
+        <div class="fsh"><h3>Proposition</h3><p>What the episode argues. The title is the rail entry; the statement is the sentence the episode has to survive.</p></div>
+        <div class="fsb">
+          <label class="f"><span class="l">Title</span><input name="title" value="{{.P.Title}}"></label>
+          <label class="f"><span class="l">Statement</span><input name="statement" value="{{.P.Statement}}"></label>
+          <label class="f"><span class="l">Blurb</span><textarea name="blurb" rows="4">{{.P.Blurb}}</textarea><small>Shown on the site when the episode is released.</small></label>
+          {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="schedule">
+      <section class="fs">
+        <div class="fsh"><h3>Schedule</h3><p>Status moves the proposition between rail groups. The target date is what the board counts down to.</p></div>
+        <div class="fsb">
+          <div class="row3">
+            <label class="f"><span class="l">Status</span><select name="status">{{range .Statuses}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+            <label class="f"><span class="l">Episode</span><input name="episode" value="{{.Episode}}" placeholder="—"></label>
+            <label class="f"><span class="l">Target release</span><input name="target" value="{{.Target}}" placeholder="—"></label>
+          </div>
+          {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="members">
+      <section class="fs">
+        <div class="fsh"><h3>Members</h3><p>Who can see and edit this proposition. Owners always can.</p></div>
+        <div class="fsb">
+          <div class="members-list">{{range .Members}}<label class="mem"><input type="checkbox" name="member" value="{{.ID}}"{{if .On}} checked{{end}}><span class="u {{.Colour}}" title="{{.Name}}">{{.Initials}}</span><span class="n">{{.Name}}</span><span class="mono role">{{.Role}}</span></label>{{end}}</div>
+          {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="columns">
+      <section class="fs">
+        <div class="fsh"><h3>Board columns</h3><p>The stages this episode moves through. A column keeps its cards when you rename it, and will not go while it still has any.</p></div>
+        <div class="fsb">
+          <ul class="cols">
+            {{range .Columns}}<li>
+              <input name="name-{{.ID}}" value="{{.Name}}" aria-label="Column name">
+              <span class="mono cnt">{{.Cards}} cards</span>
+              <button class="lnk quiet" type="submit" name="up" value="{{.ID}}"{{if .First}} disabled{{end}}>Up</button>
+              <button class="lnk quiet" type="submit" name="down" value="{{.ID}}"{{if .Last}} disabled{{end}}>Down</button>
+              <button class="lnk del" type="submit" name="remove" value="{{.ID}}">Remove</button>
+            </li>{{end}}
+            <li class="new"><input name="add" placeholder="+ Add a column" aria-label="New column"></li>
+          </ul>
+          {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="document">
+      <section class="fs">
+        <div class="fsh"><h3>Document</h3><p>The shared file under the board.</p></div>
+        <div class="fsb">
+          <label class="chk"><input type="checkbox" name="open_editing" value="1"{{if .Doc.OpenEditing}} checked{{end}}><span>Anyone in the workspace can edit</span></label>
+          <label class="chk"><input type="checkbox" name="history" value="1"{{if .Doc.History}} checked{{end}}><span>Keep version history<small>90 days, then weekly snapshots</small></span></label>
+          <label class="chk"><input type="checkbox" name="publish" value="1"{{if .Doc.Publish}} checked{{end}}><span>Publish the document as the episode’s reading page when released</span></label>
+          {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
+        </div>
+      </section>
+    </form>
+
+    <section class="fs last">
+      <div class="fsh"><h3>Danger</h3><p>These are not undoable from here.</p></div>
+      <div class="fsb"><div class="danger">
+        <form method="post" action="/p/{{.P.ID}}/settings">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          {{if .Archived}}<input type="hidden" name="do" value="restore"><button class="lnk" type="submit">Restore this proposition</button>
+          {{else}}<input type="hidden" name="do" value="archive"><button class="lnk del" type="submit">Archive this proposition</button>{{end}}
+        </form>
+        {{if .CanDel}}<button class="lnk del" type="button" data-dialog="delprop">Delete permanently</button>{{end}}
+      </div></div>
+    </section>
+
+    {{if .CanDel}}<dialog id="delprop">
+      <h3>Delete {{.Num}} {{.P.Title}}?</h3>
+      <p>The board, its cards and everything filed under this proposition go with it. The record of the deletion stays in activity.</p>
+      <form method="post" action="/p/{{.P.ID}}/settings" class="acts">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="delete">
+        <button class="lnk plain" type="button" data-close>Keep it</button>
+        <button class="lnk del" type="submit">Delete permanently</button>
+      </form>
+    </dialog>{{end}}
+  </section>
+</main>{{end}}
