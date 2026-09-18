@@ -1,6 +1,6 @@
 module github.com/davidtorcivia/theses
 
-go 1.26.0
+go 1.25.0
 
 require (
 	github.com/pquerna/otp v1.5.0
