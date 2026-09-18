@@ -19,14 +19,25 @@ cannot do what the person it belongs to may not do, so demoting someone refuses
 their tokens too: after a demotion to guest, their admin token is refused the
 settings routes and keeps the ones that only read.
 
+One refusal has one status across the whole API, whichever resource it came
+from.
+
 | Status | When |
 | --- | --- |
+| 400 | the body is not JSON, or does not have the field the route reads |
 | 401 | no `Authorization: Bearer` header, or the token is unknown or revoked |
-| 403 | the token does not have the scope the route needs, or the person it belongs to no longer has the standing that scope implies |
-| 404 | no such endpoint, or no such settings key |
+| 403 | the token does not have the scope the route needs, the person it belongs to no longer has the standing that scope implies, or the row is somebody else's note |
+| 404 | no such endpoint, no such settings key, or a thing that is not there or that the token's owner may not touch |
+| 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone |
 | 413 | the request body is over 64 KiB, which `/api/v1` and `/mcp` both allow |
+| 422 | the body is JSON and the rules refuse it: a title that is empty or too long, a kind or a question that is not on the list, a size no upload may be |
 | 429 | over 300 requests a minute for one token |
 | 500 | a fault on the server; the detail is in its log, not in the response |
+| 503 | object storage has not been set up yet, so the route that needs it cannot answer |
+
+Not there and not allowed are both `404`. The commands answer the role and the
+membership with one refusal, so telling the two apart would tell a caller
+whether a row it may not read exists.
 
 Every refusal is JSON with one field:
 

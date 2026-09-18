@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/notify/channel"
@@ -203,6 +204,13 @@ const configContext = "notification_channels.config_json"
 func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Channel) (Channel, error) {
 	if err := c.Validate(); err != nil {
 		return Channel{}, err
+	}
+	// Email is verified by existing: it goes to the address the account signs
+	// in with, so there is nothing left for a test message to prove. This is
+	// here rather than in the page that saves one because the API saves them
+	// too, and one created there used to stay silent until somebody tested it.
+	if c.Kind == KindEmail {
+		c.VerifiedAt = time.Now().Unix()
 	}
 	body, err := json.Marshal(c.Config)
 	if err != nil {

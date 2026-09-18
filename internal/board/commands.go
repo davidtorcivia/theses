@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,6 +29,8 @@ var (
 	ErrArchived = errors.New("that proposition is archived; restore it first")
 	// ErrTooLong is a field with more in it than the field is for.
 	ErrTooLong = errors.New("that is longer than this field takes")
+	// ErrQuestion is a card filed under something that is not one of the four.
+	ErrQuestion = errors.New("that is not one of the four questions")
 )
 
 // What a field on the board holds. A status or a date is a word, a title is a
@@ -658,7 +659,7 @@ func (s *Service) SetCardDue(ctx context.Context, a core.Actor, id int64, due st
 func (s *Service) SetCardQuestion(ctx context.Context, a core.Actor, id int64, question string) (core.Event, error) {
 	question = strings.TrimSpace(question)
 	if question != "" && !slices.Contains(Questions, question) {
-		return core.Event{}, fmt.Errorf("%q is not one of the four questions", question)
+		return core.Event{}, ErrQuestion
 	}
 	return s.card(ctx, a, id, auth.CanEdit, "question", func(ctx context.Context, tx *sql.Tx, _ Card) error {
 		_, err := tx.ExecContext(ctx, `UPDATE cards SET question = ? WHERE id = ?`, value(question), id)

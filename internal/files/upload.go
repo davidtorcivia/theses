@@ -89,7 +89,7 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 		return Upload{}, err
 	}
 	if size <= 0 || size > maxFileSize {
-		return Upload{}, fmt.Errorf("a file has to be between 1 byte and %d bytes", int64(maxFileSize))
+		return Upload{}, ErrBadSize
 	}
 	if !known(folder, Folders) {
 		return Upload{}, ErrKind

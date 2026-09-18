@@ -220,13 +220,20 @@ func TestDocumentRoutesRefuseNonsense(t *testing.T) {
 		want                       int
 	}{
 		{"a document with no name", "POST", fmt.Sprintf("/api/v1/propositions/%d/documents", prop),
-			`{"name":"  "}`, http.StatusBadRequest},
+			`{"name":"  "}`, http.StatusUnprocessableEntity},
 		{"a body that is not JSON", "POST", fmt.Sprintf("/api/v1/propositions/%d/documents", prop),
 			`not json`, http.StatusBadRequest},
 		{"an id that is not a number", "GET", "/api/v1/documents/x", "", http.StatusNotFound},
 		{"a document that is not there", "GET", "/api/v1/documents/99", "", http.StatusNotFound},
 		{"a revision reason the column will not take", "POST",
-			fmt.Sprintf("/api/v1/documents/%d/revisions", 99), `{"reason":"because"}`, http.StatusBadRequest},
+			fmt.Sprintf("/api/v1/documents/%d/revisions", 99), `{"reason":"because"}`,
+			http.StatusUnprocessableEntity},
+		{"a reason that belongs to the timer", "POST",
+			fmt.Sprintf("/api/v1/documents/%d/revisions", 99), `{"reason":"periodic"}`,
+			http.StatusUnprocessableEntity},
+		{"and one that belongs to the importer", "POST",
+			fmt.Sprintf("/api/v1/documents/%d/revisions", 99), `{"reason":"pre-import"}`,
+			http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if w := h.do(tc.method, tc.target, write, tc.body); w.Code != tc.want {

@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/davidtorcivia/theses/internal/auth"
-	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -267,30 +266,6 @@ func (f *fileAPI) read(w http.ResponseWriter, r *http.Request, into any) bool {
 		return false
 	}
 	return true
-}
-
-// refuse maps a command's error to a status. Anything not named here is a fault
-// on this side: it is logged with the path and answered without its detail.
-func (f *fileAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, core.ErrNotFound):
-		// A proposition somebody is not a member of answers the same way as one
-		// that does not exist, because the rule is that they are not told.
-		f.fail(w, http.StatusNotFound, "that is not here")
-	case errors.Is(err, core.ErrForbidden):
-		f.fail(w, http.StatusForbidden, "you cannot do that here")
-	case errors.Is(err, files.ErrNoBucket):
-		f.fail(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrEmpty),
-		errors.Is(err, board.ErrTooLong), errors.Is(err, files.ErrKind),
-		errors.Is(err, files.ErrQuestion), errors.Is(err, files.ErrURL),
-		errors.Is(err, files.ErrState), errors.Is(err, files.ErrSize),
-		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
-		errors.Is(err, files.ErrPart):
-		f.fail(w, http.StatusUnprocessableEntity, err.Error())
-	default:
-		f.serverError(w, r, err)
-	}
 }
 
 // path is a numeric path value, zero when it is not one. Zero reaches the

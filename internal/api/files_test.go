@@ -33,9 +33,12 @@ type fileHarness struct {
 	owner   *store.User
 	// stranger is an editor who is a member of nothing.
 	stranger *store.User
-	prop     int64
-	card     int64
-	page     string
+	// board is the command service behind the same core, for the tests that
+	// have to put a proposition into a state the routes cannot.
+	board *board.Service
+	prop  int64
+	card  int64
+	page  string
 }
 
 func newFileHarness(t *testing.T) *fileHarness {
@@ -101,7 +104,7 @@ func newFileHarness(t *testing.T) *fileHarness {
 	api := New(h.db, h.auth, h.set, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	api.Files = svc
 	return &fileHarness{
-		T: t, db: h.db, auth: h.auth, svc: svc,
+		T: t, db: h.db, auth: h.auth, svc: svc, board: b,
 		handler: api.Handler(),
 		owner:   h.user, stranger: stranger, prop: e.EntityID, card: card.EntityID,
 		page: page.URL,

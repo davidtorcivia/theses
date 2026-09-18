@@ -58,7 +58,7 @@ func TestNotificationsRoundTripWithoutSecrets(t *testing.T) {
 		t.Fatalf("saving rules gave %d: %s", w.Code, w.Body)
 	}
 	if w := h.do("PUT", "/api/v1/me/notifications", token,
-		`{"rules":{"nonsense":[`+strconv.FormatInt(id, 10)+`]}}`); w.Code != http.StatusBadRequest {
+		`{"rules":{"nonsense":[`+strconv.FormatInt(id, 10)+`]}}`); w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("an event nobody can tick gave %d", w.Code)
 	}
 
@@ -104,6 +104,25 @@ func TestNotificationsRoundTripWithoutSecrets(t *testing.T) {
 	}
 	if len(channels) != 0 {
 		t.Errorf("channels = %+v, want none", channels)
+	}
+}
+
+// An email channel goes to the address the account signs in with, so it is
+// verified the moment it is saved. The profile page has always done this; a
+// channel created through the API used to stay silent until somebody found the
+// test button.
+func TestAnEmailChannelIsVerifiedWhereverItIsCreated(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+
+	w := h.do("PUT", "/api/v1/me/notifications", token, `{"channels":[{"kind":"email"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+	}
+	var view notificationsView
+	into(t, w, &view)
+	if len(view.Channels) != 1 || !view.Channels[0].Verified {
+		t.Fatalf("channels = %+v, want one verified", view.Channels)
 	}
 }
 
