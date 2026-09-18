@@ -8,7 +8,6 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
-	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 )
@@ -81,33 +80,10 @@ type fileTools struct {
 // errOneOf is a call that named both a link and a file, or neither.
 var errOneOf = errors.New("give either a link or a file, not both and not neither")
 
-// refuse is what a tool says when a command would not go through. A refusal the
-// caller can act on comes back word for word; anything else is a fault on this
-// side, logged with its detail and answered without it, the same as the rest of
-// this server.
-func refuse(what string, err error, s *Server) error {
-	switch {
-	case errors.Is(err, core.ErrNotFound):
-		// A proposition this token's owner is not a member of answers the same
-		// way as one that is not there.
-		return errors.New("that is not here")
-	case errors.Is(err, core.ErrForbidden):
-		return errors.New("the person this token belongs to cannot do that here")
-	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrEmpty),
-		errors.Is(err, board.ErrTooLong), errors.Is(err, files.ErrKind),
-		errors.Is(err, files.ErrQuestion), errors.Is(err, files.ErrURL),
-		errors.Is(err, files.ErrState), errors.Is(err, files.ErrNoBucket),
-		errors.Is(err, files.ErrPart):
-		return err
-	}
-	return s.failed(what, err)
-}
-
 // actorFor is who a tool call writes as: the person the token belongs to, with
 // the client's name as via, which is the same attribution the REST API records.
 func (f *fileTools) actorFor(req *sdk.CallToolRequest, p api.Principal) core.Actor {
-	who := actor(req, p)
-	return core.Actor{Kind: core.KindUser, ID: p.User.ID, Name: p.User.Name, Via: who.Via}
+	return person(req, p)
 }
 
 type propositionArgs struct {
@@ -125,7 +101,7 @@ func (f *fileTools) listLinks(ctx context.Context, req *sdk.CallToolRequest, in 
 	}
 	rows, err := f.svc.ListLinks(ctx, f.actorFor(req, p), in.Proposition)
 	if err != nil {
-		return nil, linksOut{}, refuse("list the links", err, f.Server)
+		return nil, linksOut{}, f.refusal("list the links", err)
 	}
 	if rows == nil {
 		rows = []files.Link{}
@@ -148,14 +124,14 @@ func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in ad
 	a := f.actorFor(req, p)
 	e, err := f.svc.AddLink(ctx, a, in.Proposition, in.URL)
 	if err != nil {
-		return nil, files.Link{}, refuse("add the link", err, f.Server)
+		return nil, files.Link{}, f.refusal("add the link", err)
 	}
 	f.log.Info("mcp write", "tool", "add_link", "proposition", in.Proposition,
 		"user", p.User.ID, "via", a.Via, "protocol", req.ProtocolVersion())
 
 	link, err := f.svc.ReadLink(ctx, a, e.EntityID)
 	if err != nil {
-		return nil, files.Link{}, refuse("read the link back", err, f.Server)
+		return nil, files.Link{}, f.refusal("read the link back", err)
 	}
 	// The note and the question are the agent's own words about the link, so
 	// they are a second command rather than part of the fetch.
@@ -164,10 +140,10 @@ func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in ad
 			Title: link.Title, Author: link.Author, Year: link.Year, Kind: link.Kind,
 			Note: in.Note, Question: in.Question,
 		}); err != nil {
-			return nil, files.Link{}, refuse("save the note", err, f.Server)
+			return nil, files.Link{}, f.refusal("save the note", err)
 		}
 		if link, err = f.svc.ReadLink(ctx, a, link.ID); err != nil {
-			return nil, files.Link{}, refuse("read the link back", err, f.Server)
+			return nil, files.Link{}, f.refusal("read the link back", err)
 		}
 	}
 	return nil, link, nil
@@ -184,7 +160,7 @@ func (f *fileTools) listFiles(ctx context.Context, req *sdk.CallToolRequest, in 
 	}
 	rows, err := f.svc.ListFiles(ctx, f.actorFor(req, p), in.Proposition)
 	if err != nil {
-		return nil, filesOut{}, refuse("list the files", err, f.Server)
+		return nil, filesOut{}, f.refusal("list the files", err)
 	}
 	return nil, filesOut{Files: rows}, nil
 }
@@ -204,7 +180,7 @@ func (f *fileTools) downloadURL(ctx context.Context, req *sdk.CallToolRequest, i
 	}
 	url, err := f.svc.DownloadURL(ctx, f.actorFor(req, p), in.File)
 	if err != nil {
-		return nil, downloadOut{}, refuse("make a download link", err, f.Server)
+		return nil, downloadOut{}, f.refusal("make a download link", err)
 	}
 	return nil, downloadOut{URL: url}, nil
 }
@@ -242,7 +218,7 @@ func (f *fileTools) attach(ctx context.Context, req *sdk.CallToolRequest, in att
 		e, err = f.svc.AttachFile(ctx, a, in.Card, in.File)
 	}
 	if err != nil {
-		return nil, attachOut{}, refuse("change the card's attachments", err, f.Server)
+		return nil, attachOut{}, f.refusal("change the card's attachments", err)
 	}
 	f.log.Info("mcp write", "tool", "attach_to_card", "card", in.Card,
 		"user", p.User.ID, "via", a.Via, "protocol", req.ProtocolVersion())

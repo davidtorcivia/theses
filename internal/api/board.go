@@ -110,30 +110,38 @@ func (a *API) decode(w http.ResponseWriter, r *http.Request, into any) bool {
 // Propositions.
 
 func (a *API) listPropositions(w http.ResponseWriter, r *http.Request, p Principal) {
-	all, err := board.ListPropositions(r.Context(), a.db)
+	out, err := a.Propositions(r.Context(), p)
 	if err != nil {
 		a.serverError(w, r, err)
 		return
 	}
-	// An owner reads every proposition; everybody else reads the ones they are
-	// a member of, which is the same rule the rail and the search obey. The
-	// list is filtered rather than refused, because a rail with nothing on it
-	// is an answer and a 404 here would be about the workspace.
-	out := all
-	if p.User == nil || p.User.Role != auth.RoleOwner {
-		mine, err := a.memberships(r.Context(), p)
-		if err != nil {
-			a.serverError(w, r, err)
-			return
-		}
-		out = []board.Proposition{}
-		for _, prop := range all {
-			if mine[prop.ID] {
-				out = append(out, prop)
-			}
+	a.writeJSON(w, http.StatusOK, map[string]any{"propositions": out})
+}
+
+// Propositions is the rail as this token may read it, for both surfaces. An
+// owner reads every proposition; everybody else reads the ones they are a
+// member of, which is the rule the rail, the search and the log all obey. The
+// list is filtered rather than refused, because a rail with nothing on it is an
+// answer and a refusal here would be about the workspace.
+func (a *API) Propositions(ctx context.Context, p Principal) ([]board.Proposition, error) {
+	all, err := board.ListPropositions(ctx, a.db)
+	if err != nil {
+		return nil, err
+	}
+	if p.User != nil && p.User.Role == auth.RoleOwner {
+		return all, nil
+	}
+	mine, err := a.memberships(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	out := []board.Proposition{}
+	for _, prop := range all {
+		if mine[prop.ID] {
+			out = append(out, prop)
 		}
 	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"propositions": out})
+	return out, nil
 }
 
 func (a *API) getProposition(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -141,7 +149,7 @@ func (a *API) getProposition(w http.ResponseWriter, r *http.Request, p Principal
 	if !ok {
 		return
 	}
-	prop, err := a.proposition(r.Context(), p, id)
+	prop, err := a.Proposition(r.Context(), p, id)
 	if err != nil {
 		a.refuse(w, r, err)
 		return
@@ -179,7 +187,7 @@ func (a *API) editProposition(w http.ResponseWriter, r *http.Request, p Principa
 	}
 	who := actorOf(p)
 	a.together(w, r, func(ctx context.Context) (core.Event, error) {
-		was, err := a.proposition(ctx, p, id)
+		was, err := a.Proposition(ctx, p, id)
 		if err != nil {
 			return core.Event{}, err
 		}
@@ -243,7 +251,7 @@ func (a *API) listColumns(w http.ResponseWriter, r *http.Request, p Principal) {
 	if !ok {
 		return
 	}
-	if err := a.readable(r.Context(), p, id); err != nil {
+	if err := a.Readable(r.Context(), p, id); err != nil {
 		a.refuse(w, r, err)
 		return
 	}
@@ -314,7 +322,7 @@ func (a *API) listCards(w http.ResponseWriter, r *http.Request, p Principal) {
 	if !ok {
 		return
 	}
-	if err := a.readable(r.Context(), p, id); err != nil {
+	if err := a.Readable(r.Context(), p, id); err != nil {
 		a.refuse(w, r, err)
 		return
 	}
@@ -340,7 +348,7 @@ func (a *API) getCard(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	// The card is read before the membership, and a card on a proposition this
 	// token's owner may not read answers the same way as one that is not there.
-	if err := a.readable(r.Context(), p, card.Proposition); err != nil {
+	if err := a.Readable(r.Context(), p, card.Proposition); err != nil {
 		a.refuse(w, r, err)
 		return
 	}
@@ -572,12 +580,12 @@ func (a *API) together(w http.ResponseWriter, r *http.Request, run func(context.
 	a.writeJSON(w, http.StatusOK, map[string]any{"event": e})
 }
 
-// readable is the one visibility test, the same one the board, the documents
+// Readable is the one visibility test, the same one the board, the documents
 // and the search ask: an owner reads every proposition, everybody else reads
 // the ones they are a member of. A proposition somebody is not a member of and
 // one that is not there answer alike, because the rule is that they are not
 // told it is there.
-func (a *API) readable(ctx context.Context, p Principal, proposition int64) error {
+func (a *API) Readable(ctx context.Context, p Principal, proposition int64) error {
 	ok, err := board.Readable(ctx, a.db, p.User, proposition)
 	if err != nil {
 		return err
@@ -588,9 +596,9 @@ func (a *API) readable(ctx context.Context, p Principal, proposition int64) erro
 	return nil
 }
 
-// proposition is one row this token may read.
-func (a *API) proposition(ctx context.Context, p Principal, id int64) (board.Proposition, error) {
-	if err := a.readable(ctx, p, id); err != nil {
+// Proposition is one row this token may read.
+func (a *API) Proposition(ctx context.Context, p Principal, id int64) (board.Proposition, error) {
+	if err := a.Readable(ctx, p, id); err != nil {
 		return board.Proposition{}, err
 	}
 	return board.GetProposition(ctx, a.db, id)

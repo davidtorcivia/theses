@@ -12,6 +12,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
+	"github.com/davidtorcivia/theses/internal/files"
 )
 
 // addDocumentTools registers the document tools. It is one call from New so
@@ -70,20 +71,33 @@ func (s *Server) documents() (*docs.Service, error) {
 	return s.api.Docs, nil
 }
 
-// refusal is what a tool says about a command that did not go through. A
-// conflict carries the text the block holds now, because the caller's next move
-// is to merge it in and send that.
+// refusal is what a tool says about a command that did not go through, for
+// every tool on this server. A conflict carries the text the row holds now,
+// because the caller's next move is to merge it in and send that. A refusal the
+// caller can act on comes back word for word; anything else is a fault on this
+// side, logged with its detail and answered without it.
 func (s *Server) refusal(what string, err error) error {
 	var clash *core.ConflictError
 	switch {
 	case errors.As(err, &clash):
-		return fmt.Errorf("that block changed while you were writing; it is now at version %d and holds: %s",
-			clash.Version, clash.Current)
+		return fmt.Errorf("that %s changed while you were writing; it is now at version %d and holds: %s",
+			clash.Entity, clash.Version, clash.Current)
 	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
-		return errors.New("that is not there, or this token's owner may not read it")
+		// Not there and not allowed answer alike, because the commands answer
+		// the role and the membership with one refusal and saying which would
+		// say whether the row is there.
+		return errors.New("that is not there, or this token's owner may not touch it")
 	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrEmpty),
-		errors.Is(err, board.ErrTooLong), errors.Is(err, docs.ErrNameTaken),
-		errors.Is(err, docs.ErrTooManyDocuments):
+		errors.Is(err, board.ErrTooLong), errors.Is(err, board.ErrQuestion),
+		errors.Is(err, board.ErrColumnNotEmpty), errors.Is(err, board.ErrNotYours),
+		errors.Is(err, core.ErrNotUndoable),
+		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrReason),
+		errors.Is(err, docs.ErrTooManyDocuments),
+		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
+		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),
+		errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),
+		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
+		errors.Is(err, files.ErrNoBucket), errors.Is(err, files.ErrPart):
 		return err
 	}
 	return s.failed(what, err)

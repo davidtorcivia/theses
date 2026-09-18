@@ -291,18 +291,22 @@ func (a *API) Reader(p Principal) search.Reader {
 // the token or the MCP client that carried the change, and is absent when a
 // browser made it.
 type ActivityView struct {
-	ID            int64           `json:"id"`
-	PropositionID int64           `json:"proposition_id,omitempty"`
-	ActorKind     string          `json:"actor_kind"`
-	ActorID       string          `json:"actor_id"`
-	Via           string          `json:"via,omitempty"`
-	Entity        string          `json:"entity"`
-	EntityID      string          `json:"entity_id"`
-	Action        string          `json:"action"`
-	Before        json.RawMessage `json:"before,omitempty"`
-	After         json.RawMessage `json:"after,omitempty"`
-	CreatedAt     int64           `json:"created_at"`
-	UndoneAt      int64           `json:"undone_at,omitempty"`
+	ID            int64  `json:"id"`
+	PropositionID int64  `json:"proposition_id,omitempty"`
+	ActorKind     string `json:"actor_kind"`
+	ActorID       string `json:"actor_id"`
+	Via           string `json:"via,omitempty"`
+	Entity        string `json:"entity"`
+	EntityID      string `json:"entity_id"`
+	Action        string `json:"action"`
+	// Before and After are the entity as it was and as it is, decoded rather
+	// than passed through as raw JSON so that a schema built from this type
+	// says what they are: anything the log holds, which is an object for most
+	// rows and a bare value for a few.
+	Before    any   `json:"before,omitempty"`
+	After     any   `json:"after,omitempty"`
+	CreatedAt int64 `json:"created_at"`
+	UndoneAt  int64 `json:"undone_at,omitempty"`
 }
 
 // The default page of activity and the most one request may ask for.
@@ -384,27 +388,24 @@ func (a *API) Activity(ctx context.Context, p Principal, since int64, limit int)
 			return nil, err
 		}
 		e.PropositionID, e.UndoneAt, e.Via = prop.Int64, undone.Int64, via.String
-		e.Before, e.After = jsonOrString(before), jsonOrString(after)
+		e.Before, e.After = payload(before), payload(after)
 		out = append(out, e)
 	}
 	return out, rows.Err()
 }
 
-// jsonOrString is an activity column as JSON. Most hold the JSON of an entity,
-// but a few hold a bare value such as a role name, and quoting those is what
-// keeps one of them from making the whole page unencodable.
-func jsonOrString(v sql.NullString) json.RawMessage {
+// payload is an activity column as a value. Most hold the JSON of an entity,
+// but a few hold a bare value such as a role name, and reporting one of those
+// as the string it is keeps it from making the whole page unencodable.
+func payload(v sql.NullString) any {
 	if !v.Valid {
 		return nil
 	}
-	if json.Valid([]byte(v.String)) {
-		return json.RawMessage(v.String)
+	var out any
+	if err := json.Unmarshal([]byte(v.String), &out); err != nil {
+		return v.String
 	}
-	quoted, err := json.Marshal(v.String)
-	if err != nil {
-		return nil
-	}
-	return quoted
+	return out
 }
 
 // A SettingView is one setting as both surfaces report it.
