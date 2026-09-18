@@ -85,21 +85,35 @@ func Load(lookup func(string) (string, bool)) (*Config, error) {
 
 func LoadEnv() (*Config, error) { return Load(os.LookupEnv) }
 
-// key accepts hex or raw bytes and refuses anything a generated key would not be.
+// MinDistinctBytes is how much variety a raw key has to show. A passphrase has
+// more than sixteen distinct bytes; a repeated word does not.
+const MinDistinctBytes = 16
+
+const keyAdvice = "generate one with `openssl rand -hex 32`"
+
+// key accepts hex or raw bytes and refuses anything a generated key would not
+// be. A value that parses as hex is treated as hex and nothing else: falling
+// back to its ASCII bytes turned 32 hex characters, which are 16 bytes, into a
+// 32 byte key with half the entropy the length claimed.
 func key(lookup func(string) (string, bool), name string) ([]byte, error) {
 	v, _ := lookup(name)
 	if v == "" {
-		return nil, fmt.Errorf("%s is required: generate one with `openssl rand -hex 32`", name)
+		return nil, fmt.Errorf("%s is required: %s", name, keyAdvice)
+	}
+	if decoded, err := hex.DecodeString(v); err == nil {
+		if len(decoded) < MinKeyLen {
+			return nil, fmt.Errorf("%s is %d hex characters, which is %d bytes; need at least %d bytes: %s",
+				name, len(v), len(decoded), MinKeyLen, keyAdvice)
+		}
+		return decoded, nil
 	}
 	b := []byte(v)
-	if decoded, err := hex.DecodeString(v); err == nil && len(decoded) >= MinKeyLen {
-		b = decoded
-	}
 	if len(b) < MinKeyLen {
-		return nil, fmt.Errorf("%s is too short: %d bytes, need at least %d; generate one with `openssl rand -hex 32`", name, len(b), MinKeyLen)
+		return nil, fmt.Errorf("%s is too short: %d bytes, need at least %d; %s", name, len(b), MinKeyLen, keyAdvice)
 	}
-	if distinct(b) < 8 {
-		return nil, fmt.Errorf("%s looks like a placeholder rather than a random key; generate one with `openssl rand -hex 32`", name)
+	if distinct(b) < MinDistinctBytes {
+		return nil, fmt.Errorf("%s has only %d distinct bytes, so it looks like a placeholder rather than a random key; %s",
+			name, distinct(b), keyAdvice)
 	}
 	return b, nil
 }

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"encoding/hex"
 	"log/slog"
 	"strings"
 	"testing"
@@ -73,8 +75,10 @@ func TestLoadRejects(t *testing.T) {
 		{"ftp base URL", "THESES_BASE_URL", "ftp://example.com", "absolute http or https URL"},
 		{"missing secret key", "THESES_SECRET_KEY", "", "THESES_SECRET_KEY is required"},
 		{"short secret key", "THESES_SECRET_KEY", "too short", "too short"},
-		{"short hex key", "THESES_SECRET_KEY", "abcdef", "too short"},
+		{"short hex key", "THESES_SECRET_KEY", "abcdef", "hex characters"},
+		{"half length hex key", "THESES_SECRET_KEY", strings.Repeat("ab", 16), "which is 16 bytes"},
 		{"placeholder key", "THESES_SESSION_KEY", strings.Repeat("changeme", 5), "placeholder"},
+		{"repeated word", "THESES_SESSION_KEY", strings.Repeat("abcdefgh", 4), "placeholder"},
 		{"missing session key", "THESES_SESSION_KEY", "", "THESES_SESSION_KEY is required"},
 		{"bad bool", "THESES_TRUST_PROXY", "yes please", "must be true or false"},
 		{"bad level", "THESES_LOG_LEVEL", "chatty", "debug, info, warn or error"},
@@ -91,6 +95,31 @@ func TestLoadRejects(t *testing.T) {
 				t.Errorf("error %q does not mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// A 32 character hex value is 16 bytes. It used to be reread as 32 ASCII bytes,
+// which passed the length check with half the entropy the length claimed.
+func TestHexIsNeverRereadAsBytes(t *testing.T) {
+	m := good()
+	m["THESES_SECRET_KEY"] = strings.Repeat("0123456789abcdef", 2) // 32 characters
+	if _, err := Load(env(m)); err == nil {
+		t.Fatal("a 32 character hex key was accepted as 32 raw bytes")
+	}
+}
+
+// What .env.example tells the owner to run has to pass.
+func TestTheDocumentedCommandProducesAnAcceptableKey(t *testing.T) {
+	m := good()
+	for _, name := range []string{"THESES_SECRET_KEY", "THESES_SESSION_KEY"} {
+		m[name] = hex.EncodeToString(bytes.Repeat([]byte{1, 2, 3, 4}, 8))
+	}
+	c, err := Load(env(m))
+	if err != nil {
+		t.Fatalf("64 hex characters were refused: %v", err)
+	}
+	if len(c.SecretKey) != 32 || len(c.SessionKey) != 32 {
+		t.Errorf("decoded to %d and %d bytes", len(c.SecretKey), len(c.SessionKey))
 	}
 }
 
