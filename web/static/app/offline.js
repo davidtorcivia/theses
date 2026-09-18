@@ -27,11 +27,27 @@ const STORES = {
 
 function open() {
   return new Promise((resolve) => {
+    let done = false;
+    let timer = 0;
+    // answer settles this open once, whichever of the several ways it can end
+    // gets there first, and closes a connection that turns up after everyone
+    // has stopped waiting for it: holding one open is what blocks the next
+    // version from being installed.
+    const answer = (db) => {
+      if (done) {
+        if (db) db.close();
+        return;
+      }
+      done = true;
+      clearTimeout(timer);
+      resolve(db);
+    };
+
     let req;
     try {
       req = indexedDB.open(DB, VERSION);
     } catch {
-      resolve(null);
+      answer(null);
       return;
     }
     req.onupgradeneeded = () => {
@@ -41,9 +57,22 @@ function open() {
         }
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
+    req.onsuccess = () => {
+      // A connection held open is what blocks the next upgrade. Closing on the
+      // notice means the tab doing the upgrading gets on with it rather than
+      // waiting for this one to be shut by hand.
+      req.result.onversionchange = () => req.result.close();
+      answer(req.result);
+    };
+    req.onerror = () => answer(null);
+    req.onblocked = () => answer(null);
+    // An upgrade another tab is blocking stays pending, and every open made
+    // after it queues behind that one and fires nothing at all, so none of the
+    // handlers above would ever run. Three seconds and the caller is told there
+    // is no storage, which is what there is for as long as the block lasts: the
+    // app then behaves as it does in a browser that refuses storage, out loud,
+    // rather than waiting for ever with the page half drawn.
+    timer = setTimeout(() => answer(null), 3000);
   });
 }
 

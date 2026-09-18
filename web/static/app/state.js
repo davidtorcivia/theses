@@ -162,6 +162,10 @@ export async function material() {
     // them rather than saying there are none.
     state.loaded = 0;
     state.materialFailed = true;
+    // Drawn again now, so the pane says it could not read them rather than
+    // keeping the line it was drawn with, which was that there are none. Without
+    // this it said the wrong thing for the whole of the gap below.
+    emit();
     // One render once the gap has passed, because a pane nobody is touching
     // produces no renders and would otherwise sit on a moment of trouble until
     // somebody clicked something. That render calls this again; if it works
