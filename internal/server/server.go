@@ -287,6 +287,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /sw.js", s.serviceWorker)
 	mux.HandleFunc("GET /shell", s.offlineShell)
 	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
+
+	// Wave 4, integrations. Enrolment on the way in, for an account the
+	// workspace requires an authenticator of and has none.
+	mux.HandleFunc("GET /login/authenticator", s.getEnrol)
+	mux.HandleFunc("POST /login/authenticator", s.postEnrol)
 	return mux
 }
 
