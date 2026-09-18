@@ -5,7 +5,10 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 
 | Route | What it is |
 | --- | --- |
-| `GET /` | The app shell. It hosts the workspace views itself, in the browser. |
+| `GET /` | The app shell. |
+| `GET /p/{id}` | Open a proposition: the shell with that one loaded. |
+| `GET /p/{id}/settings` | The proposition's own settings: its members and its status. |
+| `POST /p/{id}/settings` | Save them. |
 | `GET POST /setup` | First run only: create the owner. Every other route redirects here until one exists. |
 | `GET POST /setup/authenticator` | Scan the QR code and confirm a code. The account is written only when the code matches. |
 | `GET POST /login` | Account name, password and authenticator code, in one form. |
@@ -32,7 +35,8 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /settings/team/invite/{id}/revoke` | Delete the invitation. |
 | `POST /settings/tokens` | Create an API token. It is shown once. |
 | `POST /settings/tokens/{id}/revoke` | Revoke one. |
-| `GET /ws` | One websocket per tab, on the session cookie, subscribed to the open proposition: presence, and every command as it is applied. |
+| `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. |
+| `GET /api/events?proposition={id}&since={seq}` | The same stream by long poll, for a network that cannot hold a socket. |
 | `GET /offline` | What the service worker will serve when the server is unreachable. |
 | `GET /healthz` | Always 200. |
 | `GET /readyz` | Runs the readiness checks: the database, the object store, and the age of the newest backup. |
@@ -40,13 +44,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 
 ## Inside the shell
 
-The workspace is one page. The shell renders its views in the browser and
-reads and writes through `/api/v1` and the websocket, so they are not separate
-server routes.
-
-Per proposition: the board, with the proposition's documents beneath it; the
-links; the files; and the proposition's own settings, which is its members and
-its status.
-
-Per account: the profile, the team, the workspace defaults, and the
-integrations.
+`GET /p/{id}` loads one proposition. Its tabs are views the shell renders in
+the browser rather than routes of their own: the board, with the proposition's
+documents beneath it, the links, and the files. They read and write through
+`/api/v1` and the websocket, so moving between them costs no page load.
