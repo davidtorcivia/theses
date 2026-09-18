@@ -17,7 +17,7 @@ input,textarea,select{font:inherit;color:inherit;background:transparent;border:0
 textarea{resize:vertical}
 [hidden]{display:none!important}
 #top{grid-area:top;display:flex;align-items:center;gap:1rem;position:sticky;top:0;z-index:20}
-#netbar{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);z-index:35;padding:.6rem 1rem;max-width:calc(100% - 2rem)}
+#netbar{position:fixed;left:1rem;right:1rem;bottom:1rem;z-index:35;padding:.6rem 1rem;width:fit-content;margin-inline:auto}
 #top .search{flex:1 1 200px;max-width:520px;display:flex;justify-content:space-between;align-items:center;gap:1rem}
 #top .presence{display:flex;align-items:center;gap:.35rem;margin-left:auto}
 #top .acct{display:inline-flex;align-items:center;gap:.5rem}
@@ -189,7 +189,7 @@ textarea{resize:vertical}
 }
 @media (prefers-reduced-motion:no-preference){.card,.ws{transition:background .15s,border-color .15s}}
 
-:root{--railw:250px;--toph:46px;--colw:210px;--gut:56px;--y:#FFD400;--k:#111;--p:#F4F1EA;--hair:rgba(244,241,234,.22);--hairp:rgba(0,0,0,.2);--dim:rgba(244,241,234,.55);--monof:"DM Mono",ui-monospace,Menlo,Consolas,monospace}
+:root{color-scheme:dark;--railw:250px;--toph:46px;--colw:210px;--gut:56px;--y:#FFD400;--k:#111;--p:#F4F1EA;--hair:rgba(244,241,234,.22);--hairp:rgba(0,0,0,.2);--dim:rgba(244,241,234,.55);--monof:"DM Mono",ui-monospace,Menlo,Consolas,monospace}
 body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;font-size:15px;line-height:1.3}
 .sm,.mono,kbd,.status,.facets button,#tagfilter button,.col header,#rail h4,#rail .h4,.f .l,.fsh h3,#drawer h4,#drawer .props dt,.team th,.list .k,#picker .pt{font-family:"Archivo",sans-serif;font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:500;font-stretch:80%}
 .mono,kbd{font-family:var(--monof);font-weight:400;font-size:11px;letter-spacing:.05em;font-stretch:100%}
@@ -336,7 +336,6 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 .f .l{color:var(--dim);margin-bottom:.35rem}
 .form input,.form textarea,.form select,.invite input,.invite select{font-family:"Archivo",sans-serif;font-size:15px;font-weight:500;color:var(--p);border:1px solid var(--hair);padding:.45rem .65rem}
 .form input:focus,.form textarea:focus,.form select:focus,.invite input:focus{border-color:var(--y)}
-select option{color:#000}
 .f>small,.chk small{font-size:12.5px;color:var(--dim);margin-top:.3rem;font-weight:400}
 .f .lnk{display:inline-block;padding:.45rem 0}
 .chk{padding:.5rem 0;border-bottom:1px solid var(--hair);font-weight:500}
@@ -450,7 +449,7 @@ select option{color:#000}
 .dim{color:var(--dim)}
 .lnk.quiet{font-weight:500;font-size:12px}
 /* Confirmations are real dialogs, never confirm(). */
-dialog{border:1px solid var(--p);background:var(--k);color:var(--p);padding:1.2rem 1.4rem;max-width:34rem;margin:auto}
+dialog{border:1px solid var(--p);background:var(--k);color:var(--p);padding:1.2rem 1.4rem;width:calc(100vw - 2rem);max-width:34rem;margin:auto}
 dialog::backdrop{background:rgba(0,0,0,.65)}
 dialog h3{margin:0 0 .5rem;font-weight:800;font-size:17px;letter-spacing:-.01em}
 dialog p{margin:0 0 1rem;color:var(--dim);font-size:14px;line-height:1.35}
@@ -479,8 +478,8 @@ pre.cors{font-family:var(--monof);font-size:11px;line-height:1.6;color:var(--dim
 .blk .notice .choices{display:block;margin-top:.4rem}
 .blk .notice .choices button{color:#c0392b;font-weight:700}
 .blk .notice .choices button+button{margin-left:1.2rem;color:rgba(0,0,0,.6)}
-dialog.history{max-width:44rem;width:calc(100vw - 2rem)}
-dialog.drive{max-width:40rem;width:calc(100vw - 2rem)}
+dialog.history{max-width:44rem}
+dialog.drive{max-width:40rem}
 dialog.drive .list{max-height:50vh;overflow:auto}
 dialog.drive .list li{display:flex;gap:.6rem;align-items:baseline;justify-content:space-between}
 dialog.drive .list li span:first-child{overflow-wrap:anywhere}
@@ -547,3 +546,7 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   #members .invite button{
     display:inline-flex;align-items:center;min-height:40px}
 }
+/* Findings 6, 12, 13, 18, 19, 3: a focus ring where button{all:unset} took one
+   away, the top bar's workspace label, the account page links, the heading
+   hierarchy, the primary actions, and the two pages that carry no rail. */
+button:focus-visible{outline:2px solid var(--y);outline-offset:2px}
