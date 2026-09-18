@@ -187,6 +187,12 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /ws", s.hub.Handler())
 	mux.HandleFunc("GET /api/events", s.hub.Events)
 
+	// The same stream for a token, at the path the plan names. It is more
+	// specific than the API's own /api/v1/ pattern, so it wins the match, and
+	// it is wrapped in the API's bearer middleware: a session cookie is not a
+	// way in here. The handler is realtime's either way.
+	mux.Handle("GET /api/v1/propositions/{id}/events", s.api.Authenticate(http.HandlerFunc(s.propositionEvents)))
+
 	mux.HandleFunc("GET /profile", s.requireUser(s.getProfile))
 	mux.HandleFunc("POST /profile", s.requireUser(s.postProfile))
 	mux.HandleFunc("POST /profile/password", s.requireUser(s.postPassword))

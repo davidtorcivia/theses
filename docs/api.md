@@ -117,25 +117,35 @@ was none.
 
 ## `GET /api/v1/propositions/{id}/events?since=&wait=`
 
-Scope `read`. The websocket stream as a long poll, for anything that cannot
-hold a socket. It answers with the commands applied to that proposition after
-`since`, which is the sequence number of the last event you were given, `0` or
-absent from the beginning. With events already waiting it answers at once.
-With none it holds the request open until one arrives or a bound passes,
-whichever comes first, and then answers, empty if nothing came. `wait=0`
-answers immediately either way.
+Scope `read`, and the proposition has to be one the token's owner is a member
+of. An owner reads every proposition; for everybody else a proposition they are
+not a member of answers `404`, the same as one that is not there.
+
+The stream of applied commands for one proposition, which is the same stream
+the websocket carries and the same rows the activity log holds. `since` is the
+sequence number of the last event you have seen, `0` or absent for the
+beginning. With events waiting it answers at once. With none it holds the
+request open for twenty five seconds and answers with the first that arrives,
+or with an empty list if none does. `wait=0` answers at once either way, which
+is what a client catching up after a reconnect asks for.
 
 ```json
 {"events": [
-  {"seq": 481, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
-   "command": "card.move", "entity": "card", "entity_id": "77",
-   "after": {"column_id": 3, "position": "a0m"}, "created_at": 1758067200}
+  {"seq": 41, "proposition": 10, "entity": "card", "entity_id": 7,
+   "action": "move", "at": 1758067200,
+   "actor": {"kind": "user", "id": 1, "name": "Ada Lovelace"},
+   "before": {"id": 7, "column_id": 2, "position": "V", "title": "Call the engineer"},
+   "after": {"id": 7, "column_id": 3, "position": "W", "title": "Call the engineer"}}
 ]}
 ```
 
-Ask again with the highest `seq` you were given. The same events reach the
-websocket, in the same order, so a client can move between the two without
-missing one.
+`before` and `after` are the whole row as it was and as it is, so a client can
+replace what it holds rather than patch it, and applying an event twice is
+applying it once. `actor` is the person, with `via` naming the token or the MCP
+client when one carried the change.
+
+The browser does not use this path: it holds a websocket at `/ws`, and falls
+back to `/api/events` with the session cookie it already has.
 
 ## `GET /api/v1/settings`
 

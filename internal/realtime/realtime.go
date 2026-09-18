@@ -433,18 +433,27 @@ func (h *Hub) announce(proposition int64) {
 	}
 }
 
-// Events is the fallback for a network that will not hold a socket: the same
-// stream, read out of the activity table, one request at a time.
+// Events is the fallback for a network that will not hold a socket, for the
+// browser: the same stream, read out of the activity table, one request at a
+// time, with the session cookie the page already has. A token reaches the same
+// stream through the API, at the path the plan names, and lands in EventsFor.
 func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	user, err := h.auth.SessionUser(ctx, r)
+	user, err := h.auth.SessionUser(r.Context(), r)
 	if err != nil {
 		http.Error(w, "sign in", http.StatusUnauthorized)
 		return
 	}
 	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
+	h.EventsFor(w, r, user, proposition)
+}
+
+// EventsFor is the same fallback for a caller whose identity came from
+// somewhere other than a cookie, which is the API's bearer token. Whichever
+// way in, the proposition is readable only through membership.
+func (h *Hub) EventsFor(w http.ResponseWriter, r *http.Request, user *store.User, proposition int64) {
+	ctx := r.Context()
 	if ok, err := board.Readable(ctx, h.board.DB, user, proposition); err != nil || !ok {
-		http.Error(w, "no access", http.StatusForbidden)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such proposition"})
 		return
 	}
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
@@ -473,7 +482,12 @@ func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]any{"events": events})
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(body)
 }

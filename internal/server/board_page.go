@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
@@ -205,4 +206,34 @@ func number(n int64) string {
 		return "0" + strconv.FormatInt(n, 10)
 	}
 	return strconv.FormatInt(n, 10)
+}
+
+// propositionEvents is the long poll fallback at the path the plan names,
+// behind a bearer token with the read scope. The browser uses the socket, and
+// /api/events with its session cookie when it cannot hold one; this is the
+// same stream for anything holding a token.
+func (s *Server) propositionEvents(w http.ResponseWriter, r *http.Request) {
+	p, ok := api.PrincipalFrom(r.Context())
+	if !ok {
+		s.fail(w, r, errors.New("the events route is not behind the API's authentication"))
+		return
+	}
+	if why := p.Deny(auth.ScopeRead); why != "" {
+		writeAPIError(w, http.StatusForbidden, why)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "no such proposition")
+		return
+	}
+	s.hub.EventsFor(w, r, p.User, id)
+}
+
+// writeAPIError answers in the shape every other /api/v1 refusal uses.
+func writeAPIError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

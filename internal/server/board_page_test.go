@@ -363,3 +363,89 @@ func TestThePayloadSaysWhenAPropositionIsArchived(t *testing.T) {
 		t.Errorf("the board took an edit on an archived proposition: %v", err)
 	}
 }
+
+// The fallback at the path the plan names is for machines: a bearer token with
+// the read scope, no session cookie, and the same membership rule. The browser
+// keeps /api/events with the session it already has.
+func TestTheEventStreamIsReachableWithAToken(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.srv.board.CreateCard(ctx, owner, cols[0].ID, "Call the engineer", nil); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/propositions/" + strconv.FormatInt(e.EntityID, 10) + "/events?since=0&wait=0"
+
+	ask := func(token string, at string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest("GET", h.http.URL+at, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		res, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		return res.StatusCode, string(body)
+	}
+
+	// The owner's session cookie is in the jar and is not a way in here.
+	if status, body := ask("", path); status != http.StatusUnauthorized {
+		t.Errorf("a session cookie reached the token path: %d %s", status, body)
+	}
+
+	read := h.apiToken(auth.ScopeRead)
+	status, body := ask(read, path)
+	if status != http.StatusOK {
+		t.Fatalf("a read token got %d: %s", status, body)
+	}
+	var got struct {
+		Events []struct {
+			Seq    int64  `json:"seq"`
+			Entity string `json:"entity"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) == 0 || got.Events[len(got.Events)-1].Entity != "card" {
+		t.Errorf("the stream is %s", body)
+	}
+
+	// The same person, a second token, without the read scope.
+	var machine int64
+	if err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE handle = 'nora'`).Scan(&machine); err != nil {
+		t.Fatal(err)
+	}
+	files, err := h.srv.auth.CreateAPIToken(ctx, machine, "uploader", []string{auth.ScopeFiles})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := ask(files, path); status != http.StatusForbidden {
+		t.Error("a token with no read scope was not refused")
+	}
+
+	// A token whose owner is not a member is not told the proposition is
+	// there, whatever its scopes say.
+	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = 'editor' WHERE id = ?`, machine); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := ask(read, path); status != http.StatusNotFound {
+		t.Errorf("a token whose owner is not a member got %d", status)
+	}
+}

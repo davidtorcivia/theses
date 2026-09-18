@@ -519,9 +519,11 @@ func TestLongPollServesTheSameStream(t *testing.T) {
 		t.Fatalf("the fallback returned %+v", got.Events)
 	}
 
+	// A non member is not told the proposition is there, which is the same
+	// answer the page gives.
 	refused := ask("stranger", 0)
 	defer refused.Body.Close()
-	if refused.StatusCode != http.StatusForbidden {
+	if refused.StatusCode != http.StatusNotFound {
 		t.Errorf("a non member got %d from the fallback", refused.StatusCode)
 	}
 }
