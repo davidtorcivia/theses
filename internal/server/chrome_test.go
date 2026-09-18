@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -65,5 +66,45 @@ func TestTheSettingsLinkIsThereForOwnersOnly(t *testing.T) {
 	_, body := h.get("/profile")
 	if strings.Contains(body, `class="setgs"`) || strings.Contains(body, `<a href="/settings">Workspace settings</a>`) {
 		t.Error("an editor is offered a page they are refused")
+	}
+}
+
+// Finding 16: signed in, there is nothing to sign in to, and the one action is
+// the way back. An editor asking for the owners' page is the 403 with a live
+// session; the same two addresses after signing out are the pair without one.
+func TestTheErrorPageActionFollowsTheSession(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	h.setRole(t, h.owner().ID, auth.RoleEditor)
+
+	for _, c := range []struct {
+		name, path string
+		status     int
+		want, gone string
+	}{
+		{"404 with a session", "/no-such-page", http.StatusNotFound,
+			`<a href="/">Back to work</a>`, "Sign in"},
+		{"403 with a session", "/settings", http.StatusForbidden,
+			`<a href="/">Back to work</a>`, "Sign in"},
+	} {
+		res, body := h.get(c.path)
+		if res.StatusCode != c.status {
+			t.Fatalf("%s: %d", c.name, res.StatusCode)
+		}
+		if !strings.Contains(body, c.want) {
+			t.Errorf("%s: no %s", c.name, c.want)
+		}
+		if strings.Contains(body, c.gone) {
+			t.Errorf("%s: still says %q", c.name, c.gone)
+		}
+	}
+
+	h.signOut()
+	res, body := h.get("/no-such-page")
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("404 with no session: %d", res.StatusCode)
+	}
+	if !strings.Contains(body, `<a href="/login">Sign in</a>`) {
+		t.Error("404 with no session does not offer a sign-in")
 	}
 }

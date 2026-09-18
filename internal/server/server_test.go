@@ -335,7 +335,9 @@ func TestNoInlineScriptsOrStyles(t *testing.T) {
 	}
 }
 
-func TestNotFoundPageLinksOnlyToLogin(t *testing.T) {
+// The page names one address and no other, and which one it is follows the
+// session: somebody signed in has nothing to sign in to.
+func TestNotFoundPageLinksToOnePlace(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
@@ -346,13 +348,21 @@ func TestNotFoundPageLinksOnlyToLogin(t *testing.T) {
 	if !strings.Contains(body, "404") || !strings.Contains(body, "Not found.") {
 		t.Error("the page does not say 404")
 	}
+	if got := hrefsIn(body); len(got) != 1 || got[0] != "/" {
+		t.Errorf("links with a session = %v, want only /", got)
+	}
+	h.signOut()
+	if _, body := h.get("/no-such-page"); len(hrefsIn(body)) != 1 || hrefsIn(body)[0] != "/login" {
+		t.Errorf("links with no session = %v, want only /login", hrefsIn(body))
+	}
+}
+
+func hrefsIn(body string) []string {
 	var hrefs []string
 	for _, m := range hrefRe.FindAllStringSubmatch(body, -1) {
 		hrefs = append(hrefs, m[1])
 	}
-	if len(hrefs) != 1 || hrefs[0] != "/login" {
-		t.Errorf("links = %v, want only /login", hrefs)
-	}
+	return hrefs
 }
 
 func TestInvitationAcceptCreatesAUser(t *testing.T) {
@@ -847,7 +857,7 @@ func TestDeleteAccountRefusesTheLastOwner(t *testing.T) {
 	}
 }
 
-func TestForbiddenPageLinksOnlyToLogin(t *testing.T) {
+func TestForbiddenPageLinksToOnePlace(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	h.setRole(t, 1, auth.RoleGuest)
@@ -855,12 +865,16 @@ func TestForbiddenPageLinksOnlyToLogin(t *testing.T) {
 	if res.StatusCode != http.StatusForbidden || !strings.Contains(body, "No access.") {
 		t.Fatalf("status = %d", res.StatusCode)
 	}
-	var hrefs []string
-	for _, m := range hrefRe.FindAllStringSubmatch(body, -1) {
-		hrefs = append(hrefs, m[1])
+	if got := hrefsIn(body); len(got) != 1 || got[0] != "/" {
+		t.Errorf("links with a session = %v, want only /", got)
 	}
-	if len(hrefs) != 1 || hrefs[0] != "/login" {
-		t.Errorf("links = %v, want only /login", hrefs)
+	h.signOut()
+	res, body = h.get("/settings")
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("signed out, /settings gave %d", res.StatusCode)
+	}
+	if _, body = h.get("/no-such-page"); len(hrefsIn(body)) != 1 || hrefsIn(body)[0] != "/login" {
+		t.Errorf("links with no session = %v, want only /login", hrefsIn(body))
 	}
 }
 
