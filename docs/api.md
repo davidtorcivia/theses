@@ -602,6 +602,279 @@ PUT /api/v1/settings/signin.session_days
 
 A write is recorded in the activity log as the person the token belongs to.
 
+## The board
+
+Propositions, columns, cards, checklist items and notes are the same commands
+the app sends over its websocket, so a change made here appears on an open
+board at once and is recorded in the activity log with the token that carried
+it.
+
+Two rules run through all of them. A proposition the token's owner is not a
+member of answers `404` on every route, the same as one that is not there; an
+owner is a member of every proposition. An archived proposition is read only,
+and a write to one answers `409`; restoring it is the write that still works.
+
+## `GET /api/v1/propositions`
+
+Scope `read`. The rail: every proposition the token's owner may read, in its
+own order, archived ones included and carrying their `archived_at`. It is
+filtered rather than refused, so a member of nothing reads an empty list.
+
+```json
+{"propositions": [
+  {"id": 10, "number": 1, "title": "Tidal Power", "statement": "The tide is a battery.",
+   "blurb": "", "status": "idea", "episode": null, "target_date": null,
+   "position": "V", "created_at": 1758067200, "archived_at": null, "members": [1]}
+]}
+```
+
+## `POST /api/v1/propositions`
+
+Scope `write`. Takes `title`. The proposition starts with the workspace's
+default status and columns, and the token's owner is its first member. A title
+that is empty or too long is `422`. The answer is the applied event, whose
+`after` is the whole row.
+
+```
+POST /api/v1/propositions
+{"title": "Tidal Power"}
+```
+
+```json
+{"event": {"seq": 12, "proposition": 10, "entity": "proposition", "entity_id": 10,
+  "action": "create", "at": 1758067200,
+  "actor": {"kind": "user", "id": 1, "name": "Nora Vance", "via": "token:research agent"},
+  "after": {"id": 10, "number": 1, "title": "Tidal Power", "status": "idea", "members": [1]}}}
+```
+
+## `GET /api/v1/propositions/{id}`
+
+Scope `read`. One proposition with its members.
+
+```json
+{"proposition": {"id": 10, "number": 1, "title": "Tidal Power", "status": "idea",
+  "episode": null, "target_date": null, "archived_at": null, "members": [1]}}
+```
+
+## `PATCH /api/v1/propositions/{id}`
+
+Scope `write`. Changes the fields the body names: `title`, `statement`,
+`blurb`, `status`, `episode`, `target_date`. A field left out keeps what is
+there; a field sent empty clears it. A body that names none of them is `400`.
+The fields land as one transaction, so a refusal partway through leaves
+nothing behind.
+
+```
+PATCH /api/v1/propositions/10
+{"status": "recording", "episode": "12"}
+```
+
+## `POST /api/v1/propositions/{id}/archive`
+
+Scope `write`. Puts the proposition away. Everything on it is read only until
+it is restored.
+
+```json
+{"event": {"entity": "proposition", "entity_id": 10, "action": "archive",
+  "after": {"id": 10, "archived_at": 1758067200}}}
+```
+
+## `POST /api/v1/propositions/{id}/restore`
+
+Scope `write`. Takes it back out. This is the one write an archived
+proposition accepts.
+
+## `POST /api/v1/propositions/{id}/move`
+
+Scope `write`. Takes `after`, the id of the proposition to sit behind in the
+rail, or `0` for the head of it. An `after` that is not a proposition is
+`404`.
+
+```
+POST /api/v1/propositions/10/move
+{"after": 11}
+```
+
+## `GET /api/v1/propositions/{id}/columns`
+
+Scope `read`. The columns of one proposition in their order.
+
+```json
+{"columns": [{"id": 2, "proposition_id": 10, "name": "Research", "position": "V"}]}
+```
+
+## `POST /api/v1/propositions/{id}/columns`
+
+Scope `write`. Takes `name` and puts the column at the end. A name that is
+empty or too long is `422`.
+
+## `PATCH /api/v1/columns/{id}`
+
+Scope `write`. Takes `name` and renames the column.
+
+## `POST /api/v1/columns/{id}/move`
+
+Scope `write`. Takes `after`, the column to sit behind, or `0` for the head.
+
+## `DELETE /api/v1/columns/{id}`
+
+Scope `write`, and the role has to be one that may delete. A column with cards
+still in it is `409`: the cascade would take them without the caller being
+told. Move them out first.
+
+```json
+{"error": "move the cards out of that column first"}
+```
+
+## `GET /api/v1/propositions/{id}/cards`
+
+Scope `read`. Every card on the proposition, each one whole, with the sequence
+number this reading is of so a client can follow the event stream on from it.
+
+```json
+{"cards": [
+  {"id": 7, "proposition_id": 10, "column_id": 2, "position": "V",
+   "title": "Call the engineer", "description_md": "", "question": null,
+   "due_date": null, "done_at": null, "created_at": 1758067200, "version": 1,
+   "assignees": [1], "checklist": [], "comments": []}
+], "seq": 41}
+```
+
+## `GET /api/v1/cards/{id}`
+
+Scope `read`. One card with its assignees, checklist and notes.
+
+## `POST /api/v1/columns/{id}/cards`
+
+Scope `write`. Takes `title` and an optional `assignees`, a list of user ids.
+The card goes at the end of the column. A column that is not there, or is on a
+proposition the token's owner may not read, is `404`.
+
+```
+POST /api/v1/columns/2/cards
+{"title": "Call the engineer", "assignees": [1]}
+```
+
+## `PATCH /api/v1/cards/{id}`
+
+Scope `write`. Changes the fields the body names: `title`, `description_md`,
+`question`, `due_date`. A body that names none of them is `400`.
+
+`title` and `description_md` are versioned, and the body carries the
+`base_version` the editor started from. A card has one version across both, so
+a body naming both sends the second change the version the first one left. An
+edit that began before somebody else's is `409` with the text the card holds
+now, and nothing of that body lands.
+
+`question` is one of `I`, `II`, `III` or `IV`, or empty for none; anything
+else is `422`.
+
+```
+PATCH /api/v1/cards/7
+{"base_version": 1, "title": "Call the harbour engineer"}
+```
+
+```json
+{"error": "that changed while you were editing it",
+ "conflict": {"entity": "card", "entity_id": 7, "field": "title",
+              "version": 2, "current": "Call the pilot"}}
+```
+
+## `POST /api/v1/cards/{id}/move`
+
+Scope `write`. Takes `column` and `after`. The column has to be on the same
+proposition, and one that is not is `404`. `after` is the card to sit behind,
+or `0` for the head of the column. Moves never conflict; the last one wins by
+server order.
+
+```
+POST /api/v1/cards/7/move
+{"column": 3, "after": 0}
+```
+
+## `POST /api/v1/cards/{card}/assignees/{user}`
+
+Scope `write`. Puts somebody on the card. A person who is not in the workspace
+is `404`. Assigning somebody already on it changes nothing and answers `200`.
+
+## `DELETE /api/v1/cards/{card}/assignees/{user}`
+
+Scope `write`. Takes them off again.
+
+## `POST /api/v1/cards/{id}/done`
+
+Scope `write`. Marks the card done. It takes no body.
+
+## `POST /api/v1/cards/{id}/reopen`
+
+Scope `write`. Clears it again.
+
+## `DELETE /api/v1/cards/{id}`
+
+Scope `write`, and the role has to be one that may delete.
+
+## `POST /api/v1/cards/{id}/checklist`
+
+Scope `write`. Takes `text` and adds an item at the end of the card's
+checklist.
+
+```json
+{"event": {"entity": "checklist_item", "entity_id": 4, "action": "create",
+  "after": {"id": 4, "card_id": 7, "text": "Ring the harbour",
+            "done": false, "position": "V"}}}
+```
+
+## `PATCH /api/v1/checklist/{id}`
+
+Scope `write`. Takes `done`, a boolean. A body without it is `400`.
+
+## `DELETE /api/v1/checklist/{id}`
+
+Scope `write`.
+
+## `POST /api/v1/cards/{id}/comments`
+
+Scope `write`. Takes `body_md`, the markdown of the note. An `@handle` in it
+mentions that person, which reaches their notifications.
+
+```
+POST /api/v1/cards/7/comments
+{"body_md": "@ada they answered."}
+```
+
+## `DELETE /api/v1/comments/{id}`
+
+Scope `write`. Only the note's own author may delete it, whatever the role:
+somebody else's is `403`. The activity log is a record, not a wall to
+moderate.
+
+```json
+{"error": "that is not yours to delete"}
+```
+
+## `POST /api/v1/activity/{id}/undo`
+
+Scope `write`. Puts back the `before` of one activity row and marks the row
+undone. The undo is itself a command: it is authorised, recorded and published
+like any other edit, so an open board sees it happen.
+
+It is `409` when the change cannot be put back: a create, a delete that took
+the row away, a row already undone, a change that moved nothing undo can
+write, or an entity that has moved on since, which comes back as the same
+conflict a stale edit does. A row about a proposition the token's owner may
+not read is `404`. These are the refusals the websocket's undo gives, because
+they are the same function.
+
+```json
+{"event": {"entity": "card", "entity_id": 7, "action": "undo",
+  "before": {"id": 7, "title": "Call the pilot"},
+  "after": {"id": 7, "title": "Call the engineer"}}}
+```
+
+```json
+{"error": "that change cannot be undone"}
+```
+
 ## MCP
 
 `/mcp` is a streamable HTTP MCP endpoint. It takes the same
@@ -626,18 +899,34 @@ one endpoint serves every tool.
 | `replace_block` | `write` | Replaces the text of one block. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
+| `annotate_link` | `write` | Changes a saved link's note, kind and question. |
 | `list_files` | `read` | Lists the files uploaded to one proposition, with their folder, size and state. |
 | `get_download_url` | `read` | Returns a download link for one file that works for a few minutes. |
+| `request_upload` | `files` | Makes a file row and returns its presigned URLs. |
 | `attach_to_card` | `write` | Attaches a link or a file to a card on the same proposition, or detaches it. |
+| `list_propositions` | `read` | Lists the propositions this token's owner may read. |
+| `get_proposition` | `read` | Reads one proposition and its schedule. |
+| `create_proposition` | `write` | Starts a proposition with the default columns. |
+| `set_status` | `write` | Moves one proposition to another status. |
+| `list_cards` | `read` | Lists the columns and cards of one proposition, with the sequence number. |
+| `create_card` | `write` | Adds a card at the end of a column. |
+| `move_card` | `write` | Moves a card into a column on the same proposition. |
+| `assign_card` | `write` | Puts somebody on a card, or takes them off. |
+| `complete_card` | `write` | Marks a card done, or reopens it. |
+| `comment` | `write` | Writes a note on a card. |
+| `activity` | `read` | Reads the activity log after a sequence number. |
+| `backup_now` | `admin` | Starts one backup in the background. |
 
 Every tool returns structured output against a schema the tool list carries, and
-is annotated with what calling it does. The nine read tools are read only.
-`set_setting` and `replace_block` are destructive and idempotent, since each
-replaces what was there. `create_document`, `append_block`,
-`insert_after_heading` and `add_link` are neither, because calling one twice
-makes two of the thing, and `add_link` also reads a page on the open web.
-`attach_to_card` is idempotent without being destructive: attaching twice
-leaves the one attachment.
+is annotated with what calling it does. The read tools are read only.
+`set_setting`, `replace_block`, `set_status`, `move_card`, `complete_card` and
+`annotate_link` are destructive and idempotent, since each replaces what was
+there. `create_document`, `append_block`, `insert_after_heading`, `add_link`,
+`create_proposition`, `create_card`, `comment`, `request_upload` and
+`backup_now` are neither, because calling one twice makes two of the thing, and
+`add_link` also reads a page on the open web. `attach_to_card` and `assign_card`
+are idempotent without being destructive: doing either twice leaves the one
+thing there.
 
 `replace_block` takes the `base_version` that `read_document` reported and
 merges in what somebody else wrote since; left out, it reads the block and
@@ -645,8 +934,18 @@ writes over whatever it holds. A merge that cannot be made is a tool error
 carrying the version the block is now at and the text it holds, so the next
 call is that text with yours worked into it.
 
+A tool reads and writes only what its token's owner may: a proposition they are
+not a member of answers the same way as one that is not there, an archived
+proposition refuses every write, and a card cannot move to a column on another
+proposition. `backup_now` answers as soon as the archive has begun; what it did
+is read from the settings page.
+
 Resource `theses://workspace` describes the workspace: its name, time zone, how
-many people and propositions it holds, and what this endpoint can do.
+many people and propositions it holds, and what this endpoint can do. Three
+templates read one proposition: `theses://proposition/{id}` is its status,
+schedule and board as text, `theses://proposition/{id}/document/{slug}` is one
+of its documents as markdown, and `theses://proposition/{id}/links` is its links
+with their citations, notes and questions.
 
 The server speaks protocol revisions `2026-07-28` back to `2024-11-05` and
 settles on the newest the client offers. At `2026-07-28` a client names itself on
@@ -654,4 +953,4 @@ every call, so a write is attributed to that client; an older client does not,
 and the token's name is used instead.
 
 A write through MCP is recorded in the activity log as the person the token
-belongs to.
+belongs to, with `mcp:<client>` in the log's `via` field.
