@@ -87,6 +87,9 @@ type Service struct {
 	// Every is the gap between periodic revisions, a field so a test does not
 	// have to wait ten minutes for one.
 	Every time.Duration
+	// Debounce is how long the watcher waits for a file to settle, a field for
+	// the same reason.
+	Debounce time.Duration
 
 	log *slog.Logger
 	// root is the directory the markdown mirror lives under, which is
@@ -138,7 +141,8 @@ func New(c *core.Service, dir string, template func() string, log *slog.Logger) 
 		return nil, core.ErrNotFound
 	}
 	return &Service{
-		Service: c, Template: template, Every: RevisionEvery, log: log, root: dir,
+		Service: c, Template: template, Every: RevisionEvery, Debounce: Debounce,
+		log: log, root: dir,
 		pending: map[int64]*timer{}, written: map[string]mirrored{},
 	}
 }
