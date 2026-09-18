@@ -187,9 +187,10 @@ var errorPages = map[int]struct {
 	art                     []string
 	retry                   bool
 }{
-	http.StatusNotFound:            {code: "404", headline: "Not found.", actText: "Sign in", art: []string{"22"}},
-	http.StatusForbidden:           {code: "403", headline: "No access.", actText: "Sign in as someone else", art: []string{"04"}},
-	http.StatusInternalServerError: {code: "500", headline: "Something broke.", actText: "Try again", art: []string{"10"}, retry: true},
+	http.StatusNotFound:              {code: "404", headline: "Not found.", actText: "Sign in", art: []string{"22"}},
+	http.StatusForbidden:             {code: "403", headline: "No access.", actText: "Sign in as someone else", art: []string{"04"}},
+	http.StatusRequestEntityTooLarge: {code: "413", headline: "That was too large.", actText: "Try again", art: []string{"13"}, retry: true},
+	http.StatusInternalServerError:   {code: "500", headline: "Something broke.", actText: "Try again", art: []string{"10"}, retry: true},
 }
 
 func errorData(status int, r *http.Request) map[string]any {

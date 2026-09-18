@@ -141,6 +141,11 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 	})
 }
 
+// maxFormBytes is what a POST body may be. Every form here is a few hundred
+// bytes; file uploads go to object storage from the browser and never through
+// this process.
+const maxFormBytes = 64 << 10
+
 // csrfGuard parses every form and checks its token against this browser's seed.
 func (s *Server) csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +153,13 @@ func (s *Server) csrfGuard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 		if err := r.ParseForm(); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				s.errorPage(w, r, http.StatusRequestEntityTooLarge)
+				return
+			}
 			s.errorPage(w, r, http.StatusForbidden)
 			return
 		}

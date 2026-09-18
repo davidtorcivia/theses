@@ -1147,3 +1147,29 @@ func TestTheResetFormIsRateLimited(t *testing.T) {
 		t.Error("twenty guesses at a reset token were never rate limited")
 	}
 }
+
+// ParseForm reads the whole body into memory, so without a cap one request
+// could ask the process to hold as much as the sender cared to send.
+func TestAnOversizedFormIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	big := url.Values{
+		"csrf":           {h.csrf("/settings")},
+		"workspace.name": {strings.Repeat("x", 100<<10)},
+	}
+	res, _ := h.post("/settings", big)
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a 100 KB form gave %d, want 413", res.StatusCode)
+	}
+	if got := settings.Get[string](h.srv.settings, "workspace.name"); len(got) > 100 {
+		t.Error("the oversized value was saved")
+	}
+
+	// A form of the size the app actually sends still goes through.
+	if res, _ := h.post("/settings", url.Values{
+		"csrf": {h.csrf("/settings")}, "workspace.name": {"Debt Machine"},
+	}); res.StatusCode != http.StatusSeeOther {
+		t.Errorf("an ordinary form gave %d", res.StatusCode)
+	}
+}

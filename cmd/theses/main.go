@@ -59,9 +59,13 @@ func run() error {
 	}
 
 	httpSrv := &http.Server{
-		Addr:              cfg.Bind,
-		Handler:           srv,
+		Addr:    cfg.Bind,
+		Handler: srv,
+		// Without these a connection that stops sending, or stops reading, holds
+		// a goroutine and its memory until the process ends.
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
