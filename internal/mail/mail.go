@@ -31,8 +31,8 @@ type Message struct {
 	HTML    string
 }
 
-// Sender delivers a Message. The plan names further providers (Resend,
-// Postmark, Cloudflare Email) and the mail outbox calls this.
+// Sender delivers a Message. SMTP is the implementation and the mail outbox
+// calls this.
 type Sender interface {
 	Send(ctx context.Context, m Message) error
 }

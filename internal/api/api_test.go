@@ -218,7 +218,7 @@ func TestSettingsHideSecretsAndWriteAsTheToken(t *testing.T) {
 				t.Errorf("mail.password carries a value: %v", s)
 			}
 		}
-		if s["key"] == "workspace.name" && s["value"] != "We All Fall Down" {
+		if s["key"] == "workspace.name" && s["value"] != "Workspace" {
 			t.Errorf("workspace.name = %v", s)
 		}
 	}
@@ -226,14 +226,14 @@ func TestSettingsHideSecretsAndWriteAsTheToken(t *testing.T) {
 		t.Error("mail.password is missing from the listing")
 	}
 
-	w = h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Debt Machine"}`)
+	w = h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Renamed workspace"}`)
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Body.String())
 	}
-	if got := decode(t, w)["value"]; got != "Debt Machine" {
+	if got := decode(t, w)["value"]; got != "Renamed workspace" {
 		t.Errorf("value = %v", got)
 	}
-	if got := settings.Get[string](h.set, "workspace.name"); got != "Debt Machine" {
+	if got := settings.Get[string](h.set, "workspace.name"); got != "Renamed workspace" {
 		t.Errorf("stored workspace.name = %q", got)
 	}
 
@@ -469,7 +469,7 @@ func TestATokenCannotOutrankItsOwner(t *testing.T) {
 			t.Errorf("%s: error = %v", target, got)
 		}
 	}
-	w := h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Debt Machine"}`)
+	w := h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Renamed workspace"}`)
 	if w.Code != http.StatusForbidden {
 		t.Errorf("a demoted owner's token wrote a setting: %d", w.Code)
 	}
@@ -610,7 +610,7 @@ func TestASettingThatCannotBeStoredIsAServerError(t *testing.T) {
 	if _, err := h.db.ExecContext(context.Background(), `DROP TABLE settings`); err != nil {
 		t.Fatal(err)
 	}
-	w := h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Debt Machine"}`)
+	w := h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Renamed workspace"}`)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500 (%s)", w.Code, w.Body.String())
 	}

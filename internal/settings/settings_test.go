@@ -25,7 +25,7 @@ func open(t *testing.T, db *store.DB, k []byte) *Settings {
 
 func TestDefaultsUntilSet(t *testing.T) {
 	s := open(t, store.OpenTemp(t), key)
-	if got := Get[string](s, "workspace.name"); got != "We All Fall Down" {
+	if got := Get[string](s, "workspace.name"); got != "Workspace" {
 		t.Errorf("workspace.name = %q", got)
 	}
 	if got := Get[int](s, "signin.session_days"); got != 30 {
@@ -44,7 +44,7 @@ func TestSetRoundTripsAndRecordsActivity(t *testing.T) {
 	db := store.OpenTemp(t)
 	s := open(t, db, key)
 
-	if err := s.Set(ctx, "workspace.name", []string{"Debt Machine"}, 0); err != nil {
+	if err := s.Set(ctx, "workspace.name", []string{"Renamed workspace"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Set(ctx, "signin.session_days", []string{"7"}, 0); err != nil {
@@ -53,7 +53,7 @@ func TestSetRoundTripsAndRecordsActivity(t *testing.T) {
 	if err := s.Set(ctx, "defaults.columns", []string{"Research", "", "Edit"}, 0); err != nil {
 		t.Fatal(err)
 	}
-	if got := Get[string](s, "workspace.name"); got != "Debt Machine" {
+	if got := Get[string](s, "workspace.name"); got != "Renamed workspace" {
 		t.Errorf("workspace.name = %q", got)
 	}
 	if got := Get[int](s, "signin.session_days"); got != 7 {
@@ -64,7 +64,7 @@ func TestSetRoundTripsAndRecordsActivity(t *testing.T) {
 	}
 
 	// A fresh Settings over the same database sees the same values.
-	if got := Get[string](open(t, db, key), "workspace.name"); got != "Debt Machine" {
+	if got := Get[string](open(t, db, key), "workspace.name"); got != "Renamed workspace" {
 		t.Errorf("after reload workspace.name = %q", got)
 	}
 
@@ -206,7 +206,7 @@ func TestSetAsRecordsThePersonBehindTheToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.SetAs(ctx, "workspace.name", []string{"Debt Machine"},
+	if err := s.SetAs(ctx, "workspace.name", []string{"Renamed workspace"},
 		Actor{Kind: "user", ID: strconv.FormatInt(id, 10), Via: "token:research agent", UserID: id}); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestAFailureToStoreIsMarked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := s.Set(ctx, "workspace.name", []string{"Debt Machine"}, 0)
+	err := s.Set(ctx, "workspace.name", []string{"Renamed workspace"}, 0)
 	if !errors.Is(err, ErrStorage) {
 		t.Errorf("Set returned %v, want an ErrStorage", err)
 	}

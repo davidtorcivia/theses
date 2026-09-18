@@ -103,7 +103,7 @@ with the last id you were given.
 {"activity": [
   {"id": 12, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
    "entity": "setting", "entity_id": "workspace.name", "action": "set",
-   "before": "\"We All Fall Down\"", "after": "\"Debt Machine\"",
+   "before": "\"Workspace\"", "after": "\"Renamed workspace\"",
    "created_at": 1758067200}
 ]}
 ```
@@ -122,7 +122,7 @@ Scope `admin`. Every known setting, its definition and its current value.
 ```json
 {"settings": [
   {"key": "workspace.name", "kind": "string", "label": "Name", "set": true,
-   "value": "Debt Machine"},
+   "value": "Renamed workspace"},
   {"key": "workspace.release_day", "kind": "choice", "label": "Release day",
    "choices": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
                "Saturday", "Sunday"], "set": false, "value": "Monday"},

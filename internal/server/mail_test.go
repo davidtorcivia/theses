@@ -47,13 +47,13 @@ func TestPasswordResetQueuesTheLink(t *testing.T) {
 	h.setupOwner()
 	h.signOut()
 
-	res, body := h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"dt"}})
+	res, body := h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"ada"}})
 	if res.StatusCode != 200 || !strings.Contains(body, "If that account exists, mail is on its way.") {
 		t.Fatalf("reset gave %d without the neutral line", res.StatusCode)
 	}
 
 	to, subject, text := h.queued()
-	if to != "dt@example.fm" {
+	if to != "ada@example.com" {
 		t.Errorf("to = %q", to)
 	}
 	if !strings.Contains(subject, "Reset your THESES password") {
@@ -71,12 +71,12 @@ func TestPasswordResetWithoutAnAddressQueuesNothing(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	if _, err := h.db.ExecContext(context.Background(),
-		`UPDATE users SET email = '' WHERE handle = 'dt'`); err != nil {
+		`UPDATE users SET email = '' WHERE handle = 'ada'`); err != nil {
 		t.Fatal(err)
 	}
 	h.signOut()
 
-	h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"dt"}})
+	h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"ada"}})
 	var n int
 	if err := h.db.QueryRowContext(context.Background(),
 		`SELECT count(*) FROM mail_outbox`).Scan(&n); err != nil {
@@ -92,7 +92,7 @@ func TestInvitationQueuesItsMailAndStillShowsTheLinkOnce(t *testing.T) {
 	h.setupOwner()
 
 	_, page := h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	m := inviteLinkRe.FindStringSubmatch(page)
 	if m == nil {
@@ -100,10 +100,10 @@ func TestInvitationQueuesItsMailAndStillShowsTheLinkOnce(t *testing.T) {
 	}
 
 	to, subject, text := h.queued()
-	if to != "mara@example.fm" {
+	if to != "mara@example.com" {
 		t.Errorf("to = %q", to)
 	}
-	if !strings.Contains(subject, "David Torcivia invited you to THESES") {
+	if !strings.Contains(subject, "Ada Lovelace invited you to THESES") {
 		t.Errorf("subject = %q", subject)
 	}
 	if !strings.Contains(text, m[1]) {
@@ -118,7 +118,7 @@ func TestInvitationResendQueuesTheNewLink(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	if _, err := h.db.ExecContext(context.Background(), `DELETE FROM mail_outbox`); err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestInvitationResendQueuesTheNewLink(t *testing.T) {
 		t.Fatalf("resend did not show the new link:\n%s", page)
 	}
 	to, _, text := h.queued()
-	if to != "mara@example.fm" || !strings.Contains(text, m[1]) {
+	if to != "mara@example.com" || !strings.Contains(text, m[1]) {
 		t.Errorf("resend queued %q with:\n%s", to, text)
 	}
 }
@@ -229,7 +229,7 @@ func (h *harness) configureMail(port int) {
 	res, body := h.post("/settings", url.Values{
 		"csrf": {h.csrf("/settings")}, "mail.host": {"127.0.0.1"},
 		"mail.port": {strconv.Itoa(port)}, "mail.tls": {"none"},
-		"mail.from": {"THESES <theses@example.fm>"}, "mail.password": {smtpPassword},
+		"mail.from": {"THESES <theses@example.com>"}, "mail.password": {smtpPassword},
 	})
 	if res.StatusCode != http.StatusSeeOther {
 		h.Fatalf("saving the mail settings gave %d:\n%s", res.StatusCode, body)
@@ -255,7 +255,7 @@ func TestTestSendGoesThroughTheConfiguredServer(t *testing.T) {
 	h.configureMail(f.port)
 
 	res, body := h.post("/settings/test/mail", url.Values{"csrf": {h.csrf("/settings")}})
-	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Sent to dt@example.fm.") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Sent to ada@example.com.") {
 		t.Fatalf("test send gave %d:\n%s", res.StatusCode, body)
 	}
 	got := f.received()
@@ -296,7 +296,7 @@ func TestRetryNowPutsUnsentRowsBackAtTheFront(t *testing.T) {
 	h.setupOwner()
 	if _, err := h.db.ExecContext(ctx, `INSERT INTO mail_outbox
 		(to_addr, subject, body_text, attempts, last_error, created_at, next_at, tried_at)
-		VALUES ('ana@example.fm', 'Old', 'Old', 4, 'refused',
+		VALUES ('ana@example.com', 'Old', 'Old', 4, 'refused',
 			unixepoch() - 90000, unixepoch() + 3600, unixepoch() - 90000)`); err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestResendingAnAcceptedInvitationIsRefused(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	var id int64
 	if err := h.db.QueryRowContext(ctx, `SELECT id FROM invitations`).Scan(&id); err != nil {
@@ -397,7 +397,7 @@ func TestResendReplacesTheInvitationMailStillQueued(t *testing.T) {
 	h.setupOwner()
 
 	_, page := h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	dead := inviteLinkRe.FindStringSubmatch(page)[1]
 
@@ -435,7 +435,7 @@ func TestAskingForASecondResetReplacesTheFirstMail(t *testing.T) {
 	h.signOut()
 
 	for i := 0; i < 2; i++ {
-		res, _ := h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"dt"}})
+		res, _ := h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"ada"}})
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("reset %d gave %d", i, res.StatusCode)
 		}
@@ -499,7 +499,7 @@ func (h *harness) drainUntil(f *fakeSMTP, canary string) {
 func (h *harness) inviteThenCanary() (int64, string) {
 	h.Helper()
 	_, page := h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	m := inviteLinkRe.FindStringSubmatch(page)
 	if m == nil {
@@ -511,7 +511,7 @@ func (h *harness) inviteThenCanary() (int64, string) {
 	}
 	// A reset for the owner, queued behind the invitation. /reset needs no
 	// session, so this works whoever is signed in.
-	h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"dt"}})
+	h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"ada"}})
 	return id, m[1]
 }
 

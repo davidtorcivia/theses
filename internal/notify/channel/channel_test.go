@@ -20,7 +20,7 @@ import (
 
 var note = Note{
 	Title:    "Assigned to you: Cut the cold open",
-	Body:     "David assigned you a card in Episode 12.",
+	Body:     "Ada assigned you a card in Episode 12.",
 	URL:      "https://theses.example/c/7",
 	Priority: 1,
 }
@@ -206,7 +206,7 @@ func TestRequestGoesToTheCheckedAddress(t *testing.T) {
 }
 
 func TestNtfyRefusesPrivateAddresses(t *testing.T) {
-	// The address of the Caddy admin API on the box the workspace runs on.
+	// The admin port of a service on the same host.
 	err := (Ntfy{Server: "http://127.0.0.1:2019", Topic: "load"}).Send(context.Background(), note)
 	if err == nil {
 		t.Fatal("want a refusal")

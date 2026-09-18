@@ -15,8 +15,8 @@ func TestTemplates(t *testing.T) {
 	}{
 		{
 			"invite",
-			Invite{To: "a@example.com", Inviter: "David", Role: "editor", URL: "https://theses.example/invite/abc", Expires: 72 * time.Hour}.Message(),
-			"David invited you to THESES",
+			Invite{To: "a@example.com", Inviter: "Ada", Role: "editor", URL: "https://theses.example/invite/abc", Expires: 72 * time.Hour}.Message(),
+			"Ada invited you to THESES",
 			"https://theses.example/invite/abc",
 		},
 		{
@@ -27,8 +27,8 @@ func TestTemplates(t *testing.T) {
 		},
 		{
 			"mention",
-			Mention{To: "a@example.com", Who: "David", Where: "Cold open", Excerpt: "ask @ana about the tape", URL: "https://theses.example/p/1#c2"}.Message(),
-			"David mentioned you in Cold open",
+			Mention{To: "a@example.com", Who: "Ada", Where: "Cold open", Excerpt: "ask @ana about the tape", URL: "https://theses.example/p/1#c2"}.Message(),
+			"Ada mentioned you in Cold open",
 			"https://theses.example/p/1#c2",
 		},
 		{
@@ -73,7 +73,7 @@ func TestHTMLBodyEscapes(t *testing.T) {
 func TestInterpolatedNewlineCannotForgeALine(t *testing.T) {
 	m := Invite{
 		To:      "a@example.com",
-		Inviter: "David\r\nhttps://evil.example/accept",
+		Inviter: "Ada\r\nhttps://evil.example/accept",
 		Role:    "editor",
 		URL:     "https://theses.example/invite/abc",
 		Expires: 48 * time.Hour,

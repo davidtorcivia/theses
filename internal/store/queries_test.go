@@ -23,7 +23,7 @@ func newUser(t *testing.T, db *DB, handle string) int64 {
 func TestClaimTOTPStepRejectsReplay(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
-	id := newUser(t, db, "dt")
+	id := newUser(t, db, "ada")
 
 	if ok, err := ClaimTOTPStep(ctx, db, id, 58000000); err != nil || !ok {
 		t.Fatalf("first claim: ok=%v err=%v", ok, err)
@@ -42,7 +42,7 @@ func TestClaimTOTPStepRejectsReplay(t *testing.T) {
 func TestSessionLookupFollowsEpochAndExpiry(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
-	id := newUser(t, db, "dt")
+	id := newUser(t, db, "ada")
 	hmac := []byte("session-hmac")
 
 	if err := CreateSession(ctx, db, id, hmac, 1, 2_000_000_000, "test"); err != nil {
@@ -65,7 +65,7 @@ func TestSessionLookupFollowsEpochAndExpiry(t *testing.T) {
 func TestPasswordResetIsSingleUse(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
-	id := newUser(t, db, "dt")
+	id := newUser(t, db, "ada")
 	hash := []byte("reset-hash")
 
 	if err := CreatePasswordReset(ctx, db, id, hash, 2_000_000_000); err != nil {
@@ -153,7 +153,7 @@ func TestConcurrentDeletionsLeaveAnOwner(t *testing.T) {
 func TestTheGuardRefusesTheOnlyOwner(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
-	only := newOwner(t, db, "dt")
+	only := newOwner(t, db, "ada")
 
 	if ok, err := SetUserRoleKeepingAnOwner(ctx, db, only, "editor"); err != nil || ok {
 		t.Errorf("demoting the only owner: ok=%v err=%v", ok, err)
@@ -169,7 +169,7 @@ func TestTheGuardRefusesTheOnlyOwner(t *testing.T) {
 func TestTheGuardLetsGoWhenAnotherOwnerRemains(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
-	newOwner(t, db, "dt")
+	newOwner(t, db, "ada")
 	b := newOwner(t, db, "mara")
 
 	if ok, err := SetUserRoleKeepingAnOwner(ctx, db, b, "editor"); err != nil || !ok {

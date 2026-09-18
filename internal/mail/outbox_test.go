@@ -153,7 +153,7 @@ func countRows(t *testing.T, db *store.DB, where string, args ...any) int {
 func TestEnqueueRollsBackWithItsTransaction(t *testing.T) {
 	_, db, _ := newTestOutbox(t)
 	ctx := context.Background()
-	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
+	msg := Invite{To: "ana@example.com", Inviter: "AL", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -377,7 +377,7 @@ func TestRowsQueuedBeforeConfigurationGoOutLater(t *testing.T) {
 	o, db, set := newTestOutbox(t)
 	ctx := context.Background()
 
-	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
+	msg := Invite{To: "ana@example.com", Inviter: "AL", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
 	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +433,7 @@ func TestARowThatWaitedKeepsItsFullDayOnceItIsTried(t *testing.T) {
 	configure(t, set, "127.0.0.1", deadPort(t))
 	ctx := context.Background()
 
-	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
+	msg := Invite{To: "ana@example.com", Inviter: "AL", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
 	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -488,11 +488,11 @@ func TestOnlyTheNewestMessageForARefIsDelivered(t *testing.T) {
 	// An invitation queued before the workspace had an SMTP server, then a
 	// resend, which reissues the token and kills the first link.
 	week := time.Now().Add(7 * 24 * time.Hour)
-	first := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/first", Expires: 7 * 24 * time.Hour}.Message()
+	first := Invite{To: "ana@example.com", Inviter: "AL", Role: "editor", URL: "https://x/invite/first", Expires: 7 * 24 * time.Hour}.Message()
 	if err := Enqueue(ctx, db, first, week, "invitation:7"); err != nil {
 		t.Fatal(err)
 	}
-	second := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/second", Expires: 7 * 24 * time.Hour}.Message()
+	second := Invite{To: "ana@example.com", Inviter: "AL", Role: "editor", URL: "https://x/invite/second", Expires: 7 * 24 * time.Hour}.Message()
 	if err := Enqueue(ctx, db, second, week, "invitation:7"); err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +574,7 @@ func TestARowAbandonedDuringTheBatchIsNotDelivered(t *testing.T) {
 	if err := Enqueue(ctx, db, first, hour, "reset:1"); err != nil {
 		t.Fatal(err)
 	}
-	second := Invite{To: "bo@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/second", Expires: 7 * 24 * time.Hour}.Message()
+	second := Invite{To: "bo@example.com", Inviter: "AL", Role: "editor", URL: "https://x/invite/second", Expires: 7 * 24 * time.Hour}.Message()
 	if err := Enqueue(ctx, db, second, hour, "invitation:9"); err != nil {
 		t.Fatal(err)
 	}

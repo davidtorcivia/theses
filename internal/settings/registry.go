@@ -34,7 +34,7 @@ var providers = []string{"backblaze", "r2", "s3"}
 
 // Registry is every setting the app knows. A key not here cannot be written.
 var Registry = []Def{
-	{Key: "workspace.name", Kind: KindString, Default: "We All Fall Down", Label: "Name"},
+	{Key: "workspace.name", Kind: KindString, Default: "Workspace", Label: "Name"},
 	{Key: "workspace.episode_start", Kind: KindInt, Default: 1, Min: 0, Max: 10000, Label: "Episode numbering starts at"},
 	{Key: "workspace.release_day", Kind: KindChoice, Default: "Monday", Choices: days, Label: "Release day"},
 	{Key: "workspace.release_time", Kind: KindString, Default: "06:00", Label: "Release time", Hint: "24 hour, in the workspace time zone."},
