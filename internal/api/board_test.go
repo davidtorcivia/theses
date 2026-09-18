@@ -160,6 +160,10 @@ func TestTheBoardRoundTripsOverREST(t *testing.T) {
 	if w = h.do("PATCH", "/api/v1/checklist/"+item, token, `{"done":true}`); w.Code != http.StatusOK {
 		t.Fatalf("ticking gave %d: %s", w.Code, w.Body)
 	}
+	if w = h.do("PATCH", "/api/v1/cards/"+card, token,
+		`{"due_date":"2026-10-01","question":"II"}`); w.Code != http.StatusOK {
+		t.Fatalf("a due date and a question gave %d: %s", w.Code, w.Body)
+	}
 	if w = h.do("POST", "/api/v1/cards/"+card+"/comments", token, `{"body_md":"They answered."}`); w.Code != http.StatusOK {
 		t.Fatalf("a note gave %d: %s", w.Code, w.Body)
 	}
@@ -175,6 +179,10 @@ func TestTheBoardRoundTripsOverREST(t *testing.T) {
 	}
 	if len(got.Card.Assignees) != 1 || len(got.Card.Comments) != 1 ||
 		len(got.Card.Checklist) != 1 || !got.Card.Checklist[0].Done {
+		t.Fatalf("card = %+v", got.Card)
+	}
+	if got.Card.DueDate == nil || *got.Card.DueDate != "2026-10-01" ||
+		got.Card.Question == nil || *got.Card.Question != "II" {
 		t.Fatalf("card = %+v", got.Card)
 	}
 
@@ -400,6 +408,11 @@ func TestBoardRoutesAreScopedAndAuthorised(t *testing.T) {
 		{
 			name: "a patch that names nothing is the caller's mistake", method: "PATCH",
 			target: "/api/v1/cards/" + card, body: `{}`,
+			token: both, want: http.StatusBadRequest,
+		},
+		{
+			name: "a checklist item cannot be ticked without saying which way", method: "PATCH",
+			target: "/api/v1/checklist/1", body: `{}`,
 			token: both, want: http.StatusBadRequest,
 		},
 		{

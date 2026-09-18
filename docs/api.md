@@ -600,6 +600,9 @@ PUT /api/v1/settings/signin.session_days
 {"value": 7}
 ```
 
+A value the key's definition refuses is `422`; a body that is not JSON, or has
+no `value` field, is `400`.
+
 A write is recorded in the activity log as the person the token belongs to.
 
 ## The board

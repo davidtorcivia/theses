@@ -295,9 +295,9 @@ func TestSettingsWriteRefusesWhatSettingsRefuses(t *testing.T) {
 		want               int
 	}{
 		{"unknown key", "/api/v1/settings/not.a.key", `{"value":"x"}`, http.StatusNotFound},
-		{"not a number", "/api/v1/settings/signin.session_days", `{"value":"soon"}`, http.StatusBadRequest},
-		{"out of range", "/api/v1/settings/signin.session_days", `{"value":4000}`, http.StatusBadRequest},
-		{"not a choice", "/api/v1/settings/workspace.release_day", `{"value":"Caturday"}`, http.StatusBadRequest},
+		{"not a number", "/api/v1/settings/signin.session_days", `{"value":"soon"}`, http.StatusUnprocessableEntity},
+		{"out of range", "/api/v1/settings/signin.session_days", `{"value":4000}`, http.StatusUnprocessableEntity},
+		{"not a choice", "/api/v1/settings/workspace.release_day", `{"value":"Caturday"}`, http.StatusUnprocessableEntity},
 		{"not JSON", "/api/v1/settings/workspace.name", `hello`, http.StatusBadRequest},
 		{"no value", "/api/v1/settings/workspace.name", `{}`, http.StatusBadRequest},
 		{"list of numbers", "/api/v1/settings/defaults.columns", `{"value":[1,2]}`, http.StatusBadRequest},

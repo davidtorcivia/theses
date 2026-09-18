@@ -264,6 +264,14 @@ func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 	if refusal := read(t, ws, "error"); refusal.ID != 3 {
 		t.Errorf("an unknown command got %+v", refusal)
 	}
+
+	// A refusal the tab can act on says what it was. A question that is not one
+	// of the four used to come back as a fault on this side.
+	send(t, ws, command{ID: 4, Cmd: "card.question", Args: args{Card: card.ID, Question: "V"}})
+	if refusal := read(t, ws, "error"); refusal.ID != 4 ||
+		!strings.Contains(refusal.Error, "four questions") {
+		t.Errorf("a question that is not one of the four got %+v", refusal)
+	}
 }
 
 // A socket is only as open as the person behind it. Someone who is not a member

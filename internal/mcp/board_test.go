@@ -190,6 +190,19 @@ func TestTheBoardToolsWriteAsThePersonAndTheClient(t *testing.T) {
 	h.call(cs, "comment", map[string]any{"card": card.ID, "text": "Done before lunch."}, nil)
 	h.call(cs, "move_card", map[string]any{"card": card.ID, "column": f.column, "after": f.card}, nil)
 
+	// And the other way on both of the tools that take a direction.
+	h.call(cs, "complete_card", map[string]any{"card": card.ID, "reopen": true}, nil)
+	h.call(cs, "assign_card", map[string]any{"card": card.ID, "user": h.user.ID, "unassign": true}, nil)
+	var reopened cardsOut
+	h.call(cs, "list_cards", map[string]any{"proposition": f.prop}, &reopened)
+	for _, c := range reopened.Cards {
+		if c.ID == card.ID && (c.DoneAt != nil || len(c.Assignees) != 0) {
+			t.Fatalf("reopening left %+v", c)
+		}
+	}
+	h.call(cs, "complete_card", map[string]any{"card": card.ID}, nil)
+	h.call(cs, "assign_card", map[string]any{"card": card.ID, "user": h.user.ID}, nil)
+
 	var cards cardsOut
 	h.call(cs, "list_cards", map[string]any{"proposition": f.prop}, &cards)
 	if len(cards.Cards) != 2 || cards.Seq == 0 {

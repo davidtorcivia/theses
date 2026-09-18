@@ -494,11 +494,13 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 		// Set validates against the key's definition, so what it complains about
 		// is the client's fault and worth repeating word for word. A failure to
 		// store is not, and carries driver detail that says nothing to a client.
+		// A value the definition refuses is 422 like every other body the rules
+		// turn down; a body that is not JSON at all is the 400 above.
 		if errors.Is(err, settings.ErrStorage) {
 			a.serverError(w, r, err)
 			return
 		}
-		a.fail(w, http.StatusBadRequest, err.Error())
+		a.fail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	a.writeJSON(w, http.StatusOK, a.Describe(def))
