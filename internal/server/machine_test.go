@@ -9,6 +9,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/mcp"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -108,4 +109,44 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+// initialize is the first message of an MCP session, sent by hand so the test
+// can control the Host header and the size of the body.
+const initialize = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":` +
+	`{"protocolVersion":"2025-03-26","capabilities":{},` +
+	`"clientInfo":{"name":"research agent","version":"test"}}}`
+
+func (h *harness) postMCP(token, host, body string) *http.Response {
+	h.Helper()
+	req, err := http.NewRequest("POST", h.http.URL+"/mcp", strings.NewReader(body))
+	if err != nil {
+		h.Fatal(err)
+	}
+	req.Host = host
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	res, err := h.client.Do(req)
+	if err != nil {
+		h.Fatal(err)
+	}
+	res.Body.Close()
+	return res
+}
+
+// Caddy runs on the same machine and proxies to loopback, so every real request
+// arrives over loopback carrying the public host name.
+func TestMCPAnswersLoopbackWithAPublicHost(t *testing.T) {
+	h := newHarness(t)
+	token := h.apiToken(auth.ScopeRead)
+
+	if res := h.postMCP(token, "theses.example.com", initialize); res.StatusCode != http.StatusOK {
+		t.Errorf("initialize behind a proxy: %d", res.StatusCode)
+	}
+	big := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"` +
+		strings.Repeat("x", mcp.MaxBodyBytes) + `"}}}`
+	if res := h.postMCP(token, "theses.example.com", big); res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("an oversized body: %d", res.StatusCode)
+	}
 }

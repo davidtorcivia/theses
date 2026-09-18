@@ -73,14 +73,30 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 	return s
 }
 
+// MaxBodyBytes is what a POST to /mcp may be, the same as the REST API allows,
+// since a tool call is a few hundred bytes of JSON.
+const MaxBodyBytes = 64 << 10
+
 // Handler is /mcp, behind the same bearer tokens as the REST API. The server is
 // stateless: every POST carries its own Authorization header and is
 // authenticated on its own, rather than trusting the session an initialize
 // request opened.
+//
+// The SDK's rebinding protection is off because it refuses a request that
+// arrives over loopback with a public Host header, which is every request in
+// this deployment: Caddy runs on the same machine and proxies to 127.0.0.1. The
+// protection it offers is against a browser reaching a local server that
+// answers whoever asks, and this one answers a bearer token it checks per
+// request.
 func (s *Server) Handler() http.Handler {
 	return s.api.Authenticate(sdk.NewStreamableHTTPHandler(
 		func(*http.Request) *sdk.Server { return s.srv },
-		&sdk.StreamableHTTPOptions{Stateless: true, Logger: s.log},
+		&sdk.StreamableHTTPOptions{
+			Stateless:                  true,
+			Logger:                     s.log,
+			DisableLocalhostProtection: true,
+			MaxRequestBodyBytes:        MaxBodyBytes,
+		},
 	))
 }
 
