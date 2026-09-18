@@ -51,6 +51,10 @@ func Open(ctx context.Context, db *store.DB, secretKey []byte) (*Settings, error
 	return s, s.reload(ctx)
 }
 
+// Reload reads the table again, for after a restore has replaced the file the
+// values were read from.
+func (s *Settings) Reload(ctx context.Context) error { return s.reload(ctx) }
+
 func (s *Settings) reload(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value_json, secret FROM settings`)
 	if err != nil {
