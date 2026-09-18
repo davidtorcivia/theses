@@ -54,12 +54,16 @@ function cardNode(card) {
   node.addEventListener('click', () => openCard(card.id));
   node.addEventListener('dragstart', (e) => {
     node.classList.add('dragging');
+    // A change arriving mid drag would rebuild the board and take the card out
+    // of the hand holding it, so rendering waits until the drop.
+    hold(true);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(card.id));
   });
   node.addEventListener('dragend', () => {
     node.classList.remove('dragging');
     for (const c of $$('.col.over')) c.classList.remove('over');
+    hold(false);
   });
   return node;
 }

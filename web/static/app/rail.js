@@ -59,10 +59,11 @@ function entry(p) {
   });
   li.addEventListener('dragstart', (e) => {
     li.classList.add('dragging');
+    hold(true);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(p.id));
   });
-  li.addEventListener('dragend', () => li.classList.remove('dragging'));
+  li.addEventListener('dragend', () => { li.classList.remove('dragging'); hold(false); });
   return li;
 }
 

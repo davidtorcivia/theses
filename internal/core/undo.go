@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -162,11 +161,4 @@ func decode(payload string) (map[string]any, error) {
 		raw[k] = f
 	}
 	return raw, nil
-}
-
-// Undoable reports whether an activity row can be put back, which is what the
-// activity panel greys the undo control with.
-func Undoable(entity, action string) bool {
-	spec, ok := undoable[entity]
-	return ok && len(spec.cols) > 0 && !slices.Contains([]string{"create", "delete", "undo"}, action)
 }

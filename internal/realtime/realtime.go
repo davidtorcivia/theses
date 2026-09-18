@@ -134,7 +134,13 @@ func (h *Hub) handshake(config *websocket.Config, r *http.Request) error {
 	if err != nil {
 		return errors.New("no session")
 	}
+	// Proposition zero is the empty workspace: a rail and nothing open yet. The
+	// socket still has to exist, because creating the first proposition goes
+	// through it. Such a tab is sent only the rail events its role allows.
 	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
+	if proposition == 0 {
+		return nil
+	}
 	ok, err := CanRead(r.Context(), h.board.DB, user, proposition)
 	if err != nil {
 		return err

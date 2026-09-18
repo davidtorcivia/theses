@@ -100,9 +100,13 @@ func (r *rig) actor(handle string) core.Actor {
 }
 
 func (r *rig) dial(handle string) (*websocket.Conn, error) {
+	return r.dialProposition(handle, r.prop)
+}
+
+func (r *rig) dialProposition(handle string, proposition int64) (*websocket.Conn, error) {
 	r.Helper()
 	wsURL := "ws" + strings.TrimPrefix(r.http.URL, "http") +
-		"/ws?proposition=" + strconv.FormatInt(r.prop, 10)
+		"/ws?proposition=" + strconv.FormatInt(proposition, 10)
 	config, err := websocket.NewConfig(wsURL, r.http.URL)
 	if err != nil {
 		r.Fatal(err)
@@ -258,6 +262,34 @@ func TestSocketRefusesANonMemberAndAStrangeOrigin(t *testing.T) {
 	if ws, err := websocket.DialConfig(config); err == nil {
 		ws.Close()
 		t.Error("a page on another origin opened a socket with the session cookie")
+	}
+}
+
+// An empty workspace has nothing open, but it still needs a socket: creating
+// the first proposition goes through it.
+func TestSocketOnAnEmptyWorkspaceCanCreateTheFirstProposition(t *testing.T) {
+	r := newRig(t)
+	ws, err := r.dialProposition("dt", 0)
+	if err != nil {
+		t.Fatalf("an empty workspace could not open a socket: %v", err)
+	}
+	defer ws.Close()
+
+	send(t, ws, command{ID: 1, Cmd: "proposition.create", Args: args{Title: "Engineer the Climate"}})
+	ack := read(t, ws, "ack")
+	if ack.ID != 1 || ack.Event == nil || ack.Event.Action != "create" {
+		t.Fatalf("creating the first proposition got %+v", ack)
+	}
+	if ack.Event.Proposition != ack.Event.EntityID {
+		t.Errorf("the event files itself under proposition %d, want %d",
+			ack.Event.Proposition, ack.Event.EntityID)
+	}
+	p, err := board.GetProposition(context.Background(), r.db, ack.Event.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Title != "Engineer the Climate" {
+		t.Errorf("the proposition is %+v", p)
 	}
 }
 

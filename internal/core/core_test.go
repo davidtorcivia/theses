@@ -54,25 +54,6 @@ func TestBusDropsASlowSubscriber(t *testing.T) {
 	}
 }
 
-func TestUndoRefusesWhatCannotBePutBack(t *testing.T) {
-	for _, c := range []struct {
-		entity, action string
-		want           bool
-	}{
-		{"card", "edit", true},
-		{"card", "move", true},
-		{"card", "create", false},
-		{"card", "delete", false},
-		{"card", "undo", false},
-		{"comment", "create", false},
-		{"member", "add", false},
-	} {
-		if got := Undoable(c.entity, c.action); got != c.want {
-			t.Errorf("Undoable(%q, %q) = %v, want %v", c.entity, c.action, got, c.want)
-		}
-	}
-}
-
 // An actor that is neither a person nor the file watcher has no role to look
 // up, and neither has a person who is no longer an account.
 func TestActorsWithoutARoleAreRefused(t *testing.T) {

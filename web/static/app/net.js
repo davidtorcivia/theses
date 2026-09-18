@@ -23,7 +23,8 @@ export class Conflict extends Error {
 }
 
 export function connect() {
-  if (!state.open) return;
+  // A workspace with nothing in it still opens a socket, because creating the
+  // first proposition goes through it.
   const url = new URL('/ws', location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   url.searchParams.set('proposition', state.open);
@@ -93,6 +94,7 @@ export function where(what) {
 // catchUp reads whatever this tab missed out of the activity table, which is
 // what a reconnect and a dropped event both need.
 async function catchUp() {
+  if (!state.open) return;
   try {
     const res = await fetch(`/api/events?proposition=${state.open}&since=${state.seq}&wait=0`, {
       headers: { Accept: 'application/json' },

@@ -141,7 +141,9 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 		state.Open = open
 	}
 	if state.Open == 0 {
-		state.Propositions = []board.Proposition{}
+		// Nothing open, either because there is nothing yet or because every
+		// proposition is archived. The rail still lists what there is, so an
+		// archived one can be restored.
 		return state, nil
 	}
 
