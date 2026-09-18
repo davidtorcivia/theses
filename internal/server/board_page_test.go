@@ -284,7 +284,7 @@ func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	editor := h.as("ada", "Ada Lovelace", auth.RoleEditor)
+	editor := h.as("grace", "Grace Hopper", auth.RoleEditor)
 	status, state := h.payloadAs(editor, "/")
 	if status != http.StatusOK {
 		t.Fatalf("an editor who is a member of nothing got %d on /", status)
@@ -302,11 +302,11 @@ func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 		t.Errorf("a missing proposition gave %d", missing)
 	}
 
-	var ada int64
-	if err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE handle = 'ada'`).Scan(&ada); err != nil {
+	var grace int64
+	if err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE handle = 'grace'`).Scan(&grace); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.srv.board.AddMember(ctx, owner, second.EntityID, ada); err != nil {
+	if _, err := h.srv.board.AddMember(ctx, owner, second.EntityID, grace); err != nil {
 		t.Fatal(err)
 	}
 

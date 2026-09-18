@@ -139,7 +139,7 @@ func (b *Backup) afterSwap(ctx context.Context, docsPath, stamp, key string, m M
 	}
 	// The row goes into the restored database, which is the one that will be
 	// read from now on, so the restore is in the history it created.
-	if err := store.InsertActivity(ctx, b.db, "user", strconv.FormatInt(actorID, 10),
+	if err := store.InsertActivity(ctx, b.db, "user", strconv.FormatInt(actorID, 10), "",
 		"backup", key, "restore", "", string(after)); err != nil {
 		return fmt.Errorf("the restore could not be recorded in activity: %w", err)
 	}
