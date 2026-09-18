@@ -287,14 +287,55 @@ func TestAMentionGetsThroughDigestAndQuietHours(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	got := f.outbox(t)
+	if len(got) != 2 {
+		t.Fatalf("wrote %d rows, want one per channel: a mention is moved, not copied", len(got))
+	}
 	soon := 0
-	for _, r := range f.outbox(t) {
+	perChannel := map[int64]int{}
+	for _, r := range got {
+		perChannel[r.ChannelID]++
 		if r.NextAt <= night {
 			soon++
 		}
 	}
 	if soon != 1 {
 		t.Fatalf("%d rows go out now, want exactly one: a mention always reaches one channel", soon)
+	}
+	for id, n := range perChannel {
+		if n != 1 {
+			t.Errorf("channel %d has %d rows, want 1: it must not arrive now and again later", id, n)
+		}
+	}
+}
+
+// Quiet hours hold a burst back; they do not turn it into a burst that all
+// arrives at seven in the morning.
+func TestABurstHeldByQuietHoursStillCollapses(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	grace := f.user(t, "grace")
+	f.onCard(t, 7, grace)
+	night := time.Date(2026, 9, 8, 23, 30, 0, 0, time.UTC).Unix()
+	f.s.Now = func() int64 { return night }
+	f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"},
+		QuietFrom: "23:00", QuietTo: "07:00"}, "moved")
+
+	for range 5 {
+		if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := f.outbox(t)
+	if len(got) != 1 {
+		t.Fatalf("five moves inside quiet hours wrote %d rows, want 1", len(got))
+	}
+	if len(got[0].Payload.Items) != 5 {
+		t.Errorf("row carries %d lines, want 5", len(got[0].Payload.Items))
+	}
+	want := time.Date(2026, 9, 9, 7, 0, 0, 0, time.UTC).Unix()
+	if got[0].NextAt != want {
+		t.Errorf("next_at = %d, want %d", got[0].NextAt, want)
 	}
 }
 

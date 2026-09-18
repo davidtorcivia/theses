@@ -200,6 +200,16 @@ func TestSecretsAreRedactedFromStoredErrors(t *testing.T) {
 	}
 }
 
+func TestTheSMTPPasswordIsRedactedToo(t *testing.T) {
+	f := newFixture(t)
+	c := Channel{Kind: KindEmail}
+	err := f.s.redacted(context.Background(),
+		errors.New("mail: 535 authentication failed for hunter2seventeen"), c, "hunter2seventeen")
+	if strings.Contains(err.Error(), "hunter2seventeen") {
+		t.Fatalf("the SMTP password survived redaction: %q", err)
+	}
+}
+
 func TestBackoffIsBoundedByTheHour(t *testing.T) {
 	for _, tt := range []struct {
 		attempts int

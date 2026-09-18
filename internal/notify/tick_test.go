@@ -139,6 +139,30 @@ func TestTickWaitsForTheDigestHour(t *testing.T) {
 	}
 }
 
+// The pass runs a few minutes before the digest, so that a digest channel gets
+// "due tomorrow" in the digest of the day it is sent rather than a day late.
+func TestTickCatchesTheSameDaysDigest(t *testing.T) {
+	f := newFixture(t)
+	grace := f.user(t, "grace")
+	f.onCard(t, 7, grace)
+	f.channel(t, Channel{UserID: grace, Kind: KindEmail, Digest: true}, "due")
+	day := time.Unix(now, 0).UTC()
+	f.dates(t, day.AddDate(0, 0, 1).Format("2006-01-02"), "")
+
+	f.s.Now = func() int64 { return time.Date(2026, 9, 8, 7, 56, 0, 0, time.UTC).Unix() }
+	if err := f.s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := f.outbox(t)
+	if len(got) != 1 {
+		t.Fatalf("wrote %d rows, want one due", len(got))
+	}
+	want := time.Date(2026, 9, 8, 8, 0, 0, 0, time.UTC).Unix()
+	if got[0].NextAt != want {
+		t.Errorf("next_at = %d, want %d: today's digest, not tomorrow's", got[0].NextAt, want)
+	}
+}
+
 func TestTickSkipsDoneCards(t *testing.T) {
 	f := newFixture(t)
 	grace := f.user(t, "grace")

@@ -14,6 +14,9 @@ import (
 // of what it produces the way the actor of a command is.
 var tickActor = core.Actor{Kind: "system", Name: "THESES"}
 
+// tickLead is how long before the digest the daily pass runs, in minutes.
+const tickLead = 5
+
 // Tick produces the notifications no command does: a card due tomorrow, a card
 // that has just gone overdue, and a release day tomorrow. It runs once on the
 // day, at the digest time, and records the day it ran so that a restart an hour
@@ -25,7 +28,9 @@ func (s *Service) Tick(ctx context.Context) error {
 	if !ok {
 		at = 8 * 60
 	}
-	if now.Hour()*60+now.Minute() < at {
+	// A few minutes before the hour, so that what the pass produces for a
+	// digest channel catches today's digest rather than tomorrow's.
+	if now.Hour()*60+now.Minute() < at-tickLead {
 		return nil
 	}
 	today := day(now)

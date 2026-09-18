@@ -132,14 +132,9 @@ func (c Channel) Validate() error {
 // ListChannels returns one account's channels, or the workspace's when user is
 // zero.
 func ListChannels(ctx context.Context, q store.Querier, set *settings.Settings, user int64) ([]Channel, error) {
-	where := "user_id = ?"
-	var arg any = user
-	if user == 0 {
-		where, arg = "user_id IS NULL", nil
-	}
 	rows, err := q.QueryContext(ctx, `SELECT id, coalesce(user_id, 0), kind, config_json,
 		quiet_from, quiet_to, digest, created_at, coalesce(verified_at, 0)
-		FROM notification_channels WHERE `+where+` ORDER BY id`, arg)
+		FROM notification_channels WHERE coalesce(user_id, 0) = ? ORDER BY id`, user)
 	if err != nil {
 		return nil, fmt.Errorf("notify: list channels: %w", err)
 	}

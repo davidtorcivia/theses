@@ -161,6 +161,8 @@ func (s *Service) stillSendable(ctx context.Context, id, channelID int64) (Chann
 	if err != nil {
 		// The row would have cascaded with the channel, so this is a config
 		// that cannot be read rather than a channel that is gone.
+		// ponytail: a database that is momentarily unreadable abandons the row
+		// too. Distinguish the two once there is a deployment to see it happen.
 		return Channel{}, "", false, s.abandon(ctx, id, err.Error())
 	}
 	if !c.Verified() {
@@ -242,10 +244,16 @@ func (s *Service) deliver(ctx context.Context, c Channel, email string, n channe
 		return err
 	}
 	if e, ok := snd.(channel.Email); ok {
-		if msg, ok := template(e.To, n, settings.Get[string](s.set, "workspace.name")); ok {
-			err = e.Sender.Send(ctx, msg)
-			return s.redacted(ctx, err, c)
+		// The SMTP password ends up in what a server says back, which is why the
+		// mail outbox takes it out of every error it stores.
+		password := ""
+		if smtp, ok := e.Sender.(mail.SMTP); ok {
+			password = smtp.Password
 		}
+		if msg, ok := template(e.To, n, settings.Get[string](s.set, "workspace.name")); ok {
+			return s.redacted(ctx, e.Sender.Send(ctx, msg), c, password)
+		}
+		return s.redacted(ctx, snd.Send(ctx, n), c, password)
 	}
 	return s.redacted(ctx, snd.Send(ctx, n), c)
 }
@@ -285,11 +293,14 @@ func where(entity string) string {
 // redacted takes every secret out of a failure before it is stored or logged: a
 // Pushover key, an ntfy token and a webhook secret all end up in the text a
 // server or a transport puts in an error.
-func (s *Service) redacted(ctx context.Context, err error, c Channel) error {
+func (s *Service) redacted(ctx context.Context, err error, c Channel, more ...string) error {
 	if err == nil {
 		return nil
 	}
 	text := redact(err.Error(), c)
+	for _, secret := range more {
+		text = mail.Redact(text, secret)
+	}
 	if c.Kind == KindPushover {
 		if token, e := s.set.Secret(ctx, "notify.pushover_token"); e == nil {
 			text = mail.Redact(text, token)

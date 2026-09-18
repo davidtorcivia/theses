@@ -92,10 +92,15 @@ func (s *Service) queueUser(ctx context.Context, tx *sql.Tx, m Notice, actor cor
 		return err
 	}
 
-	// A mention has to arrive somewhere. The rows are written first and the
-	// rule is applied to what they turned out to be, because a mention that
-	// went out on a channel straight away needs no second copy.
-	var wrote []int64
+	// When each channel gets it, worked out before anything is written, so that
+	// the mention rule can move one of them rather than add a second copy: a
+	// mention that also sat in the digest would arrive twice.
+	type slot struct {
+		channel  int64
+		at       int64
+		collapse string
+	}
+	var slots []slot
 	immediate := false
 	for _, c := range channels {
 		if !c.Verified() || !enabled[c.ID] {
@@ -105,32 +110,29 @@ func (s *Service) queueUser(ctx context.Context, tx *sql.Tx, m Notice, actor cor
 		if at <= now {
 			immediate = true
 		}
-		if err := s.write(ctx, tx, c.ID, m, actor, at, collapse, now); err != nil {
-			return err
-		}
-		wrote = append(wrote, c.ID)
-	}
-	if m.Event != "mentioned" || immediate {
-		return nil
+		slots = append(slots, slot{channel: c.ID, at: at, collapse: collapse})
 	}
 	// Quiet hours and the digest are about noise, and being named is not noise.
 	// One channel takes it now: the first that was going to get it at all, or
 	// failing that the first verified one the account has.
-	forced := int64(0)
-	if len(wrote) > 0 {
-		forced = wrote[0]
-	} else {
-		for _, c := range channels {
-			if c.Verified() {
-				forced = c.ID
-				break
+	if m.Event == "mentioned" && !immediate {
+		if len(slots) > 0 {
+			slots[0].at, slots[0].collapse = now, ""
+		} else {
+			for _, c := range channels {
+				if c.Verified() {
+					slots = append(slots, slot{channel: c.ID, at: now})
+					break
+				}
 			}
 		}
 	}
-	if forced == 0 {
-		return nil
+	for _, sl := range slots {
+		if err := s.write(ctx, tx, sl.channel, m, actor, sl.at, sl.collapse, now); err != nil {
+			return err
+		}
 	}
-	return s.write(ctx, tx, forced, m, actor, now, "", now)
+	return nil
 }
 
 // schedule is when a notification goes out on one channel and what it may
@@ -140,12 +142,17 @@ func (s *Service) schedule(c Channel, m Notice, now int64, loc *time.Location) (
 		return nextDigest(now, loc, settings.Get[string](s.set, "notify.digest_time")),
 			digestPrefix + strconv.FormatInt(c.ID, 10)
 	}
-	if until := quietUntil(now, loc, c.QuietFrom, c.QuietTo); until > now {
-		return until, ""
-	}
+	key := ""
 	if e, ok := LookupEvent(m.Event); ok && e.Collapse {
-		return now + int64(collapseWindow.Seconds()),
-			fmt.Sprintf("%d:%s:%d", c.ID, m.Event, m.Proposition)
+		key = fmt.Sprintf("%d:%s:%d", c.ID, m.Event, m.Proposition)
+	}
+	// A burst held back by quiet hours still collapses. Five moves at midnight
+	// are one message at seven, not five at once.
+	if until := quietUntil(now, loc, c.QuietFrom, c.QuietTo); until > now {
+		return until, key
+	}
+	if key != "" {
+		return now + int64(collapseWindow.Seconds()), key
 	}
 	return now, ""
 }
