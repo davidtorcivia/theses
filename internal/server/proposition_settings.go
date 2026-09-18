@@ -2,7 +2,9 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -129,7 +131,7 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		"Members":  members,
 		"Columns":  rows,
 		"Doc":      doc,
-		"CanEdit":  auth.Can(me.Role, auth.CanEdit),
+		"CanEdit":  auth.Can(me.Role, auth.CanEdit) && p.ArchivedAt == nil,
 		"CanDel":   auth.Can(me.Role, auth.CanDelete),
 	}, extra))
 	s.render(w, r, status, "prop_settings.html", data)
@@ -154,6 +156,16 @@ func (s *Server) postPropositionSettings(w http.ResponseWriter, r *http.Request)
 	}
 	actor := core.Actor{Kind: core.KindUser, ID: me.ID, Name: me.Name}
 	form := r.PostForm
+
+	// A section is one form and several commands, so every field in it is
+	// checked before the first of them runs. Without this a refusal halfway
+	// down leaves the ones above it applied and the page redrawn with the
+	// person's own unsaved values beside them.
+	if err := lengths(form); err != nil {
+		s.renderPropositionSettings(w, r, http.StatusUnprocessableEntity,
+			map[string]any{"Error": err.Error()})
+		return
+	}
 
 	var refused error
 	switch form.Get("do") {
@@ -199,6 +211,41 @@ func (s *Server) postPropositionSettings(w http.ResponseWriter, r *http.Request)
 	default:
 		http.Redirect(w, r, "/p/"+strconv.FormatInt(id, 10)+"/settings?saved=1", http.StatusSeeOther)
 	}
+}
+
+// sectionFields is every text field a section can post and how long it may be.
+// A field a section does not post is absent from the form and unchecked.
+var sectionFields = map[string]int{
+	"title":     board.MaxLine,
+	"statement": board.MaxLine,
+	"blurb":     board.MaxBody,
+	"status":    board.MaxWord,
+	"episode":   board.MaxWord,
+	"target":    board.MaxWord,
+	"add":       board.MaxLine,
+}
+
+// lengths checks every field of a section against the cap the board would
+// refuse it with, before any of the section's commands runs.
+func lengths(form url.Values) error {
+	for name, most := range sectionFields {
+		if !form.Has(name) {
+			continue
+		}
+		if _, err := board.Field(form.Get(name), most); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	// The column names are one field each, named after the column they rename.
+	for name, values := range form {
+		if !strings.HasPrefix(name, "name-") {
+			continue
+		}
+		if _, err := board.Field(values[0], board.MaxLine); err != nil {
+			return fmt.Errorf("a column name: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Server) saveMembers(r *http.Request, actor core.Actor, id int64, wanted []string) error {

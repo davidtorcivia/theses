@@ -9,7 +9,7 @@
   </div>
 
   <section class="pane">
-    <div class="ph"><h2>Settings</h2><span class="mono">This proposition</span></div>
+    <div class="ph"><h2>Settings</h2><span class="mono">{{if .Archived}}This proposition · archived · read only{{else}}This proposition{{end}}</span></div>
     {{template "notice" .}}
 
     <form class="form" method="post" action="/p/{{.P.ID}}/settings">
@@ -17,9 +17,9 @@
       <section class="fs">
         <div class="fsh"><h3>Proposition</h3><p>What the episode argues. The title is the rail entry; the statement is the sentence the episode has to survive.</p></div>
         <div class="fsb">
-          <label class="f"><span class="l">Title</span><input name="title" value="{{.P.Title}}"></label>
-          <label class="f"><span class="l">Statement</span><input name="statement" value="{{.P.Statement}}"></label>
-          <label class="f"><span class="l">Blurb</span><textarea name="blurb" rows="4">{{.P.Blurb}}</textarea><small>Shown on the site when the episode is released.</small></label>
+          <label class="f"><span class="l">Title</span><input name="title" value="{{.P.Title}}"{{if not .CanEdit}} readonly{{end}}></label>
+          <label class="f"><span class="l">Statement</span><input name="statement" value="{{.P.Statement}}"{{if not .CanEdit}} readonly{{end}}></label>
+          <label class="f"><span class="l">Blurb</span><textarea name="blurb" rows="4"{{if not .CanEdit}} readonly{{end}}>{{.P.Blurb}}</textarea><small>Shown on the site when the episode is released.</small></label>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
       </section>
@@ -31,9 +31,9 @@
         <div class="fsh"><h3>Schedule</h3><p>Status moves the proposition between rail groups. The target date is what the board counts down to.</p></div>
         <div class="fsb">
           <div class="row3">
-            <label class="f"><span class="l">Status</span><select name="status">{{range .Statuses}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
-            <label class="f"><span class="l">Episode</span><input name="episode" value="{{.Episode}}" placeholder="—"></label>
-            <label class="f"><span class="l">Target release</span><input name="target" value="{{.Target}}" placeholder="—"></label>
+            <label class="f"><span class="l">Status</span><select name="status"{{if not .CanEdit}} disabled{{end}}>{{range .Statuses}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+            <label class="f"><span class="l">Episode</span><input name="episode" value="{{.Episode}}" placeholder="—"{{if not .CanEdit}} readonly{{end}}></label>
+            <label class="f"><span class="l">Target release</span><input name="target" value="{{.Target}}" placeholder="—"{{if not .CanEdit}} readonly{{end}}></label>
           </div>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
@@ -45,7 +45,7 @@
       <section class="fs">
         <div class="fsh"><h3>Members</h3><p>Who can see and edit this proposition. Owners always can.</p></div>
         <div class="fsb">
-          <div class="members-list">{{range .Members}}<label class="mem"><input type="checkbox" name="member" value="{{.ID}}"{{if .On}} checked{{end}}><span class="u {{.Colour}}" title="{{.Name}}">{{.Initials}}</span><span class="n">{{.Name}}</span><span class="mono role">{{.Role}}</span></label>{{end}}</div>
+          <div class="members-list">{{range .Members}}<label class="mem"><input type="checkbox" name="member" value="{{.ID}}"{{if .On}} checked{{end}}{{if not $.CanEdit}} disabled{{end}}><span class="u {{.Colour}}" title="{{.Name}}">{{.Initials}}</span><span class="n">{{.Name}}</span><span class="mono role">{{.Role}}</span></label>{{end}}</div>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
       </section>
@@ -58,13 +58,13 @@
         <div class="fsb">
           <ul class="cols">
             {{range .Columns}}<li>
-              <input name="name-{{.ID}}" value="{{.Name}}" aria-label="Column name">
+              <input name="name-{{.ID}}" value="{{.Name}}" aria-label="Column name"{{if not $.CanEdit}} readonly{{end}}>
               <span class="mono cnt">{{.Cards}} card{{if ne .Cards 1}}s{{end}}</span>
-              <button class="lnk quiet" type="submit" name="up" value="{{.ID}}"{{if .First}} disabled{{end}}>Up</button>
+              {{if $.CanEdit}}<button class="lnk quiet" type="submit" name="up" value="{{.ID}}"{{if .First}} disabled{{end}}>Up</button>
               <button class="lnk quiet" type="submit" name="down" value="{{.ID}}"{{if .Last}} disabled{{end}}>Down</button>
-              <button class="lnk del" type="submit" name="remove" value="{{.ID}}">Remove</button>
+              <button class="lnk del" type="submit" name="remove" value="{{.ID}}">Remove</button>{{end}}
             </li>{{end}}
-            <li class="new"><input name="add" placeholder="+ Add a column" aria-label="New column"></li>
+            {{if .CanEdit}}<li class="new"><input name="add" placeholder="+ Add a column" aria-label="New column"></li>{{end}}
           </ul>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
@@ -76,9 +76,9 @@
       <section class="fs">
         <div class="fsh"><h3>Document</h3><p>The shared file under the board.</p></div>
         <div class="fsb">
-          <label class="chk"><input type="checkbox" name="open_editing" value="1"{{if .Doc.OpenEditing}} checked{{end}}><span>Anyone in the workspace can edit</span></label>
-          <label class="chk"><input type="checkbox" name="history" value="1"{{if .Doc.History}} checked{{end}}><span>Keep version history<small>90 days, then weekly snapshots</small></span></label>
-          <label class="chk"><input type="checkbox" name="publish" value="1"{{if .Doc.Publish}} checked{{end}}><span>Publish the document as the episode’s reading page when released</span></label>
+          <label class="chk"><input type="checkbox" name="open_editing" value="1"{{if .Doc.OpenEditing}} checked{{end}}{{if not .CanEdit}} disabled{{end}}><span>Anyone in the workspace can edit</span></label>
+          <label class="chk"><input type="checkbox" name="history" value="1"{{if .Doc.History}} checked{{end}}{{if not .CanEdit}} disabled{{end}}><span>Keep version history<small>90 days, then weekly snapshots</small></span></label>
+          <label class="chk"><input type="checkbox" name="publish" value="1"{{if .Doc.Publish}} checked{{end}}{{if not .CanEdit}} disabled{{end}}><span>Publish the document as the episode’s reading page when released</span></label>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
       </section>

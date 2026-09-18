@@ -449,3 +449,100 @@ func TestTheEventStreamIsReachableWithAToken(t *testing.T) {
 		t.Errorf("a token whose owner is not a member got %d", status)
 	}
 }
+
+// A section is one form and several commands. Every field of it is checked
+// before the first command runs, or a refusal halfway down leaves the ones
+// above it applied and the page redrawn with unsaved values beside them.
+func TestASectionIsCheckedBeforeAnyOfItRuns(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/p/" + strconv.FormatInt(e.EntityID, 10) + "/settings"
+	_, body := h.get(path)
+	csrf := csrfRe.FindStringSubmatch(body)[1]
+
+	// The schedule is a status command and then a schedule command. A target
+	// date over the cap used to refuse only after the status had been set.
+	res, page := h.post(path, url.Values{"csrf": {csrf}, "do": {"schedule"},
+		"status": {"recording"}, "episode": {"11"}, "target": {strings.Repeat("x", board.MaxWord+1)}})
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("an oversized target gave %d", res.StatusCode)
+	}
+	if !strings.Contains(page, "longer than") {
+		t.Errorf("the page does not say why: %s", page[:min(len(page), 400)])
+	}
+	p, err := board.GetProposition(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != "idea" {
+		t.Errorf("the status was set to %q although the section was refused", p.Status)
+	}
+	if p.Episode != nil {
+		t.Errorf("the episode was set to %v although the section was refused", *p.Episode)
+	}
+
+	// The columns section is an add, a reorder and a rename each. An oversized
+	// new column leaves the renames alone.
+	cols, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ = h.post(path, url.Values{"csrf": {csrf}, "do": {"columns"},
+		"add": {strings.Repeat("x", board.MaxLine+1)},
+		"name-" + strconv.FormatInt(cols[0].ID, 10): {"Renamed"},
+	})
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("an oversized column name gave %d", res.StatusCode)
+	}
+	after, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(cols) || after[0].Name != cols[0].Name {
+		t.Errorf("the refused section still renamed or added: %+v", after)
+	}
+}
+
+// An archived proposition is read only on its settings page as well as on its
+// board: nothing offers to change it, and restore and delete are what is left.
+func TestTheSettingsPageOfAnArchivedPropositionOffersNoEdits(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/p/" + strconv.FormatInt(e.EntityID, 10) + "/settings"
+
+	_, live := h.get(path)
+	if !strings.Contains(live, `class="save"`) || !strings.Contains(live, `name="add"`) {
+		t.Fatal("a live proposition has no save or no add column")
+	}
+
+	if _, err := h.srv.board.ArchiveProposition(ctx, owner, e.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	_, gone := h.get(path)
+	if strings.Contains(gone, `class="save"`) {
+		t.Error("an archived proposition still offers a save")
+	}
+	if strings.Contains(gone, `name="add"`) || strings.Contains(gone, `name="remove"`) {
+		t.Error("an archived proposition still offers to add or remove a column")
+	}
+	if !strings.Contains(gone, "archived") || !strings.Contains(gone, "Restore this proposition") {
+		t.Error("the page does not say it is archived or offer a restore")
+	}
+	if !strings.Contains(gone, "Delete permanently") {
+		t.Error("the page does not offer a delete")
+	}
+}
