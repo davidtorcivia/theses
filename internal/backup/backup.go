@@ -62,6 +62,9 @@ const (
 	// to hear about it.
 	storeEvery = 5 * time.Minute
 
+	// storeTimeout bounds the one call the object store check makes.
+	storeTimeout = 15 * time.Second
+
 	// tickEvery is how often the scheduler looks at the clock.
 	tickEvery = time.Minute
 
@@ -611,7 +614,12 @@ func (b *Backup) CheckStore(ctx context.Context) error {
 	if !b.storeAt.IsZero() && b.now().Sub(b.storeAt) < storeEvery {
 		return b.storeErr
 	}
-	b.storeAt, b.storeErr = b.now(), b.headPrimary(ctx)
+	// The call is detached from the caller: a readiness probe that hangs up
+	// mid-request would otherwise leave its own cancellation cached as the
+	// state of the bucket for the next five minutes.
+	call, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeTimeout)
+	defer cancel()
+	b.storeAt, b.storeErr = b.now(), b.headPrimary(call)
 	return b.storeErr
 }
 

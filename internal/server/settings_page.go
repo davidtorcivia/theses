@@ -222,7 +222,9 @@ func (s *Server) backupSection(r *http.Request, shown map[string]string, isSet m
 		return v
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	// Shorter than the probe: this one is on the way to a page the owner is
+	// waiting for, not a button they pressed to test a bucket.
+	ctx, cancel := context.WithTimeout(r.Context(), listTimeout)
 	defer cancel()
 	entries, err := s.backups.List(ctx)
 	if err != nil {
@@ -425,6 +427,9 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 // probeTimeout bounds the whole three-call probe, so a bucket that accepts the
 // connection and then says nothing does not hold the settings page open.
 const probeTimeout = 30 * time.Second
+
+// listTimeout bounds the listing the Backups section renders.
+const listTimeout = 10 * time.Second
 
 func (s *Server) bucketConfig(ctx context.Context, prefix string) (blob.Config, error) {
 	get := func(name string) string { return settings.Get[string](s.settings, prefix+"."+name) }

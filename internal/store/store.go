@@ -137,10 +137,11 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 	if err := drain(db.db); err != nil {
 		return err
 	}
-	// The write-ahead log belongs to the file being moved aside; a clean close
-	// removes it, and anything left is stale the moment the file changes.
+	// A clean close checkpoints the write-ahead log and removes it. Anything
+	// left goes with the file it belongs to rather than being deleted, because
+	// the copy moved aside is the one thing that can undo a bad restore.
 	for _, suffix := range []string{"-wal", "-shm"} {
-		os.Remove(db.path + suffix)
+		os.Rename(db.path+suffix, aside+suffix)
 	}
 	if err := os.Rename(db.path, aside); err != nil {
 		db.reopen()
