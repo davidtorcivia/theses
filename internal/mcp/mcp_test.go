@@ -209,8 +209,8 @@ func TestSetSettingNeedsAdminAndIsRecordedAsTheClient(t *testing.T) {
 	}
 }
 
-// The client names itself, and that name is the via the activity row will carry
-// once the column for it exists. A client that gives no name, which is what a
+// The client names itself, and that name is the via the activity row carries
+// once the schema has a column for it. A client that gives no name, which is what a
 // stateless session sees on the older protocol, is named by its token instead.
 func TestViaNamesTheClientOrElseTheToken(t *testing.T) {
 	h := newHarness(t)

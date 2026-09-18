@@ -153,9 +153,9 @@ func (s *Settings) IsSet(key string) bool {
 // and is empty for a person at a form. UserID is who the settings row is
 // attributed to.
 //
-// ponytail: Via has nowhere to go until migration 002 adds the column to
-// activity. Upgrade path: pass it to store.InsertActivity in SetAs below, which
-// is the one line this waits on.
+// ponytail: Via has nowhere to go until the activity table has a column for it.
+// Upgrade path: pass it to store.InsertActivity in SetAs below, which is the one
+// line this waits on.
 type Actor struct {
 	Kind   string
 	ID     string
