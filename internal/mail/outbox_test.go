@@ -21,6 +21,10 @@ import (
 type loopingFake struct {
 	port int
 
+	// onData runs while a message is being delivered, before the server accepts
+	// it, so a test can change the outbox under a batch that is already running.
+	onData func()
+
 	mu   sync.Mutex
 	data []string
 	to   []string
@@ -75,7 +79,11 @@ func (f *loopingFake) serve(conn net.Conn) {
 			}
 			f.mu.Lock()
 			f.data = append(f.data, string(b))
+			hook := f.onData
 			f.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
 			tp.PrintfLine("250 OK")
 		case cmd == "QUIT":
 			tp.PrintfLine("221 bye")
@@ -552,5 +560,62 @@ func TestARefOnlyReplacesItsOwn(t *testing.T) {
 	}
 	if st.Pending != 3 {
 		t.Errorf("pending = %d, want the two other rows and the new one", st.Pending)
+	}
+}
+
+func TestARowAbandonedDuringTheBatchIsNotDelivered(t *testing.T) {
+	f := startLoopingFake(t)
+	o, db, set := newTestOutbox(t)
+	configure(t, set, "127.0.0.1", f.port)
+	ctx := context.Background()
+
+	hour := time.Now().Add(time.Hour)
+	first := Reset{To: "ana@example.com", URL: "https://x/reset/first", Expires: time.Hour}.Message()
+	if err := Enqueue(ctx, db, first, hour, "reset:1"); err != nil {
+		t.Fatal(err)
+	}
+	second := Invite{To: "bo@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/second", Expires: 7 * 24 * time.Hour}.Message()
+	if err := Enqueue(ctx, db, second, hour, "invitation:9"); err != nil {
+		t.Fatal(err)
+	}
+	// The first row goes out first, so the hook fires while the batch is still
+	// holding the second one it read a moment ago.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE mail_outbox SET next_at = unixepoch() - 10 WHERE ref = 'reset:1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	var once sync.Once
+	f.onData = func() {
+		once.Do(func() {
+			if err := Abandon(ctx, db, "invitation:9", Revoked); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	to, data := f.delivered()
+	if len(to) != 1 || to[0] != "ana@example.com" {
+		t.Fatalf("delivered %v, want only the row that was not abandoned", to)
+	}
+	if strings.Contains(strings.Join(data, ""), "https://x/invite/second") {
+		t.Error("the abandoned row was delivered")
+	}
+
+	var lastError string
+	var sentAt *int64
+	if err := db.QueryRowContext(ctx,
+		`SELECT last_error, sent_at FROM mail_outbox WHERE ref = 'invitation:9'`).
+		Scan(&lastError, &sentAt); err != nil {
+		t.Fatal(err)
+	}
+	if lastError != Revoked {
+		t.Errorf("last_error = %q, want the note the abandon wrote", lastError)
+	}
+	if sentAt != nil {
+		t.Error("the abandoned row was marked sent")
 	}
 }

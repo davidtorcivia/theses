@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -189,7 +190,18 @@ func (o *Outbox) once(ctx context.Context) error {
 		return err
 	}
 	for _, q := range batch {
-		err := sender.Send(ctx, Message{To: []string{q.to}, Subject: q.subject, Text: q.text, HTML: q.htmlBody})
+		// The batch was read before the first send, and a resend, a revoke or an
+		// acceptance may have abandoned this row since. The SMTP conversation
+		// itself is the residual window: a row abandoned after this check still
+		// goes out.
+		still, err := o.stillSendable(ctx, q.id)
+		if err != nil {
+			return err
+		}
+		if !still {
+			continue
+		}
+		err = sender.Send(ctx, Message{To: []string{q.to}, Subject: q.subject, Text: q.text, HTML: q.htmlBody})
 		if err == nil {
 			if err := o.markSent(ctx, q.id); err != nil {
 				return err
@@ -212,6 +224,22 @@ func (o *Outbox) once(ctx context.Context) error {
 			"err", Redact(err.Error(), sender.Password))
 	}
 	return nil
+}
+
+// stillSendable re-reads a row claimed earlier in the batch.
+func (o *Outbox) stillSendable(ctx context.Context, id int64) (bool, error) {
+	now := time.Now()
+	var one int
+	err := o.db.QueryRowContext(ctx, `SELECT 1 FROM mail_outbox
+		WHERE id = ? AND sent_at IS NULL AND `+sendable,
+		id, now.Unix(), now.Add(-giveUpAfter).Unix()).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("mail: recheck %d: %w", id, err)
+	}
+	return true, nil
 }
 
 // markSent records the delivery. The write drops the cancellation, because the
