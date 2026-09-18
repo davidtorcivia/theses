@@ -156,17 +156,11 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 		return nil, err
 	}
 	if !ok {
-		// A proposition that exists but is not this person's, and one that does
-		// not exist, answer the same way to anyone who is not an owner.
-		var exists int
-		if err := s.db.QueryRowContext(ctx,
-			`SELECT count(*) FROM propositions WHERE id = ?`, state.Open).Scan(&exists); err != nil {
-			return nil, err
-		}
-		if exists == 0 {
-			return nil, core.ErrNotFound
-		}
-		return nil, core.ErrForbidden
+		// A proposition somebody is not a member of and one that does not
+		// exist answer the same way, because the rule is that they are not
+		// told it is there. An owner reads everything that exists, so for them
+		// this is only ever the second case.
+		return nil, core.ErrNotFound
 	}
 
 	b, err := board.Load(ctx, s.db, state.Open)

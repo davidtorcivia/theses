@@ -291,8 +291,14 @@ func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 	if state.Open != 0 || len(state.Propositions) != 0 {
 		t.Errorf("the rail showed %d propositions and opened %d", len(state.Propositions), state.Open)
 	}
-	if status, _ := h.payloadAs(editor, "/p/"+strconv.FormatInt(first.EntityID, 10)); status != http.StatusForbidden {
-		t.Errorf("reading a proposition they are not a member of gave %d", status)
+	// A proposition they are not a member of answers the same as one that is
+	// not there, because they are not told it is.
+	missing, _ := h.payloadAs(editor, "/p/9999")
+	if status, _ := h.payloadAs(editor, "/p/"+strconv.FormatInt(first.EntityID, 10)); status != missing {
+		t.Errorf("a proposition they are not a member of gave %d and a missing one gave %d", status, missing)
+	}
+	if missing != http.StatusNotFound {
+		t.Errorf("a missing proposition gave %d", missing)
 	}
 
 	var ada int64

@@ -47,7 +47,9 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !readable {
-		s.errorPage(w, r, http.StatusForbidden)
+		// Not a member is not told it is there, which is the same answer as
+		// not there at all.
+		s.errorPage(w, r, http.StatusNotFound)
 		return
 	}
 	p, err := board.GetProposition(ctx, s.db, id)
