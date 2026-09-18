@@ -164,14 +164,19 @@ export function host(url) {
 // one in it is still a row.
 const urlRoom = 48;
 
-// shortURL is that fallback: the host and the path, without the scheme, the
-// query or a tail nobody reads. The whole URL in a title is what made the links
-// pane wider than the phone it was on.
+// shortURL is that fallback: everything but the scheme, cut at the room a row
+// has. The whole URL in a title is what made the links pane wider than the
+// phone it was on. The query stays, because on the sites that hand out
+// identifiers that way it is the only thing telling two of them apart, and so
+// does a port that is not the scheme's own.
 export function shortURL(url) {
   let short = url;
   try {
     const parsed = new URL(url);
-    short = parsed.hostname.replace(/^www\./, '') + (parsed.pathname === '/' ? '' : parsed.pathname);
+    short = parsed.hostname.replace(/^www\./, '') +
+      (parsed.port ? ':' + parsed.port : '') +
+      (parsed.pathname === '/' ? '' : parsed.pathname) +
+      parsed.search;
   } catch {
     // Not a URL this browser can parse, so there is nothing to take off it.
   }

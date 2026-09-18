@@ -25,6 +25,9 @@ let asked = 0;
 let timer = 0;
 
 export function openPalette() {
+  // A reply to whatever was typed the last time it was open belongs to nobody.
+  clearTimeout(timer);
+  asked++;
   const palette = $('#palette');
   palette.hidden = false;
   const field = palette.querySelector('input');
@@ -60,12 +63,16 @@ function local() {
 }
 
 // The rail's own form is where a proposition is made, so the palette opens that
-// rather than owning a second way to make one. A page with no rail on it goes
-// to the board, which has one.
+// rather than owning a second way to make one. The rail is off the side of a
+// phone until it is asked for, and a form nobody can see is not an answer, so
+// it is opened first. A page with no rail on it goes to the board, which has
+// one.
 function newProposition() {
   closePalette();
   const button = $('#newprop');
-  if (button) button.click(); else location.href = '/';
+  if (!button) { location.href = '/'; return; }
+  document.body.classList.add('rail-open');
+  button.click();
 }
 
 // remote turns a hit into a row. Everything but a proposition and a person
@@ -82,7 +89,9 @@ function remote(hit) {
   // what it found and goes nowhere.
   else if (hit.kind === 'user') row.go = state.can.settings ? () => { location.href = '/settings'; } : null;
   else if (!here) row.go = () => { location.href = '/p/' + hit.proposition_id; };
-  else if (hit.kind === 'card') row.go = () => { closePalette(); openCard(hit.id); };
+  // A card made since this page was rendered is not in this tab's board, and
+  // the drawer clears what it cannot find, so the proposition is read again.
+  else if (hit.kind === 'card') row.go = () => { closePalette(); if (state.cards.has(hit.id)) openCard(hit.id); else location.href = '/p/' + hit.proposition_id; };
   // The links and the files are two requests away and this tab may not have
   // been on either pane. Opening the drawer before they are here is the drawer
   // finding nothing and putting itself away again, so it waits for them.
@@ -112,6 +121,9 @@ function openBlock(id, proposition) {
   state.document = doc.id;
   state.docSource = false;
   state.tab = 'board';
+  // The document is under the board, so the pane in the address bar goes with
+  // the pane on the screen.
+  location.hash = '';
   emit();
   requestAnimationFrame(() => $(`#doc .blk[data-b="${id}"]`)?.scrollIntoView({ block: 'center' }));
 }
@@ -119,6 +131,10 @@ function openBlock(id, proposition) {
 // list draws the rows: what this tab knows, filtered the way it always was,
 // then what the server found, in the order its groups come back in.
 function list(query, groups) {
+  // Where the selection was. The reply to a query redraws the list under
+  // somebody who may already be arrowing down it, and putting them back at the
+  // top would open the wrong thing on Enter.
+  const was = $$('#palette ul a').findIndex((a) => a.classList.contains('on'));
   const q = query.toLowerCase();
   // A proposition this tab already lists is not offered twice.
   const known = new Set(state.props.map((p) => p.id));
@@ -138,13 +154,17 @@ function list(query, groups) {
     const line = row.go
       ? el('a', { href: '#', onclick: (e) => { e.preventDefault(); row.go(); } })
       : el('span', {});
+    // The pointer moves the selection, so the row under the cursor and the row
+    // Enter opens are one row and not two.
+    if (row.go) line.addEventListener('mouseover', () => select(line));
     line.append(
       el('span', { class: 'k mono', text: row.kind }),
       el('span', {}, row.label,
         row.snippet ? el('span', { class: 'dim', text: ' · ' + row.snippet }) : null));
     results.append(el('li', { class: row.go ? null : 'flat' }, line));
   }
-  select($('#palette ul a'));
+  const lines = $$('#palette ul a');
+  select(lines[Math.min(Math.max(was, 0), lines.length - 1)]);
 }
 
 // select marks the row Enter opens.

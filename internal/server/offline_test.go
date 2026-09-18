@@ -331,31 +331,56 @@ func TestPaletteSearchIsMembershipAndSessionBound(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The member the proposition belongs to finds the card, which is the control
+	// for the reads below: what a stranger does not find has to be membership
+	// rather than the route being broken.
+	res, body := h.get("/app/search?q=tide")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the owner's search gave %d: %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "Read the tide tables") {
+		t.Fatalf("the owner did not find their own card: %s", body)
+	}
+
 	// An editor who is not on the proposition finds nothing of it.
 	other := h.as("bob", "Bob Barker", "editor")
-	req, err := http.NewRequest("GET", h.http.URL+"/app/search?q=tide", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := other.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("a member's search gave %d", res.StatusCode)
-	}
-	var out struct {
-		Groups []search.Group `json:"groups"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		t.Fatal(err)
-	}
-	for _, g := range out.Groups {
-		if g.Kind == "card" || g.Kind == "proposition" {
-			t.Errorf("a stranger searched a proposition they are not on: %s", body)
+	kinds := func(query string) []search.Group {
+		req, err := http.NewRequest("GET", h.http.URL+"/app/search?q="+url.QueryEscape(query), nil)
+		if err != nil {
+			t.Fatal(err)
 		}
+		res, err := other.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("a non-member's search gave %d: %s", res.StatusCode, body)
+		}
+		var out struct {
+			Groups []search.Group `json:"groups"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Groups
+	}
+	for _, g := range kinds("tide") {
+		if g.Kind == "card" || g.Kind == "proposition" {
+			t.Errorf("a non-member searched a proposition they are not on: %+v", g)
+		}
+	}
+	// The same non-member's own control: a person belongs to no proposition, so
+	// they are found by anyone who may search at all.
+	found := false
+	for _, g := range kinds("Bob") {
+		if g.Kind == "user" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a non-member's search found nobody, so the empty result above says nothing")
 	}
 
 	h.signOut()
