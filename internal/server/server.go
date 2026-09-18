@@ -22,6 +22,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
+	"github.com/davidtorcivia/theses/internal/integrations"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
 	"github.com/davidtorcivia/theses/internal/notify"
@@ -71,6 +72,12 @@ type Server struct {
 	blobs *buckets
 
 	notify *notify.Service
+
+	// The two integrations. Each is kept rather than made per request, so that
+	// an access token one of them refreshed outlives the request that fetched
+	// it; both are handed the settings again on every use.
+	drive      *integrations.Drive
+	transistor *integrations.Transistor
 }
 
 func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Logger, version string) (*Server, error) {
@@ -155,6 +162,12 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	// The notifier watches the bus every command publishes on and fills its own
 	// outbox; main runs its worker and stops it with the process.
 	s.notify = notify.New(db, set, log, cfg.BaseURL)
+
+	// Drive and Transistor share one outbound client, safehttp's, which is
+	// what checks every address they resolve to before it is dialled.
+	outbound := integrations.Client()
+	s.drive = &integrations.Drive{HTTP: outbound, Save: s.saveDriveToken}
+	s.transistor = &integrations.Transistor{HTTP: outbound}
 
 	s.handler = s.chain(s.routes())
 	return s, nil
@@ -292,6 +305,13 @@ func (s *Server) routes() http.Handler {
 	// workspace requires an authenticator of and has none.
 	mux.HandleFunc("GET /login/authenticator", s.getEnrol)
 	mux.HandleFunc("POST /login/authenticator", s.postEnrol)
+
+	mux.HandleFunc("POST /settings/integrations/drive/connect", s.requireOwner(s.postDriveConnect))
+	mux.HandleFunc("GET "+driveCallback, s.requireOwner(s.getDriveCallback))
+	mux.HandleFunc("POST /settings/integrations/drive/disconnect", s.requireOwner(s.postDriveDisconnect))
+	mux.HandleFunc("POST /settings/integrations/transistor/disconnect", s.requireOwner(s.postTransistorDisconnect))
+	mux.HandleFunc("POST /settings/test/drive", s.requireOwner(s.postTestDrive))
+	mux.HandleFunc("POST /settings/test/transistor", s.requireOwner(s.postTestTransistor))
 	return mux
 }
 

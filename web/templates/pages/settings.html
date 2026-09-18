@@ -239,9 +239,31 @@
     </form>
 
     <section class="fs" id="integrations">
-      <div class="fsh"><h3>Integrations</h3><p>Webhooks the workspace fires whoever caused them, signed with their own secret. This is how Slack and anything else is wired without an integration of its own.</p></div>
+      <div class="fsh"><h3>Integrations</h3><p>The services this workspace reaches. Each keeps its own keys, stored the way every other secret on this page is. Webhooks are below them: the workspace fires those whoever caused them, signed with their own secret, which is how Slack and anything else is wired without an integration of its own.</p></div>
       <div class="fsb">
+        {{if .IntegrationResult}}<p class="notice{{if .IntegrationFailed}} bad{{end}}">{{.IntegrationResult}}</p>{{end}}
         <ul class="ints">
+          <li>
+            <b>Google Drive</b>
+            <span class="mono {{if .Ints.DriveConnected}}ok{{else}}dim{{end}}">{{if .Ints.DriveConnected}}connected{{else}}not connected{{end}}</span>
+            <span>{{.Ints.DriveState}}</span>
+            <span class="chanacts">
+              <button class="lnk" type="button" data-dialog="int-drive">Configure</button>
+              <button class="lnk" type="submit" form="drive-connect">{{if .Ints.DriveConnected}}Reconnect{{else}}Connect{{end}}</button>
+              {{if .Ints.DriveConnected}}<button class="lnk" type="submit" form="drive-test">Test</button>
+              <button class="lnk del" type="submit" form="drive-off">Disconnect</button>{{end}}
+            </span>
+          </li>
+          <li>
+            <b>Transistor</b>
+            <span class="mono {{if .Ints.TransistorConnected}}ok{{else}}dim{{end}}">{{if .Ints.TransistorConnected}}connected{{else}}not connected{{end}}</span>
+            <span>{{.Ints.TransistorState}}</span>
+            <span class="chanacts">
+              <button class="lnk" type="button" data-dialog="int-transistor">Configure</button>
+              {{if index .Set "integrations.transistor.api_key"}}<button class="lnk" type="submit" form="transistor-test">Test</button>
+              <button class="lnk del" type="submit" form="transistor-off">Disconnect</button>{{end}}
+            </span>
+          </li>
           {{range .Hooks}}{{if .ID}}<li>
             <b>Webhook</b>
             <span class="mono {{if .Verified}}ok{{else}}dim{{end}}">{{if .Verified}}verified{{else}}not verified{{end}}</span>
@@ -251,8 +273,46 @@
           <li><b>Webhook</b><span class="mono dim">not set</span><span>POST JSON on the events you choose</span><span class="chanacts"><button class="lnk" type="button" data-dialog="hook-new">Add</button></span></li>
         </ul>
         {{range .Hooks}}{{if .ID}}<form method="post" action="/settings/integrations/webhook/{{.ID}}/test" id="hook-test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}{{end}}
+        <form method="post" action="/settings/integrations/drive/connect" id="drive-connect" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
+        <form method="post" action="/settings/test/drive" id="drive-test" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
+        <form method="post" action="/settings/integrations/drive/disconnect" id="drive-off" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
+        <form method="post" action="/settings/test/transistor" id="transistor-test" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
+        <form method="post" action="/settings/integrations/transistor/disconnect" id="transistor-off" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
       </div>
     </section>
+
+    <dialog id="int-drive">
+      <h3>Google Drive</h3>
+      <p>Make an OAuth client of type Web application in a Google Cloud project with the Drive API turned on, and list this address as an authorised redirect URI: <span class="mono">{{.Ints.Redirect}}</span>. Then paste the client id and secret here, save, and press Connect. The access is read only.</p>
+      <form class="form" method="post" action="/settings">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <div class="row3">
+          <label class="f"><span class="l">Client id</span><input type="password" name="integrations.drive.client_id" autocomplete="off" placeholder="{{if index .Set "integrations.drive.client_id"}}set, leave empty to keep{{end}}"></label>
+          <label class="f"><span class="l">Client secret</span><input type="password" name="integrations.drive.client_secret" autocomplete="off" placeholder="{{if index .Set "integrations.drive.client_secret"}}set, leave empty to keep{{end}}"></label>
+        </div>
+        <div class="acts">
+          <button class="lnk plain" type="button" data-close>Cancel</button>
+          <button class="lnk" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="int-transistor">
+      <h3>Transistor</h3>
+      <p>Paste an API key from the Transistor account. Test it with the show field empty and this page prints the shows the key reaches, with their ids; put the right one in and test again.</p>
+      <form class="form" method="post" action="/settings">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <div class="row3">
+          <label class="f"><span class="l">API key</span><input type="password" name="integrations.transistor.api_key" autocomplete="off" placeholder="{{if index .Set "integrations.transistor.api_key"}}set, leave empty to keep{{end}}"></label>
+          <label class="f"><span class="l">Show</span><input name="integrations.transistor.show_id" value="{{index .S "integrations.transistor.show_id"}}" spellcheck="false"><small>The show's id.</small></label>
+          <label class="f"><span class="l">Publish at status</span><input name="integrations.transistor.publish_status" value="{{index .S "integrations.transistor.publish_status"}}" spellcheck="false"><small>A proposition can be published once it reaches this status.</small></label>
+        </div>
+        <div class="acts">
+          <button class="lnk plain" type="button" data-close>Cancel</button>
+          <button class="lnk" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
 
     {{range .Hooks}}<dialog id="{{if .ID}}hook-{{.ID}}{{else}}hook-new{{end}}">
       <h3>{{if .ID}}Webhook{{else}}Add a webhook{{end}}</h3>

@@ -100,6 +100,17 @@ var Registry = []Def{
 	// date in the form 20260918. Settings rather than a table because there is
 	// one of it, which is what backups.last_at already does.
 	{Key: "notify.last_tick", Kind: KindInt, Default: 0, Label: "Last daily pass"},
+
+	// Integrations. Everything an outside service authenticates with is a
+	// secret, including the Drive token, which is one JSON object holding the
+	// access token, the refresh token and the moment the first runs out.
+	{Key: "integrations.drive.client_id", Kind: KindString, Default: "", Secret: true, Label: "Client id", Hint: "From an OAuth client of type Web application in a Google Cloud project with the Drive API enabled."},
+	{Key: "integrations.drive.client_secret", Kind: KindString, Default: "", Secret: true, Label: "Client secret"},
+	{Key: "integrations.drive.token", Kind: KindString, Default: "", Secret: true, Label: "Drive token"},
+
+	{Key: "integrations.transistor.api_key", Kind: KindString, Default: "", Secret: true, Label: "API key"},
+	{Key: "integrations.transistor.show_id", Kind: KindString, Default: "", Label: "Show", Hint: "The show's id. Test with the field empty to be told what the key reaches."},
+	{Key: "integrations.transistor.publish_status", Kind: KindString, Default: "released", Label: "Publish at status", Hint: "A proposition can be published once it has reached this status."},
 }
 
 var byKey = func() map[string]Def {
