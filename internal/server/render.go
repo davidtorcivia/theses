@@ -40,6 +40,9 @@ type assets struct {
 	prefix  string
 	handler http.Handler
 	dev     bool
+	// fsys is kept so the service worker can be served with the list of every
+	// asset there is to precache, built from the same tree the hash is over.
+	fsys fs.FS
 }
 
 func newAssets(fsys fs.FS, dev bool) (*assets, error) {
@@ -53,7 +56,7 @@ func newAssets(fsys fs.FS, dev bool) (*assets, error) {
 		}
 		hash = h
 	}
-	a := &assets{prefix: "/static/" + hash + "/", dev: dev}
+	a := &assets{prefix: "/static/" + hash + "/", dev: dev, fsys: fsys}
 	a.handler = http.StripPrefix(a.prefix, http.FileServerFS(fsys))
 	return a, nil
 }
