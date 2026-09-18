@@ -183,6 +183,11 @@ func (b *Backup) RestoreNow(ctx context.Context, key string, actorID int64) erro
 		msg := "Restored " + path.Base(key) + "."
 		if err := b.Restore(run, key, actorID); err != nil {
 			msg = "The restore failed and nothing was changed: " + err.Error()
+			if errors.Is(err, ErrPartial) {
+				msg = "Partly restored " + path.Base(key) + ": " + err.Error() +
+					". The database is the one from the backup; the markdown mirror on disk may not be. " +
+					"What was replaced is beside it under a timestamp."
+			}
 			b.log.Error("restore", "key", key, "err", err)
 		}
 		b.restored.Store(&msg)

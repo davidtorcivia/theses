@@ -99,20 +99,37 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	if err := b.db.Swap(ctx, dbPath, aside); err != nil {
 		return err
 	}
+	// The database is the backup's from here. Anything that fails after this is
+	// a restore that half happened, and saying "nothing was changed" about it
+	// would send whoever reads it looking in the wrong place.
+	if err := b.afterSwap(ctx, docsPath, stamp, key, m, actorID); err != nil {
+		return fmt.Errorf("%w: %w", ErrPartial, err)
+	}
+	b.log.Warn("restored from a backup", "key", key, "aside", aside)
+	return nil
+}
+
+// ErrPartial marks a failure after the database had already been replaced: the
+// restore happened and the rest of it did not.
+var ErrPartial = errors.New("the database was restored and the rest of the restore was not")
+
+// afterSwap is everything that follows the database changing places: the
+// settings in memory, the markdown mirror and the record of what was done.
+func (b *Backup) afterSwap(ctx context.Context, docsPath, stamp, key string, m Manifest, actorID int64) error {
 	// The values in memory were read from the file that has just been moved
 	// aside.
 	if err := b.set.Reload(ctx); err != nil {
-		return err
+		return fmt.Errorf("the settings could not be read from it: %w", err)
 	}
 	docs := filepath.Join(b.cfg.DataDir, docsEntry)
 	if _, err := os.Stat(docs); err == nil {
 		if err := os.Rename(docs, docs+"."+stamp+".aside"); err != nil {
-			return fmt.Errorf("the database was restored but the markdown mirror was not: %w", err)
+			return fmt.Errorf("the markdown mirror could not be moved aside: %w", err)
 		}
 	}
 	if _, err := os.Stat(docsPath); err == nil {
 		if err := os.Rename(docsPath, docs); err != nil {
-			return fmt.Errorf("the database was restored but the markdown mirror was not: %w", err)
+			return fmt.Errorf("the markdown mirror from the archive could not be put in place: %w", err)
 		}
 	}
 
@@ -124,9 +141,8 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	// read from now on, so the restore is in the history it created.
 	if err := store.InsertActivity(ctx, b.db, "user", strconv.FormatInt(actorID, 10),
 		"backup", key, "restore", "", string(after)); err != nil {
-		return err
+		return fmt.Errorf("the restore could not be recorded in activity: %w", err)
 	}
-	b.log.Warn("restored from a backup", "key", key, "aside", aside)
 	return nil
 }
 

@@ -502,3 +502,60 @@ func TestTheObjectStoreCheckIsCached(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestAFailureAfterTheSwapIsReportedAsAPartialRestore(t *testing.T) {
+	ctx := context.Background()
+	f := newFake(t)
+	f.save("workspace.name", "before")
+	f.writeDoc("notes.md", "before")
+	m, err := f.b.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.save("workspace.name", "after")
+	f.writeDoc("notes.md", "after")
+
+	// The mirror is moved aside under a stamp taken from the clock, so
+	// something already sitting there stops the move, which is the first thing
+	// that can fail once the database has already been replaced.
+	when := time.Date(2026, 9, 17, 3, 30, 0, 0, time.UTC)
+	f.b.now = func() time.Time { return when }
+	blocked := filepath.Join(f.dir, docsEntry+"."+when.Format("20060102T150405Z")+".aside")
+	if err := os.MkdirAll(blocked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blocked, "in the way"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.b.RestoreNow(ctx, m.Name, 0); err != nil {
+		t.Fatal(err)
+	}
+	msg := ""
+	for range 100 {
+		time.Sleep(20 * time.Millisecond)
+		if msg = f.b.LastRestore(); msg != "" {
+			break
+		}
+	}
+	if !strings.HasPrefix(msg, "Partly restored") {
+		t.Fatalf("a failure after the swap was reported as %q", msg)
+	}
+	if !strings.Contains(msg, "markdown mirror") {
+		t.Errorf("the message does not say what did not happen: %q", msg)
+	}
+	if strings.Contains(msg, "nothing was changed") {
+		t.Errorf("the message claims nothing was changed: %q", msg)
+	}
+
+	// The half that did happen stayed happened.
+	if got := f.workspaceName(); got != `"before"` {
+		t.Errorf("the database is not the restored one: %s", got)
+	}
+	if got := settings.Get[string](f.set, "workspace.name"); got != "before" {
+		t.Errorf("the settings in memory were not reloaded: %q", got)
+	}
+	if got := f.readDoc("notes.md"); got != "after" {
+		t.Errorf("the mirror was moved after all: %q", got)
+	}
+}
