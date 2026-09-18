@@ -3,7 +3,7 @@
 // the two text fields carry the version they started from.
 
 import { $, el, clear, add, initials, inline, say, editable } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit } from './state.js';
+import { state, user, byHandle, emit, hold, canEdit, material } from './state.js';
 import { send, where, Conflict } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { renderLinkDrawer, attachedLinks, host } from './links.js';
@@ -30,19 +30,22 @@ export function openCard(id) {
 // linked is the links and files hanging off this card, with a picker to add
 // one. It is the same join the links and files drawers show from their side.
 function linked(card) {
+  // The card drawer opens on the board, where neither pane has been shown, so
+  // the links and files are read here too. material only ever reads them once.
+  material().catch(() => {});
   const list = el('ul', { class: 'linked' });
   for (const link of attachedLinks(card.id)) {
     list.append(el('li', {},
       el('a', { href: link.url, target: '_blank', rel: 'noopener noreferrer',
         text: link.title || host(link.url) }),
-      el('span', { class: 'mono dim', text: ' ' + (link.kind || 'link') }),
+      el('span', { class: 'mono dim', text: ' ' + (link.kind || 'link') + ' · ' }),
       canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
         onclick: () => detach('links', card.id, link.id) }) : null));
   }
   for (const file of attachedFiles(card.id)) {
     list.append(el('li', {},
       el('span', { text: file.name }),
-      el('span', { class: 'mono dim', text: ' ' + bytes(file.size) }),
+      el('span', { class: 'mono dim', text: ' ' + bytes(file.size) + ' · ' }),
       canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
         onclick: () => detach('files', card.id, file.id) }) : null));
   }
@@ -73,7 +76,9 @@ function attachDialog(card) {
     ...attachedLinks(card.id).map((l) => 'links/' + l.id),
     ...attachedFiles(card.id).map((f) => 'files/' + f.id),
   ]);
-  const list = el('ul', { class: 'linked' });
+  // The dialog is outside the drawer, so it takes the plain list class rather
+  // than the drawer's own, which is where the bullets are turned off.
+  const list = el('ul', { class: 'list' });
   const offer = [
     ...state.links.map((l) => ({ what: 'links', id: l.id, label: l.title || host(l.url), kind: l.kind || 'link' })),
     ...state.files.filter((f) => f.state === 'ready')
@@ -93,13 +98,16 @@ function attachDialog(card) {
     list.append(el('li', {}, el('button', {
       class: 'lnk', type: 'button',
       onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        // The button is taken before the first await: currentTarget is null
+        // once the event has finished being dispatched.
+        const button = e.currentTarget;
+        button.disabled = true;
         try {
           await api.post('/cards/' + card.id + '/' + row.what + '/' + row.id);
-          e.currentTarget.closest('li').remove();
+          button.closest('li').remove();
         } catch (err) {
           say(err.message);
-          e.currentTarget.disabled = false;
+          button.disabled = false;
         }
       },
     }, el('span', { class: 'k mono', text: row.kind }), ' ' + row.label)));

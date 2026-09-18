@@ -325,6 +325,7 @@ function usedIn(link) {
         href: '#board', text: card.title,
         onclick: (e) => { e.preventDefault(); location.hash = 'board'; },
       }),
+      canEdit() ? el('span', { class: 'dim', text: ' · ' }) : null,
       canEdit() ? el('button', {
         class: 'lnk del', type: 'button', text: 'Detach',
         onclick: () => detach(join.card_id, link.id),

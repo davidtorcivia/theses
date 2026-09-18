@@ -406,6 +406,7 @@ function usedIn(file) {
         href: '#board', text: card.title,
         onclick: (e) => { e.preventDefault(); location.hash = 'board'; },
       }),
+      canEdit() ? el('span', { class: 'dim', text: ' · ' }) : null,
       canEdit() ? el('button', {
         class: 'lnk del', type: 'button', text: 'Detach',
         onclick: () => api.del('/cards/' + join.card_id + '/files/' + file.id).catch((err) => say(err.message)),
