@@ -295,11 +295,13 @@ func (s *Server) routes() http.Handler {
 
 	// Offline. The worker is served from the root so its scope is the whole
 	// site; the shell is what it answers an app navigation with when the
-	// network is gone; the activity panel reads through the session, and its
-	// pattern is more specific than /app/ so it wins the match.
+	// network is gone; the activity panel and the palette read through the
+	// session, and their patterns are more specific than /app/ so they win the
+	// match.
 	mux.HandleFunc("GET /sw.js", s.serviceWorker)
 	mux.HandleFunc("GET /shell", s.offlineShell)
 	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
+	mux.HandleFunc("GET /app/search", s.requireUser(s.getSearch))
 
 	// Integrations. Enrollment on the way in, for an account the
 	// workspace requires an authenticator of and has none.

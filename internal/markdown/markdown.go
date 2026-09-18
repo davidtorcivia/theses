@@ -177,6 +177,69 @@ type nodeRenderer struct{}
 func (r nodeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(kindMention, r.renderMention)
 	reg.Register(kindNote, r.renderNote)
+	reg.Register(ast.KindLink, r.renderLink)
+	reg.Register(ast.KindAutoLink, r.renderAutoLink)
+}
+
+// A written link, [text](target), is written out only when its target is http
+// or https, and then with rel="noopener" on it. Every other scheme is put back
+// as the text it was typed as, because this is a workspace where anyone may
+// write a paragraph and a mailto: or a javascript: target behind a friendly
+// label is never something the page should offer to follow. The browser's own
+// renderer does exactly this, so an export and the live view agree.
+func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	link := n.(*ast.Link)
+	if !httpURL.Match(link.Destination) {
+		if entering {
+			_ = w.WriteByte('[')
+		} else {
+			_, _ = w.WriteString("](")
+			_, _ = w.Write(util.EscapeHTML(link.Destination))
+			_ = w.WriteByte(')')
+		}
+		return ast.WalkContinue, nil
+	}
+	if entering {
+		_, _ = w.WriteString(`<a href="`)
+		_, _ = w.Write(util.EscapeHTML(util.URLEscape(link.Destination, true)))
+		_, _ = w.WriteString(`" rel="noopener">`)
+	} else {
+		_, _ = w.WriteString("</a>")
+	}
+	return ast.WalkContinue, nil
+}
+
+// httpURL is the only kind of target a written link in this app may point at.
+var httpURL = regexp.MustCompile(`^(?i:https?)://`)
+
+// An autolink is a URL Linkify found in the running text, an address, or one
+// somebody wrote in angle brackets. The last of those carries whatever scheme
+// was typed, so the rule is the written link's rule: a target is followed only
+// when it is http, https or an email address, and anything else is written as
+// the words it was, with no href for the page to offer. rel="noopener" goes on
+// the ones that are followed for the same reason it goes on a written link. The
+// browser's renderer leaves every autolink as text, which is the one difference
+// between the two that is on purpose.
+func (nodeRenderer) renderAutoLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	link := n.(*ast.AutoLink)
+	url := link.URL(source)
+	email := link.AutoLinkType == ast.AutoLinkEmail
+	if !email && !httpURL.Match(url) {
+		_, _ = w.Write(util.EscapeHTML(link.Label(source)))
+		return ast.WalkContinue, nil
+	}
+	_, _ = w.WriteString(`<a href="`)
+	if email && !bytes.HasPrefix(bytes.ToLower(url), []byte("mailto:")) {
+		_, _ = w.WriteString("mailto:")
+	}
+	_, _ = w.Write(util.EscapeHTML(util.URLEscape(url, false)))
+	_, _ = w.WriteString(`" rel="noopener">`)
+	_, _ = w.Write(util.EscapeHTML(link.Label(source)))
+	_, _ = w.WriteString(`</a>`)
+	return ast.WalkContinue, nil
 }
 
 func (nodeRenderer) renderMention(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {

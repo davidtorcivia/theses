@@ -46,7 +46,7 @@ export function renderLinks(pane) {
 function addLine() {
   const field = el('input', {
     id: 'ladd', class: 'addline', spellcheck: 'false',
-    placeholder: 'Paste a URL and press Enter. Title, author and date are fetched.',
+    placeholder: 'Paste a URL and press Enter.',
   });
   field.addEventListener('keydown', async (e) => {
     if (e.key !== 'Enter') return;
@@ -129,7 +129,7 @@ function row(link) {
     el('div', { class: 'main' },
       el('a', {
         class: 't', href: link.url, target: '_blank', rel: 'noopener noreferrer',
-        text: link.title || link.url,
+        text: link.title || shortURL(link.url),
       }),
       el('span', { class: 'src', text: source(link) }),
       link.note_md ? el('p', { class: 'note', text: link.note_md }) : null),
@@ -157,6 +157,30 @@ export function host(url) {
   } catch {
     return url;
   }
+}
+
+// How much of a bare URL a row shows when the page it points at gave no title.
+// Long enough to tell two links on one site apart, short enough that a row with
+// one in it is still a row.
+const urlRoom = 48;
+
+// shortURL is that fallback: everything but the scheme, cut at the room a row
+// has. The whole URL in a title is what made the links pane wider than the
+// phone it was on. The query stays, because on the sites that hand out
+// identifiers that way it is the only thing telling two of them apart, and so
+// does a port that is not the scheme's own.
+export function shortURL(url) {
+  let short = url;
+  try {
+    const parsed = new URL(url);
+    short = parsed.hostname.replace(/^www\./, '') +
+      (parsed.port ? ':' + parsed.port : '') +
+      (parsed.pathname === '/' ? '' : parsed.pathname) +
+      parsed.search;
+  } catch {
+    // Not a URL this browser can parse, so there is nothing to take off it.
+  }
+  return short.length > urlRoom ? short.slice(0, urlRoom - 1) + '…' : short;
 }
 
 // when is the date a thing was added, in the short form the mockup shows.
@@ -201,7 +225,7 @@ export function renderLinkDrawer(drawer) {
       (link.added_by ? ' by ' + user(link.added_by).name : '') }),
     el('button', { class: 'x', type: 'button', text: 'Close', onclick: close })));
 
-  const heading = el('h2', { text: link.title || link.url, spellcheck: 'false' });
+  const heading = el('h2', { text: link.title || shortURL(link.url), spellcheck: 'false' });
   if (canEdit()) {
     heading.addEventListener('click', () => {
       if (heading.isContentEditable) return;

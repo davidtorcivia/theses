@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -36,7 +37,7 @@ func TestRenderBlock(t *testing.T) {
 		{
 			name: "autolinks",
 			in:   "See https://example.com/x and www.example.com",
-			want: "<p>See <a href=\"https://example.com/x\">https://example.com/x</a> and <a href=\"http://www.example.com\">www.example.com</a></p>\n",
+			want: "<p>See <a href=\"https://example.com/x\" rel=\"noopener\">https://example.com/x</a> and <a href=\"http://www.example.com\" rel=\"noopener\">www.example.com</a></p>\n",
 		},
 		{
 			name: "mention",
@@ -51,7 +52,7 @@ func TestRenderBlock(t *testing.T) {
 		{
 			name: "address is not a mention",
 			in:   "Write to ada@example.com.",
-			want: "<p>Write to <a href=\"mailto:ada@example.com\">ada@example.com</a>.</p>\n",
+			want: "<p>Write to <a href=\"mailto:ada@example.com\" rel=\"noopener\">ada@example.com</a>.</p>\n",
 		},
 		{
 			name: "note addressed to someone",
@@ -66,7 +67,42 @@ func TestRenderBlock(t *testing.T) {
 		{
 			name: "a link that reads like a note stays a link",
 			in:   "[AL: the paper](https://example.com)",
-			want: "<p><a href=\"https://example.com\">AL: the paper</a></p>\n",
+			want: "<p><a href=\"https://example.com\" rel=\"noopener\">AL: the paper</a></p>\n",
+		},
+		{
+			name: "a link carries rel",
+			in:   "The [tide station](http://example.com/rance) record.",
+			want: "<p>The <a href=\"http://example.com/rance\" rel=\"noopener\">tide station</a> record.</p>\n",
+		},
+		{
+			name: "an ftp autolink is text with no href",
+			in:   "See <ftp://example.com/x> for the tape.",
+			want: "<p>See ftp://example.com/x for the tape.</p>\n",
+		},
+		{
+			name: "a target with balanced parentheses",
+			in:   "[tide](https://en.wikipedia.org/wiki/Tide_(disambiguation))",
+			want: "<p><a href=\"https://en.wikipedia.org/wiki/Tide_(disambiguation)\" rel=\"noopener\">tide</a></p>\n",
+		},
+		{
+			name: "a label is inline markdown",
+			in:   "[the **long** record](https://example.com)",
+			want: "<p><a href=\"https://example.com\" rel=\"noopener\">the <strong>long</strong> record</a></p>\n",
+		},
+		{
+			name: "a mailto link is text",
+			in:   "Write to [Ada](mailto:ada@example.com).",
+			want: "<p>Write to [Ada](mailto:ada@example.com).</p>\n",
+		},
+		{
+			name: "an ftp link is text",
+			in:   "[the archive](ftp://example.com/x)",
+			want: "<p>[the archive](ftp://example.com/x)</p>\n",
+		},
+		{
+			name: "a relative link is text",
+			in:   "[the other page](/p/1)",
+			want: "<p>[the other page](/p/1)</p>\n",
 		},
 		{
 			name: "heading and list",
@@ -107,7 +143,27 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 		{
 			name: "javascript link",
 			in:   "[click](javascript:alert(1))",
-			want: "<p><a href=\"\">click</a></p>\n",
+			want: "<p>[click](javascript:alert(1))</p>\n",
+		},
+		{
+			name: "javascript autolink",
+			in:   "<javascript:alert(1)>",
+			want: "<p>javascript:alert(1)</p>\n",
+		},
+		{
+			name: "data autolink",
+			in:   "<data:text/html;base64,PHNjcmlwdD4=>",
+			want: "<p>data:text/html;base64,PHNjcmlwdD4=</p>\n",
+		},
+		{
+			name: "vbscript autolink",
+			in:   "<vbscript:msgbox(1)>",
+			want: "<p>vbscript:msgbox(1)</p>\n",
+		},
+		{
+			name: "file autolink",
+			in:   "<file:///etc/passwd>",
+			want: "<p>file:///etc/passwd</p>\n",
 		},
 		{
 			name: "data image",
@@ -136,12 +192,32 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("RenderBlock(%q) =\n%q\nwant\n%q", tt.in, got, tt.want)
 			}
-			if strings.Contains(got, "<script") || strings.Contains(got, "onerror") || strings.Contains(got, "javascript:") {
+			// A scheme this renderer refuses is written back as the text it was
+			// typed as, so the check is on what the page would follow rather
+			// than on the word appearing at all.
+			if strings.Contains(got, "<script") || strings.Contains(got, "onerror") {
 				t.Errorf("RenderBlock(%q) let markup through: %q", tt.in, got)
+			}
+			// Every href this renderer writes, from a written link or an
+			// autolink, is one of the three a reader may be handed. Naming the
+			// schemes to refuse would only ever list the ones somebody thought
+			// of; this lists the ones that are allowed.
+			for _, m := range hrefs.FindAllStringSubmatch(got, -1) {
+				if !allowedHref.MatchString(m[1]) {
+					t.Errorf("RenderBlock(%q) wrote a followable %q: %q", tt.in, m[1], got)
+				}
 			}
 		})
 	}
 }
+
+// hrefs is every href in a rendered block, and allowedHref is the whole of what
+// one may be: a web address, an email address, or the anchor a footnote and its
+// back reference point at inside the same page.
+var (
+	hrefs       = regexp.MustCompile(`href="([^"]*)"`)
+	allowedHref = regexp.MustCompile(`^(?:(?i:https?)://|(?i:mailto):|#)`)
+)
 
 func TestRenderDocument(t *testing.T) {
 	got := string(RenderDocument([]string{"First block.", "Second block.[^a]", "[^a]: The source."}))

@@ -2,13 +2,16 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 )
 
@@ -251,5 +254,138 @@ func TestActivityPanelIsMembershipAndSessionBound(t *testing.T) {
 	res2, _ := h.get("/app/activity?proposition=" + id)
 	if res2.StatusCode != http.StatusSeeOther {
 		t.Errorf("the panel answered a signed out browser: %d", res2.StatusCode)
+	}
+}
+
+func TestPaletteSearchReadsGroupedHits(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	id := h.proposition("Tidal Power")
+	actor := h.owner()
+	column, err := h.srv.board.CreateColumn(h.T.Context(), actor, id, "Reading")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.srv.board.CreateCard(h.T.Context(), actor, column.EntityID, "Read the tide tables", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name, query, kind, title string
+	}{
+		{name: "a card by a word in its title", query: "tide", kind: "card", title: "Read the tide tables"},
+		{name: "a card by the prefix of a word", query: "tid", kind: "card", title: "Read the tide tables"},
+		{name: "a proposition by its title", query: "Tidal", kind: "proposition", title: "Tidal Power"},
+		{name: "a person by their name", query: "Ada", kind: "user", title: "Ada Lovelace"},
+		{name: "nothing matching", query: "kelp"},
+		{name: "punctuation alone", query: "**"},
+		{name: "an empty query", query: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, body := h.get("/app/search?q=" + url.QueryEscape(tt.query))
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("/app/search gave %d: %s", res.StatusCode, body)
+			}
+			var out struct {
+				Query  string         `json:"query"`
+				Groups []search.Group `json:"groups"`
+			}
+			if err := json.Unmarshal([]byte(body), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.Query != tt.query {
+				t.Errorf("the answer carries query %q", out.Query)
+			}
+			if tt.kind == "" {
+				if len(out.Groups) != 0 {
+					t.Fatalf("%q found %d groups", tt.query, len(out.Groups))
+				}
+				return
+			}
+			for _, g := range out.Groups {
+				if g.Kind != tt.kind {
+					continue
+				}
+				for _, hit := range g.Hits {
+					if hit.Title == tt.title {
+						return
+					}
+				}
+			}
+			t.Errorf("%q did not find the %s %q: %s", tt.query, tt.kind, tt.title, body)
+		})
+	}
+}
+
+func TestPaletteSearchIsMembershipAndSessionBound(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	id := h.proposition("Tidal Power")
+	actor := h.owner()
+	column, err := h.srv.board.CreateColumn(h.T.Context(), actor, id, "Reading")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.srv.board.CreateCard(h.T.Context(), actor, column.EntityID, "Read the tide tables", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// The member the proposition belongs to finds the card, which is the control
+	// for the reads below: what a stranger does not find has to be membership
+	// rather than the route being broken.
+	res, body := h.get("/app/search?q=tide")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the owner's search gave %d: %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "Read the tide tables") {
+		t.Fatalf("the owner did not find their own card: %s", body)
+	}
+
+	// An editor who is not on the proposition finds nothing of it.
+	other := h.as("bob", "Bob Barker", "editor")
+	kinds := func(query string) []search.Group {
+		req, err := http.NewRequest("GET", h.http.URL+"/app/search?q="+url.QueryEscape(query), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := other.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("a non-member's search gave %d: %s", res.StatusCode, body)
+		}
+		var out struct {
+			Groups []search.Group `json:"groups"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Groups
+	}
+	for _, g := range kinds("tide") {
+		if g.Kind == "card" || g.Kind == "proposition" {
+			t.Errorf("a non-member searched a proposition they are not on: %+v", g)
+		}
+	}
+	// The same non-member's own control: a person belongs to no proposition, so
+	// they are found by anyone who may search at all.
+	found := false
+	for _, g := range kinds("Bob") {
+		if g.Kind == "user" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a non-member's search found nobody, so the empty result above says nothing")
+	}
+
+	h.signOut()
+	res2, _ := h.get("/app/search?q=tide")
+	if res2.StatusCode != http.StatusSeeOther {
+		t.Errorf("the palette answered a signed out browser: %d", res2.StatusCode)
 	}
 }

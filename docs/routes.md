@@ -61,6 +61,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `GET /sw.js` | The service worker, from the root so its scope is the whole site. The URL never moves; the bytes carry the asset hash, so a deploy installs a new worker and the old cache goes with it. |
 | `GET /shell` | The app with an empty payload, no account, no CSRF token and not even the workspace name. Anyone may fetch it. The worker keeps a copy and hands it to an offline navigation to `/` or `/p/{id}`; the page draws itself, the top bar included, from the snapshot in IndexedDB. |
 | `GET /app/activity?proposition={id}` | The activity panel's read: the newest rows of one proposition, newest first, each saying whether it has been undone and whether an undo would be refused out of hand. Session and membership, like the rest of `/app`. |
+| `GET /app/search?q=&limit=` | The palette's read, as you type: the same grouped hits as `GET /api/v1/search`, over the propositions this person may read. `limit` is per kind. Session and membership, like the rest of `/app`. |
 | `GET /healthz` | Always 200. |
 | `GET /readyz` | Runs the readiness checks: the database, the object store, and the age of the newest backup. |
 | `GET /static/{hash}/...` | Content-hashed assets, cached for a year. |
