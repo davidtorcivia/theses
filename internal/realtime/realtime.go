@@ -44,8 +44,7 @@ type Hub struct {
 	board *board.Service
 	auth  *auth.Auth
 	log   *slog.Logger
-	// Docs is the document service, set by the server after New because the
-	// document commands arrived a wave after the board's.
+	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
 
 	mu    sync.Mutex

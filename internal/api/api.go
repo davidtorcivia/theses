@@ -24,8 +24,7 @@ type API struct {
 	auth *auth.Auth
 	set  *settings.Settings
 	log  *slog.Logger
-	// Docs is the document service, set by the server after New because the
-	// documents arrived a wave after this package did.
+	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
 }
 
