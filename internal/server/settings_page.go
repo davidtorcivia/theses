@@ -142,6 +142,16 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 			Created: on(t.CreatedAt), Used: used})
 	}
 
+	outbox, err := s.mail.State(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The reason mail cannot go out yet, shown on the section that fixes it.
+	mailProblem := ""
+	if _, err := s.mail.Sender(ctx); err != nil {
+		mailProblem = err.Error()
+	}
+
 	data := map[string]any{
 		"S":           shown,
 		"Set":         isSet,
@@ -154,6 +164,8 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 		"Tokens":      tokens,
 		"InviteRoles": roleLabels[1:], // everything but owner
 		"Env":         s.envRows(),
+		"Outbox":      outbox,
+		"MailProblem": mailProblem,
 	}
 	return s.page(r, "Settings", merge(data, extra)), nil
 }
@@ -221,9 +233,43 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// postTestMail sends to the owner who asked, there and then rather than through
+// the outbox, because the point is to see the SMTP server answer.
 func (s *Server) postTestMail(w http.ResponseWriter, r *http.Request) {
+	me := userOf(r)
+	refuse := func(msg string) {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"MailResult": msg, "MailFailed": true,
+		})
+	}
+	if me.Email == "" {
+		refuse("Your account has no email address, so there is nowhere to send it. Add one on your profile first.")
+		return
+	}
+	sender, err := s.mail.Sender(r.Context())
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	if err := sender.Send(r.Context(), mail.Message{
+		To:      []string{me.Email},
+		Subject: "THESES test message",
+		Text: "This is the test message from the Mail section of the THESES settings page." +
+			"\n\nIf it arrived, invitations, password resets and notifications will too.",
+	}); err != nil {
+		refuse(mail.Redact(err.Error(), sender.Password))
+		return
+	}
+	s.renderSettings(w, r, http.StatusOK, map[string]any{"MailResult": "Sent to " + me.Email + "."})
+}
+
+func (s *Server) postMailRetry(w http.ResponseWriter, r *http.Request) {
+	if err := s.mail.RetryNow(r.Context()); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	s.renderSettings(w, r, http.StatusOK, map[string]any{
-		"Error": "Sending a test message is not wired yet. It arrives with the mail step.",
+		"MailResult": "Every unsent message is back at the front of the queue.",
 	})
 }
 

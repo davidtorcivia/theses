@@ -150,6 +150,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /settings", s.requireOwner(s.postSettings))
 	mux.HandleFunc("POST /settings/test/storage", s.requireOwner(s.postTestStorage))
 	mux.HandleFunc("POST /settings/test/mail", s.requireOwner(s.postTestMail))
+	mux.HandleFunc("POST /settings/mail/retry", s.requireOwner(s.postMailRetry))
 	mux.HandleFunc("POST /settings/team/role", s.requireOwner(s.postRole))
 	mux.HandleFunc("POST /settings/team/invite", s.requireOwner(s.postInviteCreate))
 	mux.HandleFunc("POST /settings/team/invite/{id}/resend", s.requireOwner(s.postInviteResend))

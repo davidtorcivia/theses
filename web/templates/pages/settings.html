@@ -80,7 +80,11 @@
     </form>
     <form class="form" method="post" action="/settings/test/mail">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
+      {{if .MailProblem}}<p class="notice bad">{{.MailProblem}}. Queued messages wait until it is.</p>{{end}}
+      {{if .MailResult}}<p class="notice{{if .MailFailed}} bad{{end}}">{{.MailResult}}</p>{{end}}
+      <p class="small dim">Outbox: {{.Outbox.Pending}} waiting{{if .Outbox.GivenUp}}, {{.Outbox.GivenUp}} given up after a day and kept for inspection{{end}}.{{if .Outbox.LastError}} Last failure: <span class="mono">{{.Outbox.LastError}}</span>{{end}}</p>
       <button class="lnk" type="submit">Send a test message</button>
+      <button class="lnk" type="submit" formaction="/settings/mail/retry">Retry the outbox now</button>
     </form>
 
     <form class="form" method="post" action="/settings" id="signin">
