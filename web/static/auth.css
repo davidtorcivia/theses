@@ -45,7 +45,6 @@ h1{margin:0 0 .6rem;font-weight:800;font-size:clamp(30px,3.4vw,44px);line-height
 .f .l{display:block;color:var(--dim);margin-bottom:.35rem}
 .f input{border:1px solid var(--hair);padding:.6rem .7rem;font-weight:500;font-size:16px}
 .f input:focus{border-color:var(--y)}
-.f .row{display:flex;justify-content:space-between;align-items:baseline}
 /* 26: the reset link reads beside the Password label and is reached after the
    password field, not between the account name and it. */
 .f.pw{position:relative}
