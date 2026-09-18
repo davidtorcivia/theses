@@ -15,6 +15,9 @@ type Ntfy struct {
 	Server string
 	Topic  string
 	Token  string
+
+	// allowPrivate lets the tests point at an httptest server on loopback.
+	allowPrivate bool
 }
 
 func (t Ntfy) Send(ctx context.Context, n Note) error {
@@ -22,8 +25,14 @@ func (t Ntfy) Send(ctx context.Context, n Note) error {
 	if server == "" {
 		server = "https://ntfy.sh"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimSuffix(server, "/")+"/"+t.Topic, strings.NewReader(n.Body))
+	// An account types this server, so it goes through the same check as a
+	// webhook: nothing else stops it naming an admin port on the box.
+	endpoint := strings.TrimSuffix(server, "/") + "/" + t.Topic
+	ctx, err := checkURL(ctx, "ntfy", endpoint, t.allowPrivate)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(n.Body))
 	if err != nil {
 		return fmt.Errorf("ntfy: %w", err)
 	}

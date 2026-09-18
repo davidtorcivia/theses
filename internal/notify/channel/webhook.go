@@ -8,9 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"time"
 )
 
@@ -30,7 +28,8 @@ type Webhook struct {
 }
 
 func (w Webhook) Send(ctx context.Context, n Note) error {
-	if err := w.checkURL(); err != nil {
+	ctx, err := checkURL(ctx, "webhook", w.URL, w.allowPrivate)
+	if err != nil {
 		return err
 	}
 	body, err := json.Marshal(struct {
@@ -58,35 +57,4 @@ func (w Webhook) Send(ctx context.Context, n Note) error {
 		return fmt.Errorf("webhook: %w", err)
 	}
 	return check("webhook", resp)
-}
-
-// checkURL refuses anything but http and https and anything that resolves into
-// a range the workspace should not be able to reach from the inside.
-// Redirects are refused by the shared client, so this runs on the only address
-// that is dialled.
-// ponytail: replace with safehttp.Client once merged, which also closes the gap
-// between this lookup and the dial.
-func (w Webhook) checkURL() error {
-	u, err := url.Parse(w.URL)
-	if err != nil {
-		return fmt.Errorf("webhook: %w", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("webhook: refusing scheme %q", u.Scheme)
-	}
-	if w.allowPrivate {
-		return nil
-	}
-	host := u.Hostname()
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return fmt.Errorf("webhook: resolve %q: %w", host, err)
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-			ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
-			return fmt.Errorf("webhook: %q resolves to %s, which is not a public address", host, ip)
-		}
-	}
-	return nil
 }

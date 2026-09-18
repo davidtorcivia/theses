@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -81,7 +82,7 @@ func TestPushover(t *testing.T) {
 
 func TestNtfy(t *testing.T) {
 	srv, got := serve(t, 200, "{}")
-	if err := (Ntfy{Server: srv.URL + "/", Topic: "theses", Token: "tok"}).Send(context.Background(), note); err != nil {
+	if err := (Ntfy{Server: srv.URL + "/", Topic: "theses", Token: "tok", allowPrivate: true}).Send(context.Background(), note); err != nil {
 		t.Fatal(err)
 	}
 	if got.method != http.MethodPost || got.path != "/theses" {
@@ -105,7 +106,7 @@ func TestNtfy(t *testing.T) {
 func TestNtfyPriorities(t *testing.T) {
 	for p, want := range map[int]string{-1: "2", 0: "3", 1: "4"} {
 		srv, got := serve(t, 200, "{}")
-		if err := (Ntfy{Server: srv.URL, Topic: "t"}).Send(context.Background(), Note{Priority: p}); err != nil {
+		if err := (Ntfy{Server: srv.URL, Topic: "t", allowPrivate: true}).Send(context.Background(), Note{Priority: p}); err != nil {
 			t.Fatal(err)
 		}
 		if gotp := got.header.Get("Priority"); gotp != want {
@@ -174,6 +175,47 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 	}
 }
 
+// TestRequestGoesToTheCheckedAddress points a channel at a name nothing
+// resolves and hands the check the loopback address of the test server, so the
+// request can only arrive if the address that was checked is the address that
+// was dialled.
+func TestRequestGoesToTheCheckedAddress(t *testing.T) {
+	srv, got := serve(t, 200, "")
+	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	old := resolve
+	resolve = func(host string) ([]net.IP, error) {
+		asked = append(asked, host)
+		return []net.IP{net.IPv4(127, 0, 0, 1)}, nil
+	}
+	t.Cleanup(func() { resolve = old })
+
+	w := Webhook{URL: "http://pinned.invalid:" + port + "/hook", allowPrivate: true}
+	if err := w.Send(context.Background(), note); err != nil {
+		t.Fatal(err)
+	}
+	if got.path != "/hook" {
+		t.Errorf("path = %q", got.path)
+	}
+	if len(asked) != 1 || asked[0] != "pinned.invalid" {
+		t.Errorf("resolved %v, want pinned.invalid once", asked)
+	}
+}
+
+func TestNtfyRefusesPrivateAddresses(t *testing.T) {
+	// The address of the Caddy admin API on the box the workspace runs on.
+	err := (Ntfy{Server: "http://127.0.0.1:2019", Topic: "load"}).Send(context.Background(), note)
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	if !strings.HasPrefix(err.Error(), "ntfy: ") {
+		t.Errorf("error = %q", err)
+	}
+}
+
 func TestWebhookRefusesPrivateAddresses(t *testing.T) {
 	for _, u := range []string{
 		"http://127.0.0.1:9000/hook",
@@ -202,7 +244,7 @@ func TestNon2xxIsAnError(t *testing.T) {
 		Send(context.Context, Note) error
 	}{
 		"pushover": Pushover{},
-		"ntfy":     Ntfy{Server: srv.URL, Topic: "t"},
+		"ntfy":     Ntfy{Server: srv.URL, Topic: "t", allowPrivate: true},
 		"webhook":  Webhook{URL: srv.URL, allowPrivate: true},
 	} {
 		err := s.Send(context.Background(), note)
