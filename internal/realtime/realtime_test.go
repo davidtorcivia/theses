@@ -3,11 +3,13 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -145,6 +147,37 @@ func read(t *testing.T, ws *websocket.Conn, want string) message {
 			return m
 		}
 	}
+}
+
+// awaitFrame waits for a frame that says something about a command, and passes
+// over presence on the way. Presence is not an answer to anything: it is
+// broadcast to everybody in the room whenever a tab arrives, leaves or moves,
+// so one can land at any moment and a test that fails on whatever turns up next
+// fails on somebody else's tab closing. It returns the error the socket ended
+// on when nothing else came.
+func awaitFrame(t *testing.T, ws *websocket.Conn, within time.Duration) (message, error) {
+	t.Helper()
+	ws.SetReadDeadline(time.Now().Add(within))
+	for {
+		var raw string
+		if err := websocket.Message.Receive(ws, &raw); err != nil {
+			return message{}, err
+		}
+		var m message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Type != "presence" {
+			return m, nil
+		}
+	}
+}
+
+// timedOut is the deadline passing rather than the socket closing. For a test
+// about a socket being dropped those are not the same thing at all: one says
+// the tab was cut off and the other says it was left open with nothing to say.
+func timedOut(err error) bool {
+	return errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // readNothing fails if any applied event reaches this tab before the deadline.
@@ -401,10 +434,8 @@ func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {
 	}
 	send(t, ws, command{ID: 1, Cmd: "card.create", Args: args{
 		Column: r.cols[0].ID, Title: "Should not land"}})
-	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
-	var raw string
-	if err := websocket.Message.Receive(ws, &raw); err == nil {
-		t.Fatalf("a revoked session got an answer: %s", raw)
+	if m, err := awaitFrame(t, ws, 3*time.Second); err == nil {
+		t.Fatalf("a revoked session got an answer: %+v", m)
 	}
 	var n int
 	if err := r.db.QueryRowContext(ctx,
@@ -431,10 +462,14 @@ func TestIdleSocketIsDroppedWhenTheSessionGoes(t *testing.T) {
 	if err := store.BumpSessionEpoch(ctx, r.db, r.users["grace"].ID); err != nil {
 		t.Fatal(err)
 	}
-	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
-	var raw string
-	if err := websocket.Message.Receive(ws, &raw); err == nil {
-		t.Fatalf("an idle socket on a revoked session stayed open: %s", raw)
+	m, err := awaitFrame(t, ws, 3*time.Second)
+	if err == nil {
+		t.Fatalf("an idle socket on a revoked session stayed open: %+v", m)
+	}
+	// The socket has to have been closed, not merely to have gone quiet: this
+	// is the test that the timer drops it.
+	if timedOut(err) {
+		t.Fatal("an idle socket on a revoked session was never dropped")
 	}
 }
 
@@ -550,10 +585,8 @@ func TestSocketCapsTheFrameAndTheRate(t *testing.T) {
 	if err := websocket.Message.Send(big, strings.Repeat("x", maxFrame+1024)); err != nil {
 		t.Fatalf("sending the oversized frame failed before the server saw it: %v", err)
 	}
-	big.SetReadDeadline(time.Now().Add(3 * time.Second))
-	var raw string
-	if err := websocket.Message.Receive(big, &raw); err == nil {
-		t.Fatalf("an oversized frame was answered: %s", raw)
+	if m, err := awaitFrame(t, big, 3*time.Second); err == nil {
+		t.Fatalf("an oversized frame was answered: %+v", m)
 	}
 
 	// An unknown command is refused without touching the database, so the run

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,14 +38,17 @@ func save(t *testing.T, path, content string) {
 	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := waitOut(func() error { return os.Rename(tmp, path) }); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// read is how the tests look at a mirror file. It goes through the same wait
+// the mirror's own reads do, because a test that polls a file the watcher is
+// replacing under it is a second process as far as the platform is concerned.
 func read(t *testing.T, path string) string {
 	t.Helper()
-	content, err := os.ReadFile(path)
+	content, err := readMirror(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -946,5 +951,71 @@ func TestImportKeepsAParagraphWrittenUnderABlockItCouldNotSet(t *testing.T) {
 	}
 	if !strings.Contains(read(t, path), conflictMarker) {
 		t.Fatalf("the block that would not take the change came back unmarked:\n%s", read(t, path))
+	}
+}
+
+// A file operation refused because something else has the file open is worth
+// trying again; anything else is not. The platform that refuses these is the
+// one the tests and the gate run on, so the two errors it uses are named.
+func TestWaitingOutAFileSomebodyElseHasOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		again bool
+	}{
+		// A rename refused for a handle is Access is denied, which is worth
+		// waiting out only where it means that; everywhere else it is a
+		// permission the process does not have.
+		{"a rename over a file another handle holds", fs.ErrPermission, runtime.GOOS == "windows"},
+		{"a read of a file being replaced", sharingViolation, true},
+		{"a file that is not there", fs.ErrNotExist, false},
+		{"a path that is not a directory", errors.New("not a directory"), false},
+		{"no error at all", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inUse(tc.err); got != tc.again {
+				t.Fatalf("inUse(%v) = %v, want %v", tc.err, got, tc.again)
+			}
+		})
+	}
+
+	// An operation that stops being refused goes through.
+	tries := 0
+	if err := waitOut(func() error {
+		tries++
+		if tries < 4 {
+			return &os.LinkError{Op: "rename", Err: sharingViolation}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("an operation that came good was given up on: %v", err)
+	}
+	if tries != 4 {
+		t.Fatalf("it went round %d times", tries)
+	}
+
+	// Anything else comes back at once rather than a second later.
+	tries = 0
+	started := time.Now()
+	if err := waitOut(func() error {
+		tries++
+		return fs.ErrNotExist
+	}); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("got %v", err)
+	}
+	if tries != 1 {
+		t.Fatalf("a missing file was tried %d times", tries)
+	}
+	if waited := time.Since(started); waited > inUseWait/2 {
+		t.Fatalf("a missing file was waited on for %s", waited)
+	}
+
+	// And one that never lets go is given up on inside the budget.
+	started = time.Now()
+	if err := waitOut(func() error { return sharingViolation }); !errors.Is(err, sharingViolation) {
+		t.Fatalf("got %v", err)
+	}
+	if waited := time.Since(started); waited < inUseWait || waited > 3*inUseWait {
+		t.Fatalf("it waited %s, want about %s", waited, inUseWait)
 	}
 }
