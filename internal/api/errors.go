@@ -66,6 +66,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		a.fail(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong),
 		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
+		errors.Is(err, board.ErrDueDate),
 		errors.Is(err, docs.ErrNameTaken),
 		errors.Is(err, docs.ErrReason), errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),

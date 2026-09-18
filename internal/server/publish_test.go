@@ -371,10 +371,22 @@ func TestPublishSectionSaysWhyWhenTransistorIsNotConnected(t *testing.T) {
 			t.Fatalf("the Publish section has no %q", want)
 		}
 	}
-	res, _ := h.post("/p/"+at+"/publish", url.Values{
-		"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {"publish"}})
-	if res.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("publishing with nothing connected gave %d", res.StatusCode)
+	// Neither button works, and neither is a fault of the server: both are
+	// drawn refused and both are refused again if a post arrives anyway.
+	for _, do := range []string{"publish", "save"} {
+		res, body := h.post("/p/"+at+"/publish", url.Values{
+			"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {do}})
+		if res.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("%s with nothing connected gave %d", do, res.StatusCode)
+		}
+		if !strings.Contains(body, "Transistor is not connected") {
+			t.Fatalf("%s did not say why: %s", do, firstNotice(body))
+		}
+	}
+	// The two selects have nothing to offer, and an empty select box says
+	// nothing at all to the person looking at it.
+	if strings.Count(page, "Nothing to choose yet") != 2 {
+		t.Error("the empty selects do not say they are empty")
 	}
 }
 

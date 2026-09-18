@@ -894,3 +894,52 @@ func TestCreatePropositionRunsTheSeedInTheSameTransaction(t *testing.T) {
 		})
 	}
 }
+
+// A due date is the one field the board asks a question of: has that day gone.
+// Anything the calendar does not have could never answer it, so it is refused
+// at the command rather than stored and left saying nothing for ever.
+func TestSetCardDueTakesOnlyACalendarDay(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	e, err := f.CreateCard(ctx, f.who["owner"], f.cols[0].ID, "Read the tide tables", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		due   string
+		kept  string
+		wrong bool
+	}{
+		{due: "2026-09-24", kept: "2026-09-24"},
+		{due: "  2026-09-24  ", kept: "2026-09-24"},
+		{due: "", kept: ""},
+		{due: "24 Sep", wrong: true},
+		{due: "2026-02-31", wrong: true},
+		{due: "2026-9-4", wrong: true},
+		{due: "soon", wrong: true},
+	} {
+		t.Run(tc.due, func(t *testing.T) {
+			_, err := f.SetCardDue(ctx, f.who["owner"], e.EntityID, tc.due)
+			if tc.wrong {
+				if !errors.Is(err, ErrDueDate) {
+					t.Fatalf("%q gave %v", tc.due, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%q gave %v", tc.due, err)
+			}
+			card, err := GetCard(ctx, f.db, e.EntityID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if card.DueDate != nil {
+				got = *card.DueDate
+			}
+			if got != tc.kept {
+				t.Fatalf("%q was kept as %q", tc.due, got)
+			}
+		})
+	}
+}

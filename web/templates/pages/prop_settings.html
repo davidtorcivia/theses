@@ -100,8 +100,8 @@
           {{if .Publish.Error}}<p class="notice bad">{{.Publish.Error}}</p>{{end}}
           {{if not .Publish.On}}<p class="notice">Transistor is not connected, so nothing can be sent yet. An owner connects it under <a href="/settings#integrations">Settings, Integrations</a>.</p>{{end}}
           <div class="row3">
-            <label class="f"><span class="l">Show notes</span><select name="document"{{if or (not .CanEdit) (not .Publish.On)}} disabled{{end}}>{{range .Publish.Documents}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select><small>The document the episode notes are rendered from.</small></label>
-            <label class="f"><span class="l">Audio</span><select name="file"{{if or (not .CanEdit) (not .Publish.On)}} disabled{{end}}>{{range .Publish.Files}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select><small>From the Recordings folder.</small></label>
+            <label class="f"><span class="l">Show notes</span><select name="document"{{if or (not .CanEdit) (not .Publish.On)}} disabled{{end}}>{{range .Publish.Documents}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{else}}<option value="">Nothing to choose yet</option>{{end}}</select><small>The document the episode notes are rendered from.</small></label>
+            <label class="f"><span class="l">Audio</span><select name="file"{{if or (not .CanEdit) (not .Publish.On)}} disabled{{end}}>{{range .Publish.Files}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{else}}<option value="">Nothing to choose yet</option>{{end}}</select><small>From the Recordings folder.</small></label>
             <label class="f"><span class="l">Episode</span><span class="mono {{if .Publish.Episode}}ok{{else}}dim{{end}}">{{if .Publish.Episode}}{{.Publish.Episode}}{{else}}not published{{end}}</span>{{if .Publish.URL}}<small><a href="{{.Publish.URL}}" rel="noreferrer noopener">Open it on Transistor</a></small>{{end}}</label>
           </div>
           {{if .Publish.Why}}<p class="mono dim">{{.Publish.Why}}</p>{{end}}

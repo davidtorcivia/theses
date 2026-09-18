@@ -160,6 +160,7 @@ func reason(err error) string {
 		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty),
 		errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong),
 		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
+		errors.Is(err, board.ErrDueDate),
 		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrTooManyDocuments):
 		return err.Error()
 	default:
