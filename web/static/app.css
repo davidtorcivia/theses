@@ -330,7 +330,7 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 /* forms */
 .fs{border-top:1px solid var(--p);padding:1.1rem 0 1.7rem}
 .fs.last{border-bottom:1px solid var(--p)}
-.fsh h3{color:var(--y)}
+.fsh h3{color:var(--y);font-size:15px;font-weight:800;letter-spacing:.06em;font-stretch:85%}
 .fsh p{font-size:13px;line-height:1.35;color:var(--dim);max-width:30ch}
 .f{margin:0 0 1rem}
 .f .l{color:var(--dim);margin-bottom:.35rem}
@@ -404,7 +404,7 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #admin nav a.on{background:var(--y);color:var(--k);padding-left:1rem}
 #admin nav .back{border:0;color:var(--y)}
 #admin h2{font-weight:800;font-size:20px;letter-spacing:-.02em;margin:1.8rem 0 1rem}
-#admin h3.sub{font-weight:800;font-size:15px;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%;margin:2.2rem 0 .6rem;color:var(--y)}
+#admin h3.sub{font-weight:500;font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-stretch:80%;margin:2.2rem 0 .5rem;color:var(--dim)}
 .team th{color:var(--y);border-bottom:2px solid var(--p);padding:0 1rem .4rem 0}
 .team td{border-bottom:1px solid var(--hair);padding:.55rem 1rem .55rem 0;font-weight:500}
 .team select{border:1px solid var(--hair);padding:.15rem .4rem}
@@ -559,13 +559,11 @@ button:focus-visible{outline:2px solid var(--y);outline-offset:2px}
 #top .setgs:hover{color:var(--y)}
 body.plain{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "work"}
 body.plain #top .show{display:inline;margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* 18: the section heading is the loud one and the sub heading the quiet one, so
-   the hierarchy reads down the page, and the section nav follows the top bar so
-   it stays reachable on a page thousands of pixels long. Below 900 the nav is
-   three rows of links, which would take a third of the screen, so it scrolls
-   away there. A landing on a fragment clears both bars. */
-.fsh h3{font-size:15px;font-weight:800;letter-spacing:.06em;font-stretch:85%}
-#admin h3.sub{font-weight:500;font-size:12px;letter-spacing:.08em;font-stretch:80%;color:var(--dim);margin:2.2rem 0 .5rem}
+/* 18: the two heading rules above are inverted in place, so the section is the
+   loud one and the sub heading the quiet one and the page reads down. The
+   section nav follows the top bar so it stays reachable on a page thousands of
+   pixels long; below 900 it is three rows of links and would take a third of
+   the screen, so it scrolls away there. A landing on a fragment clears both. */
 #admin [id]{scroll-margin-top:calc(var(--toph) + 3.2rem)}
 @media (min-width:901px){#admin nav{position:sticky;top:var(--toph);z-index:15;background:var(--k)}}
 /* 19: an action that makes something is a button, told apart from the filled
