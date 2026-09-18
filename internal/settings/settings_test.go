@@ -3,8 +3,10 @@ package settings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/store"
@@ -234,5 +236,37 @@ func TestAFailureToStoreIsMarked(t *testing.T) {
 	// A value the caller got wrong is still the caller's, not storage.
 	if err := s.Set(ctx, "signin.session_days", []string{"soon"}, 0); errors.Is(err, ErrStorage) {
 		t.Errorf("a bad number returned %v", err)
+	}
+}
+
+// Two writers of one key must not commit in one order and update the cache in
+// the other, which would leave what the app reads disagreeing with the row.
+func TestConcurrentWritesLeaveTheCacheMatchingTheRow(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 20 {
+				if err := s.Set(ctx, "workspace.name", []string{fmt.Sprintf("name %d %d", i, j)}, 0); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	var stored string
+	if err := db.QueryRowContext(ctx,
+		`SELECT value_json FROM settings WHERE key = 'workspace.name'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if cached := Get[string](s, "workspace.name"); stored != `"`+cached+`"` {
+		t.Errorf("the row holds %s and the cache holds %q", stored, cached)
 	}
 }
