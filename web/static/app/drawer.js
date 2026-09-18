@@ -8,9 +8,11 @@ import { send, where, Conflict } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { renderLinkDrawer, attachedLinks, host } from './links.js';
 import { renderFileDrawer, attachedFiles, bytes } from './files.js';
+import { renderPanel, closePanel } from './activity.js';
 import * as api from './api.js';
 
 export function closeDrawer() {
+  closePanel();
   state.openCard = state.openLink = state.openFile = null;
   $('#drawer').hidden = true;
   document.body.classList.remove('has-drawer');
@@ -122,9 +124,9 @@ const rendered = (text) => inline(text, byHandle);
 export function renderDrawer() {
   const drawer = $('#drawer');
   const card = state.cards.get(state.openCard);
-  // One drawer, three things it can hold. A link or a file takes it over, which
-  // is what clicking a row in either pane does.
-  if (!card && !state.openLink && !state.openFile) {
+  // One drawer, four things it can hold. A link, a file or the activity panel
+  // takes it over, which is what clicking a row or the tab does.
+  if (!card && !state.openLink && !state.openFile && !state.panel) {
     drawer.hidden = true;
     document.body.classList.remove('has-drawer');
     return;
@@ -133,6 +135,14 @@ export function renderDrawer() {
   clear(drawer);
   drawer.hidden = false;
   document.body.classList.add('has-drawer');
+
+  // Opening a card, a link or a file supersedes the panel rather than fighting
+  // it for the same column.
+  if (state.panel && !card && !state.openLink && !state.openFile) {
+    renderPanel(drawer);
+    drawer.scrollTop = top;
+    return;
+  }
 
   if (state.openLink) {
     if (renderLinkDrawer(drawer)) { drawer.scrollTop = top; return; }
