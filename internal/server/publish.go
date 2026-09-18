@@ -187,7 +187,11 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
 	}
-	if errors.Is(err, core.ErrForbidden) {
+	// Archived answers the same page as a role that may not edit: this is the
+	// HTML surface, where the section is not drawn for an archived proposition
+	// in the first place, so anything reaching it is a form that should not
+	// have been sent.
+	if errors.Is(err, core.ErrForbidden) || errors.Is(err, board.ErrArchived) {
 		s.errorPage(w, r, http.StatusForbidden)
 		return
 	}
@@ -212,6 +216,14 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The publish runs on a context of its own and may take longer than the
+	// server's write timeout, which is meant for a page. Without this the work
+	// lands and the answer never reaches the person who asked for it.
+	if err := http.NewResponseController(w).SetWriteDeadline(
+		time.Now().Add(publishTimeout + 10*time.Second)); err != nil {
+		s.log.Warn("could not extend the write deadline for a publish", "err", err)
+	}
+
 	said, err := s.publish(r, p, chosen)
 	if err != nil {
 		s.renderPropositionSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
@@ -226,8 +238,13 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 // readable, the person has to be allowed to edit, and it must not be archived.
 // It is the rule every other change on the settings page goes through, and it
 // is here so that publishing and importing from Drive both ask for it before
-// they do anything a refusal would have to undo. Not readable answers not
-// found, because not a member and not there are the same answer.
+// they do anything a refusal would have to undo.
+//
+// The three refusals stay three errors. Not readable is not found, because not
+// a member and not there are the same answer. A role that may not edit is
+// forbidden. An archived proposition is board.ErrArchived, which is a sentence
+// naming the thing to do about it, and collapsing it into forbidden would tell
+// somebody who may edit that they may not.
 func (s *Server) writable(r *http.Request, id int64) (board.Proposition, error) {
 	me := userOf(r)
 	readable, err := board.Readable(r.Context(), s.db, me, id)
@@ -241,8 +258,11 @@ func (s *Server) writable(r *http.Request, id int64) (board.Proposition, error) 
 	if err != nil {
 		return board.Proposition{}, err
 	}
-	if !auth.Can(me.Role, auth.CanEdit) || p.ArchivedAt != nil {
+	if !auth.Can(me.Role, auth.CanEdit) {
 		return board.Proposition{}, core.ErrForbidden
+	}
+	if p.ArchivedAt != nil {
+		return board.Proposition{}, board.ErrArchived
 	}
 	return p, nil
 }

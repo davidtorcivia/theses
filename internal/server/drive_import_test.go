@@ -237,10 +237,15 @@ func TestDriveRoutesCheckStandingBeforeAskingDrive(t *testing.T) {
 		name, who          string
 		at                 int64
 		listing, importing int
+		// said is what the refusal has to name, where naming it is the point.
+		said string
 	}{
-		{"a guest who is a member", "gwen", live, http.StatusForbidden, http.StatusForbidden},
-		{"an editor who is not a member", "stranger", live, http.StatusOK, http.StatusNotFound},
-		{"an editor on an archived proposition", "mara", archived, http.StatusOK, http.StatusForbidden},
+		{"a guest who is a member", "gwen", live, http.StatusForbidden, http.StatusForbidden, ""},
+		{"an editor who is not a member", "stranger", live, http.StatusOK, http.StatusNotFound, ""},
+		// Archived is not forbidden: the person may edit, and what is wrong is
+		// the proposition, so the answer says which and what to do about it.
+		{"an editor on an archived proposition", "mara", archived, http.StatusOK,
+			http.StatusUnprocessableEntity, "that proposition is archived; restore it first"},
 	}
 	// The stranger is an editor of the workspace and a member of nothing.
 	h.withoutAuthenticator("stranger", auth.RoleEditor, password)
@@ -259,6 +264,9 @@ func TestDriveRoutesCheckStandingBeforeAskingDrive(t *testing.T) {
 				`{"proposition":`+strconv.FormatInt(c.at, 10)+`,"file":"f1","folder":"Recordings"}`)
 			if res.StatusCode != c.importing {
 				t.Errorf("import gave %d, want %d: %s", res.StatusCode, c.importing, body)
+			}
+			if c.said != "" && !strings.Contains(body, c.said) {
+				t.Errorf("the refusal said %s, want %q in it", body, c.said)
 			}
 			if drive.hits.Load() != was {
 				t.Error("the refusal asked Drive about the file first")

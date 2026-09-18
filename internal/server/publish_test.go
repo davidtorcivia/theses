@@ -35,6 +35,42 @@ type transistorFake struct {
 	refuse func(w http.ResponseWriter, r *http.Request) bool
 }
 
+// The two hooks are set from the test goroutine and read from the one serving,
+// so they go through the same lock as everything else on this fake. Without it
+// the race detector has something to say about every test that sets one.
+func (f *transistorFake) onCreated(hook func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onCreate = hook
+}
+
+func (f *transistorFake) refuseWith(hook func(w http.ResponseWriter, r *http.Request) bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refuse = hook
+}
+
+// sent is a recorded request body, read under the lock.
+func (f *transistorFake) sent(n int) url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.forms[n]
+}
+
+// made is what reached the fake, read under the lock.
+func (f *transistorFake) made() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+// forget clears what was recorded, for a test that measures a second publish.
+func (f *transistorFake) forget() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls, f.forms = nil, nil
+}
+
 func newTransistorFake(t *testing.T) *transistorFake {
 	t.Helper()
 	f := &transistorFake{status: map[string]string{}, next: 900}
@@ -70,7 +106,10 @@ func newTransistorFake(t *testing.T) *transistorFake {
 	})
 	mux.HandleFunc("PATCH /v1/episodes/{id}/publish", func(w http.ResponseWriter, r *http.Request) {
 		note(r)
-		if f.refuse != nil && !f.refuse(w, r) {
+		f.mu.Lock()
+		refuse := f.refuse
+		f.mu.Unlock()
+		if refuse != nil && !refuse(w, r) {
 			return
 		}
 		f.mu.Lock()
@@ -163,11 +202,11 @@ func TestPublishSendsTheEpisodeAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(body, "Published as episode 901.") {
 		t.Fatalf("publish said %q", firstNotice(body))
 	}
-	if len(fake.calls) != 2 || fake.calls[0] != "POST /v1/episodes" ||
-		fake.calls[1] != "PATCH /v1/episodes/901/publish" {
-		t.Fatalf("publish made %v", fake.calls)
+	if made := fake.made(); len(made) != 2 || made[0] != "POST /v1/episodes" ||
+		made[1] != "PATCH /v1/episodes/901/publish" {
+		t.Fatalf("publish made %v", made)
 	}
-	sent := fake.forms[0]
+	sent := fake.sent(0)
 	if sent.Get("episode[title]") != "Tidal Power" {
 		t.Fatalf("the title was %q", sent.Get("episode[title]"))
 	}
@@ -197,7 +236,7 @@ func TestPublishSendsTheEpisodeAndIsIdempotent(t *testing.T) {
 		t.Fatalf("the proposition holds episode %q", episode)
 	}
 
-	fake.calls, fake.forms = nil, nil
+	fake.forget()
 	res, body = h.post("/p/"+at+"/publish", url.Values{
 		"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {"publish"},
 		"document": {document}, "file": {strconv.FormatInt(file, 10)},
@@ -205,8 +244,8 @@ func TestPublishSendsTheEpisodeAndIsIdempotent(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Episode 901 was updated.") {
 		t.Fatalf("the second publish said %q", firstNotice(body))
 	}
-	if len(fake.calls) != 1 || fake.calls[0] != "PATCH /v1/episodes/901" {
-		t.Fatalf("the second publish made %v", fake.calls)
+	if made := fake.made(); len(made) != 1 || made[0] != "PATCH /v1/episodes/901" {
+		t.Fatalf("the second publish made %v", made)
 	}
 	if !strings.Contains(body, "https://example.com/s/901") {
 		t.Fatal("the page does not link to the episode")
@@ -265,6 +304,24 @@ func TestPublishRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	// The section is not drawn for an archived proposition, so a form that
+	// reaches this is one that should not have been sent. It answers the same
+	// page a role that may not edit gets rather than falling through to a 500.
+	t.Run("an archived proposition", func(t *testing.T) {
+		if _, err := h.srv.board.ArchiveProposition(ctx, actor, id); err != nil {
+			t.Fatal(err)
+		}
+		res, _ := h.post("/p/"+at+"/publish", url.Values{
+			"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {"publish"},
+			"document": {document}, "file": {strconv.FormatInt(file, 10)}})
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("publishing an archived proposition gave %d", res.StatusCode)
+		}
+		if _, err := h.srv.board.RestoreProposition(ctx, actor, id); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	// A guest is a member of this proposition and may read the page, and may
 	// not publish it, which is the rule every other change on it follows.
 	t.Run("a guest", func(t *testing.T) {
@@ -318,7 +375,7 @@ func TestPublishRecordsTheEpisodeWhenTheRequestGoesAway(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// Transistor has made the episode; now the browser closes the tab.
-	fake.onCreate = cancel
+	fake.onCreated(cancel)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		h.http.URL+"/p/"+at+"/publish", strings.NewReader(form.Encode()))
@@ -333,7 +390,7 @@ func TestPublishRecordsTheEpisodeWhenTheRequestGoesAway(t *testing.T) {
 	// The handler runs on after the connection has gone, so the assertion
 	// waits for it rather than racing it.
 	var episode string
-	for i := 0; i < 100 && episode == ""; i++ {
+	for i := 0; i < 250 && episode == ""; i++ {
 		time.Sleep(20 * time.Millisecond)
 		if err := h.db.QueryRowContext(context.Background(),
 			`SELECT coalesce(transistor_episode_id, '') FROM propositions WHERE id = ?`, id).
@@ -351,13 +408,13 @@ func TestPublishRecordsTheEpisodeWhenTheRequestGoesAway(t *testing.T) {
 func TestPublishRefusalDoesNotCarryTheSignedAudioLink(t *testing.T) {
 	h, fake, id := publishable(t)
 	at := strconv.FormatInt(id, 10)
-	fake.refuse = func(w http.ResponseWriter, r *http.Request) bool {
-		f := fake.forms[0]
+	fake.refuseWith(func(w http.ResponseWriter, r *http.Request) bool {
+		f := fake.sent(0)
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]string{
 			{"title": "Could not fetch " + f.Get("episode[audio_url]")}}})
 		return false
-	}
+	})
 
 	form := h.publishForm(t, at)
 	res, body := h.post("/p/"+at+"/publish", form)

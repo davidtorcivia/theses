@@ -40,13 +40,16 @@ func newFakeTransistor(t *testing.T) *fakeTransistor {
 		f.mu.Unlock()
 	}
 	guard := func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Header.Get("x-api-key") != f.key {
+		f.mu.Lock()
+		key, fail := f.key, f.fail
+		f.mu.Unlock()
+		if r.Header.Get("x-api-key") != key {
 			w.WriteHeader(http.StatusUnauthorized)
 			io.WriteString(w, `{"errors":[{"title":"Unauthorized"}]}`)
 			return false
 		}
-		if f.fail != nil {
-			return f.fail(w, r)
+		if fail != nil {
+			return fail(w, r)
 		}
 		return true
 	}
@@ -128,6 +131,14 @@ func newFakeTransistor(t *testing.T) *fakeTransistor {
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
 	return f
+}
+
+// failWith sets the hook the serving goroutine reads, under the same lock, so
+// the race detector has nothing to say about it.
+func (f *fakeTransistor) failWith(hook func(w http.ResponseWriter, r *http.Request) bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail = hook
 }
 
 func (f *fakeTransistor) transistor(t *testing.T, s Settings) *Transistor {
@@ -233,14 +244,14 @@ func TestTransistorPublishIsIdempotent(t *testing.T) {
 // has to come back with the error or the next attempt makes a second episode.
 func TestTransistorReturnsTheIdWhenPublishingFails(t *testing.T) {
 	f := newFakeTransistor(t)
-	f.fail = func(w http.ResponseWriter, r *http.Request) bool {
+	f.failWith(func(w http.ResponseWriter, r *http.Request) bool {
 		if !strings.HasSuffix(r.URL.Path, "/publish") {
 			return true
 		}
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		io.WriteString(w, `{"errors":[{"title":"Audio has not finished processing"}]}`)
 		return false
-	}
+	})
 	tr := f.transistor(t, Settings{"api_key": "the-key", "show_id": "1"})
 	out, err := tr.Publish(context.Background(), Episode{Title: "Half done"})
 	if err == nil {

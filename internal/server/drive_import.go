@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/integrations"
@@ -41,7 +42,7 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 // says the same thing to a person whether a proposition is not theirs or not
 // there.
 func (s *Server) refuseJSON(w http.ResponseWriter, r *http.Request, err error) {
-	status := http.StatusUnprocessableEntity
+	status, known := http.StatusUnprocessableEntity, true
 	switch {
 	case errors.Is(err, core.ErrForbidden):
 		status = http.StatusForbidden
@@ -49,8 +50,20 @@ func (s *Server) refuseJSON(w http.ResponseWriter, r *http.Request, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, integrations.ErrNotConnected), errors.Is(err, integrations.ErrReconnect):
 		status = http.StatusConflict
+	case errors.Is(err, board.ErrArchived):
+		// The same status the links and files routes give it, because this is
+		// one more way of adding a file to a proposition.
+		//
+		// ponytail: parity unifies archived to 409 across the API. On the
+		// rebase take whatever internal/api maps it to and delete this case if
+		// the mapping moves into a shared one.
+		status = http.StatusUnprocessableEntity
+	default:
+		// Anything not named here is Drive's answer or the bucket's, which is
+		// worth a line in the log; a refusal the app itself chose is not.
+		known = false
 	}
-	if status == http.StatusUnprocessableEntity {
+	if !known {
 		s.log.Warn("drive request refused", "path", r.URL.Path, "err", err)
 	}
 	s.writeJSON(w, status, map[string]string{"error": s.redactSecrets(r.Context(), err.Error())})
