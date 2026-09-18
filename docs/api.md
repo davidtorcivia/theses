@@ -261,9 +261,19 @@ watcher, so naming either here is `422`.
 
 ## `POST /api/v1/documents/{id}/blocks`
 
-Scope `write`. Inserts a block after the one `after` names, or at the head when
-`after` is `0` or absent. Text with a blank line in it arrives as one block per
-paragraph, in order, and the answer is the command that made the first of them.
+Scope `write`. Inserts a block after the one `after` names. With `after` absent
+or `0` the block goes in at the **head** of the document, above everything
+already there. To put one at the end, send the id of the last block that
+`GET /api/v1/documents/{id}` returned.
+
+The MCP tool `append_block` is the other one: it reads the last block itself and
+adds the paragraph at the **end**, which is why an agent writing a document a
+call at a time reads in the order it wrote. The two are the same command
+underneath and neither one changed; they differ only in what an absent `after`
+means.
+
+Text with a blank line in it arrives as one block per paragraph, in order, and
+the answer is the command that made the first of them.
 
 ```
 POST /api/v1/documents/4/blocks
@@ -933,7 +943,7 @@ one endpoint serves every tool.
 | `list_documents` | `read` | Lists the documents of one proposition and how many blocks each holds. |
 | `read_document` | `read` | Reads one document as markdown, with each block's id and version. |
 | `create_document` | `write` | Creates a document in a proposition and returns its id. |
-| `append_block` | `write` | Adds a paragraph at the end of a document. |
+| `append_block` | `write` | Adds a paragraph at the end of a document, unlike `POST /api/v1/documents/{id}/blocks` with no `after`, which puts one at the head. |
 | `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
 | `replace_block` | `write` | Replaces the text of one block. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
