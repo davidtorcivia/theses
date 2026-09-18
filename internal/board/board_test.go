@@ -516,3 +516,68 @@ func TestUndoPublishesTheWholeCard(t *testing.T) {
 		t.Errorf("the undo published %+v", p)
 	}
 }
+
+// Undo puts a row back to what it was before a change, which is only safe
+// while the row still holds what that change left. A newer edit, or a newer
+// move, turns the undo into a conflict rather than a silent loss.
+func TestUndoRefusesARowThatHasMovedOn(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
+	editor, owner := f.who["editor"], f.who["owner"]
+
+	first, err := f.EditCardTitle(ctx, editor, card.ID, card.Version, "Call the surveyor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.EditCardTitle(ctx, owner, card.ID, card.Version+1, "Call the hydrologist"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = f.Undo(ctx, editor, first.Seq)
+	var conflict *core.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("undoing over a newer edit gave %v, want a conflict", err)
+	}
+	if conflict.Field != "title" || conflict.Current != "Call the hydrologist" {
+		t.Errorf("the conflict is %+v", conflict)
+	}
+	now, err := GetCard(ctx, f.db, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if now.Title != "Call the hydrologist" {
+		t.Errorf("the refused undo wrote anyway: %q", now.Title)
+	}
+	var undone sql.NullInt64
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT undone_at FROM activity WHERE id = ?`, first.Seq).Scan(&undone); err != nil {
+		t.Fatal(err)
+	}
+	if undone.Valid {
+		t.Error("the refused undo marked the activity row undone")
+	}
+
+	// A move that somebody else has moved past is the same refusal, which is
+	// what keeps two cards off one ordering key.
+	other := f.mustCard(t, f.cols[0].ID, "Draft the opening")
+	move, err := f.MoveCard(ctx, editor, other.ID, f.cols[1].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.MoveCard(ctx, owner, other.ID, f.cols[2].ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, editor, move.Seq); !errors.As(err, &conflict) {
+		t.Errorf("undoing a move that was moved past gave %v, want a conflict", err)
+	}
+
+	// A change undo cannot put back at all is refused rather than marked done.
+	assign, err := f.AssignCard(ctx, editor, card.ID, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, editor, assign.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Errorf("undoing an assignment gave %v, want ErrNotUndoable", err)
+	}
+}

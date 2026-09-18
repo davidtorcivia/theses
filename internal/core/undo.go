@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -34,11 +36,11 @@ var undoable = map[string]undoSpec{
 func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, error) {
 	var proposition sql.NullInt64
 	var entity, entityID, action string
-	var before sql.NullString
+	var before, after sql.NullString
 	var undoneAt sql.NullInt64
-	err := s.DB.QueryRowContext(ctx, `SELECT proposition_id, entity, entity_id, action, before_json, undone_at
+	err := s.DB.QueryRowContext(ctx, `SELECT proposition_id, entity, entity_id, action, before_json, after_json, undone_at
 		FROM activity WHERE id = ?`, activityID).
-		Scan(&proposition, &entity, &entityID, &action, &before, &undoneAt)
+		Scan(&proposition, &entity, &entityID, &action, &before, &after, &undoneAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Event{}, ErrNotFound
 	}
@@ -47,7 +49,8 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 	}
 
 	spec, ok := undoable[entity]
-	if !ok || !before.Valid || undoneAt.Valid || action == "create" || action == "delete" || action == "undo" {
+	if !ok || !before.Valid || !after.Valid || undoneAt.Valid ||
+		action == "create" || action == "delete" || action == "undo" {
 		return Event{}, ErrNotUndoable
 	}
 	id, err := strconv.ParseInt(entityID, 10, 64)
@@ -58,8 +61,36 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 	if err != nil {
 		return Event{}, err
 	}
+	applied, err := decode(after.String)
+	if err != nil {
+		return Event{}, err
+	}
+	// A change that moved none of the columns undo can write moved something
+	// else: an assignee, a note. Putting the columns back would mark the row
+	// undone without undoing anything.
+	if unchanged(spec.cols, fields, applied) {
+		return Event{}, ErrNotUndoable
+	}
 
 	return s.Do(ctx, a, proposition.Int64, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+		// The row has to still hold what the change left, or putting the
+		// before back would throw away whatever came after it and, for a
+		// position, put two rows on one ordering key. This is the same refusal
+		// a stale text edit gets, so the editor offers the same choice.
+		current, err := snapshot(ctx, tx, spec.table, spec.cols, id)
+		if err != nil {
+			return Change{}, err
+		}
+		for _, col := range spec.cols {
+			if same(current[col], applied[col]) {
+				continue
+			}
+			return Change{}, &ConflictError{
+				Entity: entity, EntityID: id, Field: col,
+				Version: version(current), Current: text(current[col]),
+			}
+		}
+
 		// Claiming the row and restoring it in the same transaction is what
 		// makes two people pressing undo on the same change do it once.
 		res, err := tx.ExecContext(ctx,
@@ -152,6 +183,47 @@ func snapshot(ctx context.Context, tx *sql.Tx, table string, cols []string, id i
 		out[c] = values[i]
 	}
 	return out, nil
+}
+
+// same compares one column's stored value with the same column in an activity
+// payload. A bool goes into an INTEGER column and comes back as one, and JSON
+// has no integers of its own, so both are brought to the same shape first.
+func same(stored, recorded any) bool {
+	return text(stored) == text(recorded)
+}
+
+func text(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case bool:
+		if t {
+			return "1"
+		}
+		return "0"
+	case float64:
+		if t == math.Trunc(t) {
+			return strconv.FormatInt(int64(t), 10)
+		}
+	case []byte:
+		return string(t)
+	}
+	return fmt.Sprint(v)
+}
+
+func version(row map[string]any) int64 {
+	n, _ := row["version"].(int64)
+	return n
+}
+
+// unchanged reports whether two payloads agree on every column undo writes.
+func unchanged(cols []string, before, after map[string]any) bool {
+	for _, col := range cols {
+		if !same(before[col], after[col]) {
+			return false
+		}
+	}
+	return true
 }
 
 // decode reads an activity payload with numbers left as numbers, so that a unix
