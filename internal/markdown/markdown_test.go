@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -74,6 +75,11 @@ func TestRenderBlock(t *testing.T) {
 			want: "<p>The <a href=\"http://example.com/rance\" rel=\"noopener\">tide station</a> record.</p>\n",
 		},
 		{
+			name: "an ftp autolink is text with no href",
+			in:   "See <ftp://example.com/x> for the tape.",
+			want: "<p>See ftp://example.com/x for the tape.</p>\n",
+		},
+		{
 			name: "a target with balanced parentheses",
 			in:   "[tide](https://en.wikipedia.org/wiki/Tide_(disambiguation))",
 			want: "<p><a href=\"https://en.wikipedia.org/wiki/Tide_(disambiguation)\" rel=\"noopener\">tide</a></p>\n",
@@ -140,6 +146,26 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 			want: "<p>[click](javascript:alert(1))</p>\n",
 		},
 		{
+			name: "javascript autolink",
+			in:   "<javascript:alert(1)>",
+			want: "<p>javascript:alert(1)</p>\n",
+		},
+		{
+			name: "data autolink",
+			in:   "<data:text/html;base64,PHNjcmlwdD4=>",
+			want: "<p>data:text/html;base64,PHNjcmlwdD4=</p>\n",
+		},
+		{
+			name: "vbscript autolink",
+			in:   "<vbscript:msgbox(1)>",
+			want: "<p>vbscript:msgbox(1)</p>\n",
+		},
+		{
+			name: "file autolink",
+			in:   "<file:///etc/passwd>",
+			want: "<p>file:///etc/passwd</p>\n",
+		},
+		{
 			name: "data image",
 			in:   "![x](data:text/html;base64,PHNjcmlwdD4=)",
 			want: "<p><img src=\"\" alt=\"x\"></p>\n",
@@ -169,12 +195,29 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 			// A scheme this renderer refuses is written back as the text it was
 			// typed as, so the check is on what the page would follow rather
 			// than on the word appearing at all.
-			if strings.Contains(got, "<script") || strings.Contains(got, "onerror") || strings.Contains(got, `href="javascript:`) {
+			if strings.Contains(got, "<script") || strings.Contains(got, "onerror") {
 				t.Errorf("RenderBlock(%q) let markup through: %q", tt.in, got)
+			}
+			// Every href this renderer writes, from a written link or an
+			// autolink, is one of the three a reader may be handed. Naming the
+			// schemes to refuse would only ever list the ones somebody thought
+			// of; this lists the ones that are allowed.
+			for _, m := range hrefs.FindAllStringSubmatch(got, -1) {
+				if !allowedHref.MatchString(m[1]) {
+					t.Errorf("RenderBlock(%q) wrote a followable %q: %q", tt.in, m[1], got)
+				}
 			}
 		})
 	}
 }
+
+// hrefs is every href in a rendered block, and allowedHref is the whole of what
+// one may be: a web address, an email address, or the anchor a footnote and its
+// back reference point at inside the same page.
+var (
+	hrefs       = regexp.MustCompile(`href="([^"]*)"`)
+	allowedHref = regexp.MustCompile(`^(?:(?i:https?)://|(?i:mailto):|#)`)
+)
 
 func TestRenderDocument(t *testing.T) {
 	got := string(RenderDocument([]string{"First block.", "Second block.[^a]", "[^a]: The source."}))

@@ -59,12 +59,20 @@ const MENTION = /@([a-z0-9][a-z0-9-]*)/g;
 // are named because the order of the alternatives is a reading decision and
 // numbering them makes it one more thing to keep in step.
 //
-// Where this and internal/markdown still differ, deliberately:
+// Where this and internal/markdown still differ, deliberately. In each of them
+// this side renders the text as it was typed, which is the safe way to be
+// wrong: the reader sees the source rather than a link that goes somewhere
+// nobody meant.
 //   - a bare URL in the text is a link on the server, which runs goldmark's
 //     Linkify, and plain text here;
 //   - tables, footnotes, strikethrough and code fences are the server's alone,
 //     because the live view renders a paragraph at a time;
-//   - a note carries data-by on the server and only its text here.
+//   - a note carries data-by on the server and only its text here;
+//   - a target nests parentheses more than one deep, .../a_(b_(c)), is a link
+//     on the server and text here, because the pattern above takes one level;
+//   - a label holding a closing bracket, [see [1]](url), is a link on the
+//     server and text here, for the same reason: the label stops at the first
+//     bracket, which is what keeps this one regular expression readable.
 const INLINE = /\*\*(?<bold>.+?)\*\*|\*(?<italic>.+?)\*|\[(?<label>[^\]\n]{1,512})\]\((?<href>https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|\[(?<by>[A-Z]{2,4}): (?<aside>[^\]]+)\]|\[(?<check>check[^\]]*)\]|@(?<handle>[a-z0-9][a-z0-9-]*)/g;
 
 export function inline(text, lookup) {

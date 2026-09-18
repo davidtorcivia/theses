@@ -130,11 +130,13 @@ function openBlock(id, proposition) {
 
 // list draws the rows: what this tab knows, filtered the way it always was,
 // then what the server found, in the order its groups come back in.
-function list(query, groups) {
-  // Where the selection was. The reply to a query redraws the list under
-  // somebody who may already be arrowing down it, and putting them back at the
-  // top would open the wrong thing on Enter.
-  const was = $$('#palette ul a').findIndex((a) => a.classList.contains('on'));
+//
+// keep is for the one caller that redraws a list somebody is already looking
+// at, the reply arriving under them. Every other way here is a new list, and a
+// new list starts at the top: opening the palette, and each key press, which is
+// a different set of rows even when it has the same number of them.
+function list(query, groups, keep = false) {
+  const was = keep ? $$('#palette ul a').findIndex((a) => a.classList.contains('on')) : 0;
   const q = query.toLowerCase();
   // A proposition this tab already lists is not offered twice.
   const known = new Set(state.props.map((p) => p.id));
@@ -155,8 +157,9 @@ function list(query, groups) {
       ? el('a', { href: '#', onclick: (e) => { e.preventDefault(); row.go(); } })
       : el('span', {});
     // The pointer moves the selection, so the row under the cursor and the row
-    // Enter opens are one row and not two.
-    if (row.go) line.addEventListener('mouseover', () => select(line));
+    // Enter opens are one row and not two. It does not scroll: the list moving
+    // under a hand that is not moving is the list fighting whoever is reading.
+    if (row.go) line.addEventListener('mouseover', () => select(line, false));
     line.append(
       el('span', { class: 'k mono', text: row.kind }),
       el('span', {}, row.label,
@@ -167,10 +170,11 @@ function list(query, groups) {
   select(lines[Math.min(Math.max(was, 0), lines.length - 1)]);
 }
 
-// select marks the row Enter opens.
-function select(line) {
+// select marks the row Enter opens, and brings it into view unless the pointer
+// is what moved it there.
+function select(line, scroll = true) {
   for (const a of $$('#palette ul a')) a.classList.toggle('on', a === line);
-  if (line) line.scrollIntoView({ block: 'nearest' });
+  if (line && scroll) line.scrollIntoView({ block: 'nearest' });
 }
 
 // search asks the server once the typing has stopped, and draws the local rows
@@ -192,7 +196,7 @@ function search(query) {
       // line on every key press would be the app shouting.
     }
     if (mine !== asked || $('#palette').hidden) return;
-    list(query, groups);
+    list(query, groups, true);
   }, pause);
 }
 

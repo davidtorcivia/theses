@@ -212,19 +212,27 @@ func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, ente
 // httpURL is the only kind of target a written link in this app may point at.
 var httpURL = regexp.MustCompile(`^(?i:https?)://`)
 
-// An autolink is a URL or an address Linkify found in the running text. There
-// is no label to hide behind, so what it points at is what it reads as and
-// every one of them is written out; rel="noopener" goes on it for the same
-// reason it goes on a written link. The browser's renderer leaves these as
-// text, which is the one difference between the two that is on purpose.
+// An autolink is a URL Linkify found in the running text, an address, or one
+// somebody wrote in angle brackets. The last of those carries whatever scheme
+// was typed, so the rule is the written link's rule: a target is followed only
+// when it is http, https or an email address, and anything else is written as
+// the words it was, with no href for the page to offer. rel="noopener" goes on
+// the ones that are followed for the same reason it goes on a written link. The
+// browser's renderer leaves every autolink as text, which is the one difference
+// between the two that is on purpose.
 func (nodeRenderer) renderAutoLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	if !entering {
 		return ast.WalkContinue, nil
 	}
 	link := n.(*ast.AutoLink)
 	url := link.URL(source)
+	email := link.AutoLinkType == ast.AutoLinkEmail
+	if !email && !httpURL.Match(url) {
+		_, _ = w.Write(util.EscapeHTML(link.Label(source)))
+		return ast.WalkContinue, nil
+	}
 	_, _ = w.WriteString(`<a href="`)
-	if link.AutoLinkType == ast.AutoLinkEmail && !bytes.HasPrefix(bytes.ToLower(url), []byte("mailto:")) {
+	if email && !bytes.HasPrefix(bytes.ToLower(url), []byte("mailto:")) {
 		_, _ = w.WriteString("mailto:")
 	}
 	_, _ = w.Write(util.EscapeHTML(util.URLEscape(url, false)))
