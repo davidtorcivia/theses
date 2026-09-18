@@ -180,6 +180,7 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 	}
 
 	data := map[string]any{
+		"Plain":       true,
 		"S":           shown,
 		"Set":         isSet,
 		"Days":        []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"},

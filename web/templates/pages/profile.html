@@ -1,5 +1,5 @@
 {{define "content"}}<section id="admin">
-  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a><a href="/" class="back">← Back to work</a></nav>
+  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a>{{if .IsOwner}}<a href="/settings">Workspace settings</a>{{end}}<a href="/" class="back">← Back to work</a></nav>
   <div class="apane">
     <h2>Profile</h2>
     {{template "notice" .}}

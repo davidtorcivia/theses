@@ -4,15 +4,16 @@
 <link rel="icon" href="{{asset "icon.svg"}}">
 <link rel="stylesheet" href="{{asset "app.css"}}">
 <meta name="csrf" content="{{.CSRF}}">
-</head><body class="dirB">
+</head><body class="dirB{{if .Plain}} plain{{end}}">
 <header id="top">
-  <button id="railtoggle" aria-label="Propositions">≡</button>
-  <a class="brand" href="/">THESES</a><span class="ws">{{.Workspace}}</span>
-  <button class="search" type="button"><span>Search, jump, do…</span><kbd>⌘K</kbd></button>
-  <div class="presence"></div>
+  {{if not .Plain}}<button id="railtoggle" aria-label="Propositions">≡</button>{{end}}
+  <a class="brand" href="/">THESES</a><span class="show">{{.Workspace}}</span>
+  {{if not .Plain}}<button class="search" type="button"><span>Search, jump, do…</span><kbd>⌘K</kbd></button>
+  <div class="presence"></div>{{end}}
+  {{if .IsOwner}}<a class="setgs" href="/settings">Settings</a>{{end}}
   <a class="acct" href="/profile">{{template "initials" .User}}<span>{{firstName .User.Name}}</span></a>
 </header>
-<aside id="rail"></aside>
+{{if not .Plain}}<aside id="rail"></aside>{{end}}
 {{template "content" .}}
 <script src="{{asset "app.js"}}" defer></script>
 {{block "scripts" .}}{{end}}

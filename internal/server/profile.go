@@ -17,6 +17,7 @@ func (s *Server) renderProfile(w http.ResponseWriter, r *http.Request, status in
 		return
 	}
 	s.render(w, r, status, "profile.html", s.page(r, "Profile", merge(merge(map[string]any{
+		"Plain":    true,
 		"Swatches": swatches(u.Colour),
 	}, notifications), extra)))
 }
