@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"io"
 	"net/http"
@@ -370,6 +371,7 @@ type counting struct {
 	methods []string
 	paths   []string
 	failed  string
+	before  func(*http.Request)
 }
 
 func (c *counting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +379,11 @@ func (c *counting) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.methods = append(c.methods, r.Method)
 	c.paths = append(c.paths, r.URL.Path)
 	fail := c.failed
+	before := c.before
 	c.mu.Unlock()
+	if before != nil {
+		before(r)
+	}
 	if r.Method == fail {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -466,9 +472,10 @@ func TestPresignRejectsATTLOutsideTheSigV4Limit(t *testing.T) {
 func TestPresignPutSizeAndContentType(t *testing.T) {
 	c := fake(t)
 	ctx := context.Background()
-	// An empty object is legitimate: a zero byte upload still has a key.
-	if _, _, err := c.PresignPut(ctx, "k", "text/plain", 0, ttl); err != nil {
-		t.Errorf("PresignPut with size 0: %v", err)
+	// Size zero drops Content-Length and Content-Type out of the signature,
+	// so the URL would accept any bytes of any type until it expired.
+	if _, _, err := c.PresignPut(ctx, "k", "text/plain", 0, ttl); err == nil {
+		t.Error("PresignPut with size 0: want an error, got nil")
 	}
 	if _, _, err := c.PresignPut(ctx, "k", "text/plain", (5<<30)+1, ttl); err == nil {
 		t.Error("PresignPut above the single PUT limit: want an error, got nil")
@@ -491,8 +498,14 @@ func TestNewBoundsEveryRequest(t *testing.T) {
 	if !ok {
 		t.Fatalf("HTTPClient is %T, want a BuildableClient with a timeout", c.s3.Options().HTTPClient)
 	}
-	if hc.GetTimeout() != requestTimeout {
-		t.Errorf("HTTP client timeout = %s, want %s", hc.GetTimeout(), requestTimeout)
+	read, ok := hc.GetReadTimeout()
+	if !ok || read != requestTimeout {
+		t.Errorf("HTTP client read timeout = %s (set %t), want %s", read, ok, requestTimeout)
+	}
+	// A whole request deadline would fail a large CopyObject or
+	// CompleteMultipartUpload, which answer 200 and then trickle.
+	if hc.GetTimeout() != 0 {
+		t.Errorf("HTTP client has a whole request timeout of %s, want none", hc.GetTimeout())
 	}
 }
 
@@ -582,5 +595,72 @@ func TestListPartsReadsPastTheFirstPage(t *testing.T) {
 		if !seen[n] {
 			t.Fatalf("part %d is missing from the listing", n)
 		}
+	}
+}
+
+// S3 answers a large copy with a 200 and then sends whitespace until the
+// storage work finishes. The client must read that to the end instead of
+// treating the call as overdue.
+func TestCopyReadsATricklingResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		f, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("the test server cannot flush")
+			return
+		}
+		io.WriteString(w, xml.Header)
+		f.Flush()
+		for i := 0; i < 6; i++ {
+			time.Sleep(300 * time.Millisecond)
+			io.WriteString(w, " ")
+			f.Flush()
+		}
+		io.WriteString(w, `<CopyObjectResult><ETag>"abc"</ETag></CopyObjectResult>`)
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(Config{Provider: "s3", Endpoint: srv.URL, Region: "us-east-1", Bucket: "theses", AccessKey: "k", SecretKey: "s"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := c.Copy(context.Background(), "7-v/f7/big.wav", "7-v/f7/v1/big.wav"); err != nil {
+		t.Errorf("Copy of a response that trickled for two seconds: %v", err)
+	}
+}
+
+// The context expiring during Head is the likeliest way Probe fails, and the
+// cleanup has to outlive it or the probe object stays in the bucket.
+func TestProbeDeletesTheObjectWhenTheContextIsCancelled(t *testing.T) {
+	c, log := countingFake(t, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Cancelling as the head goes out leaves the put done and the head in
+	// flight, which is the shape of a slow bucket and an impatient caller.
+	log.before = func(r *http.Request) {
+		if r.Method == http.MethodHead {
+			cancel()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	err := c.Probe(ctx)
+	if err == nil || !strings.Contains(err.Error(), "probe head") {
+		t.Fatalf("Probe with the context cancelled after the put = %v, want an error naming the head step", err)
+	}
+	methods, paths := log.seen()
+	var put, del string
+	for i, m := range methods {
+		switch m {
+		case http.MethodPut:
+			put = paths[i]
+		case http.MethodDelete:
+			del = paths[i]
+		}
+	}
+	if put == "" {
+		t.Fatal("Probe made no PUT")
+	}
+	if del != put {
+		t.Errorf("probe object %q was not deleted after the context was cancelled, deletes saw %q", put, del)
 	}
 }

@@ -34,9 +34,13 @@ const maxPutSize = 5 << 30
 // is signed without complaint and fails when the browser uses it.
 const maxTTL = 7 * 24 * time.Hour
 
-// requestTimeout bounds one server side call. Without it a caller holding
-// context.Background waits forever on an endpoint that accepts the connection
-// and then stops talking.
+// requestTimeout bounds how long a response may go silent, not how long a call
+// may take. Without it a caller holding context.Background waits forever on an
+// endpoint that accepts the connection and then stops talking. It cannot be a
+// whole request deadline: S3 answers a large CopyObject or
+// CompleteMultipartUpload with a 200 and then trickles whitespace for minutes
+// while the storage work finishes, and a deadline would fail those and retry
+// the copy.
 const requestTimeout = 30 * time.Second
 
 // validKey rejects keys the bucket would not see the way they were signed. A
@@ -140,7 +144,7 @@ func New(cfg Config) (*Client, error) {
 		// B2, R2 and gofakes3 all serve path style; only AWS needs virtual
 		// hosted addressing and it accepts path style too.
 		UsePathStyle: true,
-		HTTPClient:   awshttp.NewBuildableClient().WithTimeout(requestTimeout),
+		HTTPClient:   awshttp.NewBuildableClient().WithReadTimeout(requestTimeout),
 	}
 	if cfg.Endpoint != "" {
 		u, err := url.Parse(cfg.Endpoint)
@@ -169,8 +173,12 @@ func (c *Client) PresignPut(ctx context.Context, key, contentType string, size i
 	if err := validTTL(ttl); err != nil {
 		return "", nil, err
 	}
-	if size < 0 || size > maxPutSize {
-		return "", nil, fmt.Errorf("blob: size %d is outside 0 to %d", size, int64(maxPutSize))
+	// Size zero would make the SDK drop Content-Length and Content-Type from
+	// the signature, leaving a URL that accepts any bytes of any type for the
+	// whole TTL. An empty object, if one is ever wanted, is written by the
+	// server.
+	if size <= 0 || size > maxPutSize {
+		return "", nil, fmt.Errorf("blob: size %d is outside 1 to %d", size, int64(maxPutSize))
 	}
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -287,11 +295,14 @@ func (c *Client) Probe(ctx context.Context) (err error) {
 		return fmt.Errorf("blob: probe put %q: %w", key, err)
 	}
 	// The object exists from here on, so it is removed whichever step fails.
-	// Only the delete on the success path reports its own error, because that
-	// is the capability the settings page is testing.
+	// The cleanup drops the caller's cancellation, because the failure being
+	// cleaned up is often that same context expiring, and a delete on a dead
+	// context never leaves the process. Only the delete on the success path
+	// reports its own error, because that is the capability the settings page
+	// is testing.
 	defer func() {
 		if err != nil {
-			_ = c.Delete(ctx, key)
+			_ = c.Delete(context.WithoutCancel(ctx), key)
 		}
 	}()
 	if _, _, headErr := c.Head(ctx, key); headErr != nil {
