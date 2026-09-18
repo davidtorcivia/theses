@@ -282,11 +282,15 @@ func (a *API) Reader(p Principal) search.Reader {
 	return search.Member(p.User.ID)
 }
 
-type activityJSON struct {
+// An ActivityView is one row of the log as both surfaces report it. Via names
+// the token or the MCP client that carried the change, and is absent when a
+// browser made it.
+type ActivityView struct {
 	ID            int64           `json:"id"`
 	PropositionID int64           `json:"proposition_id,omitempty"`
 	ActorKind     string          `json:"actor_kind"`
 	ActorID       string          `json:"actor_id"`
+	Via           string          `json:"via,omitempty"`
 	Entity        string          `json:"entity"`
 	EntityID      string          `json:"entity_id"`
 	Action        string          `json:"action"`
@@ -320,20 +324,31 @@ const workspaceWide = `'setting', 'user', 'invitation', 'api_token', 'backup'`
 // given. Ids are used and not timestamps because created_at is whole seconds
 // and a busy second holds many rows.
 func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
-	limit := intParam(r, "limit", activityLimit)
+	out, err := a.Activity(r.Context(), p, int64(intParam(r, "since", 0)), intParam(r, "limit", activityLimit))
+	if err != nil {
+		a.serverError(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"activity": out})
+}
+
+// Activity is the page of the log this token may read, for both surfaces. A
+// limit of zero or less is the default one and anything over the maximum is cut
+// to it, so a caller cannot ask for the whole table.
+func (a *API) Activity(ctx context.Context, p Principal, since int64, limit int) ([]ActivityView, error) {
 	if limit <= 0 {
 		limit = activityLimit
 	}
 	if limit > activityMaxLimit {
 		limit = activityMaxLimit
 	}
-	query := `SELECT id, proposition_id, actor_kind, actor_id,
+	query := `SELECT id, proposition_id, actor_kind, actor_id, via,
 		entity, entity_id, action, before_json, after_json, created_at, undone_at
 		FROM activity WHERE id > ?`
 	if !p.Allowed(auth.ScopeAdmin) {
 		query += ` AND entity NOT IN (` + administration + `)`
 	}
-	args := []any{intParam(r, "since", 0)}
+	args := []any{since}
 	// A row about a proposition is readable the way the proposition is. Rows
 	// about the workspace itself are readable by anyone, but carrying no
 	// proposition is not enough to be one: a deleted proposition's row carries
@@ -348,33 +363,26 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
 		}
 		args = append(args, id)
 	}
-	rows, err := a.db.QueryContext(r.Context(), query+` ORDER BY id LIMIT ?`,
-		append(args, limit)...)
+	rows, err := a.db.QueryContext(ctx, query+` ORDER BY id LIMIT ?`, append(args, limit)...)
 	if err != nil {
-		a.serverError(w, r, err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
-	out := []activityJSON{}
+	out := []ActivityView{}
 	for rows.Next() {
-		var e activityJSON
+		var e ActivityView
 		var prop, undone sql.NullInt64
-		var before, after sql.NullString
-		if err := rows.Scan(&e.ID, &prop, &e.ActorKind, &e.ActorID, &e.Entity, &e.EntityID,
+		var via, before, after sql.NullString
+		if err := rows.Scan(&e.ID, &prop, &e.ActorKind, &e.ActorID, &via, &e.Entity, &e.EntityID,
 			&e.Action, &before, &after, &e.CreatedAt, &undone); err != nil {
-			a.serverError(w, r, err)
-			return
+			return nil, err
 		}
-		e.PropositionID, e.UndoneAt = prop.Int64, undone.Int64
+		e.PropositionID, e.UndoneAt, e.Via = prop.Int64, undone.Int64, via.String
 		e.Before, e.After = jsonOrString(before), jsonOrString(after)
 		out = append(out, e)
 	}
-	if err := rows.Err(); err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"activity": out})
+	return out, rows.Err()
 }
 
 // jsonOrString is an activity column as JSON. Most hold the JSON of an entity,

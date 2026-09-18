@@ -117,6 +117,7 @@ about the workspace itself are not about a proposition and are unaffected.
 ```json
 {"activity": [
   {"id": 12, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
+   "via": "token:research agent",
    "entity": "setting", "entity_id": "workspace.name", "action": "set",
    "before": "\"Workspace\"", "after": "\"Renamed workspace\"",
    "created_at": 1758067200}
@@ -125,10 +126,10 @@ about the workspace itself are not about a proposition and are unaffected.
 
 `actor_kind` is `user` or `system`, and `actor_id` is the user id. What a token
 does is done by the person the token belongs to, so a change made through this
-API or through MCP is recorded as theirs. A `via` field naming the token or the
-MCP client that carried it will be added to these rows. `before` and `after` are
-the JSON of the entity before and after the change, and are absent when there
-was none.
+API or through MCP is recorded as theirs, with `via` naming what carried it:
+`token:<name>` for this API and `mcp:<client>` for MCP. A change made in the
+browser has no `via` and the field is absent. `before` and `after` are the JSON
+of the entity before and after the change, and are absent when there was none.
 
 ## `GET /api/v1/propositions/{id}/events?since=&wait=`
 
