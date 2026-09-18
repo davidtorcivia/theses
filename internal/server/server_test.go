@@ -1101,9 +1101,14 @@ func TestAWrongResetTokenDoesNoHashing(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Both tokens are fetched before either region is timed, so the ratio is the
+	// POST and nothing else.
+	wrongCSRF := h.csrf("/reset/not-a-real-token")
+	rightCSRF := h.csrf("/reset/" + good)
+
 	start := time.Now()
 	res, _ := h.post("/reset/not-a-real-token", url.Values{
-		"csrf": {h.csrf("/reset/not-a-real-token")}, "password": {"a long enough password"},
+		"csrf": {wrongCSRF}, "password": {"a long enough password"},
 	})
 	wrong := time.Since(start)
 	if res.StatusCode != http.StatusNotFound {
@@ -1112,7 +1117,7 @@ func TestAWrongResetTokenDoesNoHashing(t *testing.T) {
 
 	start = time.Now()
 	if res, _ := h.post("/reset/"+good, url.Values{
-		"csrf": {h.csrf("/reset/" + good)}, "password": {"a long enough password"},
+		"csrf": {rightCSRF}, "password": {"a long enough password"},
 	}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("a real token gave %d", res.StatusCode)
 	}

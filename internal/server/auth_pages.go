@@ -457,15 +457,13 @@ func (s *Server) postReset(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		default:
-			token, err := s.auth.CreatePasswordReset(r.Context(), u.ID)
-			if err != nil {
+			// ponytail: the token row is written but nothing sends it until
+			// internal/mail lands. The link is deliberately not logged, because
+			// anything that can read the log could then use it.
+			if _, err := s.auth.CreatePasswordReset(r.Context(), u.ID); err != nil {
 				s.fail(w, r, err)
 				return
 			}
-			// ponytail: nothing sends it until internal/mail lands, so the token
-			// is written and the link goes nowhere. The link is deliberately not
-			// logged: anything with read access to the log could use it.
-			_ = token
 			s.log.Info("password reset requested", "handle", u.Handle)
 		}
 	}
