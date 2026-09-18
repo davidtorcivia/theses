@@ -56,6 +56,16 @@ type Channel struct {
 	VerifiedAt int64
 }
 
+// SameDestination reports whether two configs point at the same place. The
+// quiet hours and the digest flag are not part of it: moving those does not
+// make a channel unproven, and taking its verified state away would have the
+// worker abandon the rows already queued for it.
+func (c Config) SameDestination(other Config) bool {
+	return c.UserKey == other.UserKey && c.Server == other.Server &&
+		c.Topic == other.Topic && c.Token == other.Token &&
+		c.URL == other.URL && c.Secret == other.Secret
+}
+
 // Verified reports whether the channel has ever delivered a test. Nothing is
 // sent to one that has not: a mistyped topic would otherwise swallow every
 // notification in silence.

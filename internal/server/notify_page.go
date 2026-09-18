@@ -25,7 +25,7 @@ type channelView struct {
 	Verified           bool
 	QuietFrom, QuietTo string
 	Digest             bool
-	UserKey            string
+	UserKeySet         bool
 	Server, Topic      string
 	URL                string
 	TokenSet           bool
@@ -82,7 +82,7 @@ func (s *Server) notifyProfile(r *http.Request) (map[string]any, error) {
 		views = append(views, channelView{
 			ID: c.ID, Kind: c.Kind, KindLabel: kindLabels[c.Kind], Label: c.Label(u.Email),
 			Verified: c.Verified(), QuietFrom: c.QuietFrom, QuietTo: c.QuietTo, Digest: c.Digest,
-			UserKey: c.Config.UserKey, Server: c.Config.Server, Topic: c.Config.Topic,
+			UserKeySet: c.Config.UserKey != "", Server: c.Config.Server, Topic: c.Config.Topic,
 			URL: c.Config.URL, TokenSet: c.Config.Token != "", SecretSet: c.Config.Secret != "",
 			DialogID: "channel-" + strconv.FormatInt(c.ID, 10),
 		})
@@ -231,11 +231,22 @@ func (s *Server) channelFrom(r *http.Request, owner int64) (notify.Channel, erro
 	}
 	// The kind of a channel never changes; what it points at does.
 	c.Kind = was.Kind
+	// A secret the page never printed cannot come back from it, so a field
+	// left blank keeps what is stored.
+	if c.Config.UserKey == "" {
+		c.Config.UserKey = was.Config.UserKey
+	}
 	if c.Config.Token == "" {
 		c.Config.Token = was.Config.Token
 	}
 	if c.Config.Secret == "" {
 		c.Config.Secret = was.Config.Secret
+	}
+	// A channel that still points at the same place is still proven. An edit
+	// that only moved the quiet hours or the digest flag must not cost it, or
+	// the worker abandons everything already queued for it.
+	if c.Config.SameDestination(was.Config) {
+		c.VerifiedAt = was.VerifiedAt
 	}
 	return c, nil
 }
@@ -260,11 +271,10 @@ func (s *Server) postChannel(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Channel, email string,
 	refuse func(http.ResponseWriter, *http.Request, int, map[string]any), back string) {
 	// Email is verified by existing: the address is the account's own. Anything
-	// else has to prove it works, and saying so is the save's job.
+	// else that is new, or that now points somewhere else, has to prove it
+	// works, and saying so is the save's job.
 	if c.Kind == notify.KindEmail {
 		c.VerifiedAt = s.auth.Now().Unix()
-	} else {
-		c.VerifiedAt = 0
 	}
 	saved, err := notify.SaveChannel(r.Context(), s.db, s.settings, c)
 	if errors.Is(err, store.ErrNotFound) {
@@ -275,7 +285,7 @@ func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Ch
 		refuse(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
-	if saved.Kind != notify.KindEmail {
+	if saved.Kind != notify.KindEmail && !saved.Verified() {
 		if err := s.notify.Test(r.Context(), saved, email); err != nil {
 			refuse(w, r, http.StatusUnprocessableEntity, map[string]any{
 				"NotifyResult": "Saved, but nothing reached it: " + err.Error(),

@@ -121,6 +121,88 @@ func TestAChannelIsAddedRemovedAndBelongsToItsAccount(t *testing.T) {
 	}
 }
 
+// Editing the quiet hours must not cost a channel its verified state: the
+// worker abandons an unverified channel's queued rows for good.
+func TestMovingOnlyTheQuietHoursKeepsAChannelProven(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	proven, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
+		UserID: 1, Kind: notify.KindNtfy, VerifiedAt: 1,
+		Config: notify.Config{Topic: "alerts", Token: "tk"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only the quiet hours move, and the key is left blank as the page prints it.
+	res, _ := h.post("/profile/notifications/channel", url.Values{
+		"csrf": {h.csrf("/profile")}, "id": {itoa(proven.ID)}, "kind": {"ntfy"},
+		"topic": {"alerts"}, "quiet_from": {"23:00"}, "quiet_to": {"07:00"},
+	})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("saving the quiet hours gave %d", res.StatusCode)
+	}
+	back, err := notify.GetChannel(ctx, h.db, h.srv.settings, proven.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !back.Verified() {
+		t.Error("a channel that did not move lost its verified state")
+	}
+	if back.QuietFrom != "23:00" || back.Config.Token != "tk" {
+		t.Errorf("channel = %+v", back)
+	}
+
+	// Moving the topic does take it away, and the test that follows fails.
+	res, _ = h.post("/profile/notifications/channel", url.Values{
+		"csrf": {h.csrf("/profile")}, "id": {itoa(proven.ID)}, "kind": {"ntfy"},
+		"server": {"https://127.0.0.1:1"}, "topic": {"somewhere-else"},
+	})
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("moving the channel gave %d, want the failed test", res.StatusCode)
+	}
+	if back, _ = notify.GetChannel(ctx, h.db, h.srv.settings, proven.ID); back.Verified() {
+		t.Error("a channel that now points somewhere else is still verified")
+	}
+}
+
+// The Pushover user key is a secret: it is never printed back into the page,
+// and a field left blank keeps it.
+func TestThePushoverKeyIsNeverPrintedBack(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	saved, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
+		UserID: 1, Kind: notify.KindPushover, VerifiedAt: 1,
+		Config: notify.Config{UserKey: "uk_abcdefgh1234"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := h.get("/profile")
+	if strings.Contains(body, "uk_abcdefgh1234") {
+		t.Fatal("the profile page printed the user key")
+	}
+	if !strings.Contains(body, `name="user_key"`) || !strings.Contains(body, `type="password" name="user_key"`) {
+		t.Error("the user key field is not a password field")
+	}
+
+	res, _ := h.post("/profile/notifications/channel", url.Values{
+		"csrf": {h.csrf("/profile")}, "id": {itoa(saved.ID)}, "kind": {"pushover"},
+		"quiet_from": {"23:00"}, "quiet_to": {"07:00"},
+	})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("saving with the key left blank gave %d", res.StatusCode)
+	}
+	back, err := notify.GetChannel(ctx, h.db, h.srv.settings, saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Config.UserKey != "uk_abcdefgh1234" {
+		t.Errorf("a key nobody retyped was lost: %+v", back.Config)
+	}
+}
+
 func TestSomebodyElsesChannelIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)

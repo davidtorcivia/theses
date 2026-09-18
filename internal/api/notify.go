@@ -171,14 +171,11 @@ func (a *API) saveChannels(r *http.Request, p Principal, list []channelIn) error
 			if !ok {
 				return store.ErrNotFound
 			}
-			// The kind never changes, and a config that changed has to be
-			// tested again before anything is sent to it.
+			// The kind never changes, and a secret left out keeps the stored
+			// one, so the comparison below sees what the channel will hold.
 			c.Kind = old.Kind
 			c.Config.UserKey, c.Config.Token, c.Config.Secret = old.Config.UserKey, old.Config.Token, old.Config.Secret
 			c.VerifiedAt = old.VerifiedAt
-			if changed(old, c, in) {
-				c.VerifiedAt = 0
-			}
 			kept[in.ID] = true
 		}
 		if in.UserKey != nil {
@@ -189,6 +186,11 @@ func (a *API) saveChannels(r *http.Request, p Principal, list []channelIn) error
 		}
 		if in.Secret != nil {
 			c.Config.Secret = *in.Secret
+		}
+		// A channel that now points somewhere else has to be tested again
+		// before anything is sent to it.
+		if in.ID != 0 && !c.Config.SameDestination(was[in.ID].Config) {
+			c.VerifiedAt = 0
 		}
 		if _, err := notify.SaveChannel(r.Context(), a.db, a.set, c); err != nil {
 			return err
@@ -202,22 +204,6 @@ func (a *API) saveChannels(r *http.Request, p Principal, list []channelIn) error
 		}
 	}
 	return nil
-}
-
-// changed reports whether a channel now points somewhere else, which is what
-// takes its verified state away.
-func changed(old, now notify.Channel, in channelIn) bool {
-	if in.UserKey != nil && *in.UserKey != old.Config.UserKey {
-		return true
-	}
-	if in.Token != nil && *in.Token != old.Config.Token {
-		return true
-	}
-	if in.Secret != nil && *in.Secret != old.Config.Secret {
-		return true
-	}
-	return now.Config.Server != old.Config.Server || now.Config.Topic != old.Config.Topic ||
-		now.Config.URL != old.Config.URL
 }
 
 // testNotification sends one message to one of the caller's channels and marks

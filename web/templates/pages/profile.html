@@ -89,7 +89,7 @@
       <input type="hidden" name="id" value="{{.ID}}">
       <input type="hidden" name="kind" value="{{.Kind}}">
       {{if eq .Kind "email"}}<p>Notifications go to {{$.User.Email}}, the address on your account, through the workspace mail server.</p>{{end}}
-      {{if eq .Kind "pushover"}}<label class="f"><span class="l">User key</span><input name="user_key" value="{{.UserKey}}" spellcheck="false" required><small>Your own key. The application token is the workspace's.</small></label>{{end}}
+      {{if eq .Kind "pushover"}}<label class="f"><span class="l">User key</span><input type="password" name="user_key" autocomplete="off" spellcheck="false" placeholder="{{if .UserKeySet}}set{{else}}required{{end}}"{{if not .UserKeySet}} required{{end}}><small>Your own key. The application token is the workspace's. Empty keeps what is stored.</small></label>{{end}}
       {{if eq .Kind "ntfy"}}<div class="row3">
         <label class="f"><span class="l">Server</span><input name="server" value="{{.Server}}" spellcheck="false" placeholder="https://ntfy.sh"><small>Empty uses the workspace's.</small></label>
         <label class="f"><span class="l">Topic</span><input name="topic" value="{{.Topic}}" spellcheck="false" required></label>
