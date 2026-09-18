@@ -2,7 +2,11 @@ package settings
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/store"
@@ -187,5 +191,82 @@ func TestIntegerSettingsAreBounded(t *testing.T) {
 	}
 	if err := s.Set(ctx, "mail.port", []string{"465"}, 0); err != nil {
 		t.Errorf("a real port was refused: %v", err)
+	}
+}
+
+func TestSetAsRecordsThePersonBehindTheToken(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+	id, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "nora", Email: "nora@example.com", Name: "Nora Vance",
+		Initials: "NV", Colour: "#b45", Role: "owner", PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetAs(ctx, "workspace.name", []string{"Debt Machine"},
+		Actor{Kind: "user", ID: strconv.FormatInt(id, 10), Via: "token:research agent", UserID: id}); err != nil {
+		t.Fatal(err)
+	}
+	var kind, actorID string
+	if err := db.QueryRowContext(ctx,
+		`SELECT actor_kind, actor_id FROM activity WHERE entity_id = 'workspace.name'`).
+		Scan(&kind, &actorID); err != nil {
+		t.Fatal(err)
+	}
+	if want := strconv.FormatInt(id, 10); kind != "user" || actorID != want {
+		t.Errorf("activity actor = %s %s, want user %s", kind, actorID, want)
+	}
+}
+
+func TestAFailureToStoreIsMarked(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+	if _, err := db.ExecContext(ctx, `DROP TABLE settings`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Set(ctx, "workspace.name", []string{"Debt Machine"}, 0)
+	if !errors.Is(err, ErrStorage) {
+		t.Errorf("Set returned %v, want an ErrStorage", err)
+	}
+	// A value the caller got wrong is still the caller's, not storage.
+	if err := s.Set(ctx, "signin.session_days", []string{"soon"}, 0); errors.Is(err, ErrStorage) {
+		t.Errorf("a bad number returned %v", err)
+	}
+}
+
+// Two writers of one key must not commit in one order and update the cache in
+// the other, which would leave what the app reads disagreeing with the row.
+func TestConcurrentWritesLeaveTheCacheMatchingTheRow(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 20 {
+				if err := s.Set(ctx, "workspace.name", []string{fmt.Sprintf("name %d %d", i, j)}, 0); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	var stored string
+	if err := db.QueryRowContext(ctx,
+		`SELECT value_json FROM settings WHERE key = 'workspace.name'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if cached := Get[string](s, "workspace.name"); stored != `"`+cached+`"` {
+		t.Errorf("the row holds %s and the cache holds %q", stored, cached)
 	}
 }

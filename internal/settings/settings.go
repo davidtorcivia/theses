@@ -147,10 +147,42 @@ func (s *Settings) IsSet(key string) bool {
 	return s.present[key]
 }
 
+// ErrStorage marks a setting that could not be stored, as against a value the
+// caller got wrong. Everything else SetAs returns is the caller's fault and can
+// be repeated to them; this one is the server's and cannot.
+var ErrStorage = errors.New("the setting could not be stored")
+
+// An Actor is who is making the change. An action taken with an API token or by
+// an MCP client is the action of the person the token belongs to, so Kind and
+// ID are theirs; Via names what carried it, "token:<name>" or "mcp:<client>",
+// and is empty for a person at a form. UserID is who the settings row is
+// attributed to.
+//
+// ponytail: Via has nowhere to go until the activity table has a column for it.
+// Upgrade path: pass it to store.InsertActivity in SetAs below, which is the one
+// line this waits on.
+type Actor struct {
+	Kind   string
+	ID     string
+	Via    string
+	UserID int64
+}
+
+// User is the actor for a change made by a person in the browser.
+func User(id int64) Actor {
+	return Actor{Kind: "user", ID: strconv.FormatInt(id, 10), UserID: id}
+}
+
 // Set validates values against the key's definition, stores it and writes an
 // activity row. values is the form's slice for that field: a list setting takes
 // every non-empty entry, everything else takes the first.
 func (s *Settings) Set(ctx context.Context, key string, values []string, actorID int64) error {
+	return s.SetAs(ctx, key, values, User(actorID))
+}
+
+// SetAs is Set for a change that is not a person at a form: the API and MCP
+// record the token or the client that made it.
+func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor Actor) error {
 	def, ok := Lookup(key)
 	if !ok {
 		return fmt.Errorf("settings: unknown key %s", key)
@@ -169,17 +201,26 @@ func (s *Settings) Set(ctx context.Context, key string, values []string, actorID
 		}
 		nonce := make([]byte, s.aead.NonceSize())
 		if _, err := rand.Read(nonce); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", ErrStorage, err)
 		}
 		stored = base64.StdEncoding.EncodeToString(s.aead.Seal(nonce, nonce, []byte(secret), []byte(key)))
 		after = `{"set":true}`
 	} else {
 		b, err := json.Marshal(parsed)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", ErrStorage, err)
 		}
 		stored, after = string(b), string(b)
 	}
+
+	// The row and the cache are written under one lock, so that two writers of
+	// the same key cannot commit in one order and update the cache in the other
+	// and leave the two disagreeing. Writes are rare and readers hold the lock
+	// for a map lookup, so the wait costs nothing worth measuring, and no caller
+	// reads a setting while holding a database connection, which is what could
+	// turn this into a deadlock on the pool.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	before := ""
 	if old, err := store.GetSetting(ctx, s.db, key); err == nil {
@@ -192,31 +233,29 @@ func (s *Settings) Set(ctx context.Context, key string, values []string, actorID
 			before = old.ValueJSON
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return err
+		return fmt.Errorf("%w: read %s: %w", ErrStorage, key, err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 	defer tx.Rollback()
-	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actorID); err != nil {
-		return fmt.Errorf("save %s: %w", key, err)
+	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actor.UserID); err != nil {
+		return fmt.Errorf("%w: save %s: %w", ErrStorage, key, err)
 	}
-	if err := store.InsertActivity(ctx, tx, "user", strconv.FormatInt(actorID, 10),
+	if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID,
 		"setting", key, "set", before, after); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 
-	s.mu.Lock()
 	s.present[key] = true
 	if !def.Secret {
 		s.values[key] = parsed
 	}
-	s.mu.Unlock()
 	return nil
 }
 
