@@ -115,6 +115,30 @@ func (h *harness) post(path string, form url.Values) (*http.Response, string) {
 	return res, string(body)
 }
 
+// postBack posts a form on the settings or profile page. Those forms answer
+// with a redirect to the section they came from, so what they had to say is on
+// the page the browser lands on rather than in the response to the POST.
+func (h *harness) postBack(path string, form url.Values) (*http.Response, string) {
+	h.Helper()
+	return h.land(h.post(path, form))
+}
+
+// getBack is the same for the one route a browser arrives at by link: the
+// OAuth callback, which also answers by sending it back to the section.
+func (h *harness) getBack(path string) (*http.Response, string) {
+	h.Helper()
+	return h.land(h.get(path))
+}
+
+func (h *harness) land(res *http.Response, body string) (*http.Response, string) {
+	h.Helper()
+	if res.StatusCode != http.StatusSeeOther {
+		return res, body
+	}
+	to, _, _ := strings.Cut(res.Header.Get("Location"), "#")
+	return h.get(to)
+}
+
 var (
 	csrfRe       = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 	secretRe     = regexp.MustCompile(`type the key: ([A-Z2-7]+)`)
@@ -465,10 +489,10 @@ func TestSettingsSaveRoundTrips(t *testing.T) {
 	}
 
 	// A value the registry refuses does not save and says why.
-	res, body = h.post("/settings", url.Values{
+	res, body = h.postBack("/settings", url.Values{
 		"csrf": {h.csrf("/settings")}, "workspace.episode_start": {"soon"},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "not a number") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "not a number") {
 		t.Errorf("a bad value gave %d", res.StatusCode)
 	}
 }
@@ -668,7 +692,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	res, _ := h.post("/settings/team/invite", url.Values{
+	res, _ := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
 	})
 	if res.StatusCode != http.StatusOK {
@@ -688,7 +712,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := pending[0].ID
-	if res, _ := h.post("/settings/team/invite/"+itoa(id)+"/resend",
+	if res, _ := h.postBack("/settings/team/invite/"+itoa(id)+"/resend",
 		url.Values{"csrf": {h.csrf("/settings")}}); res.StatusCode != http.StatusOK {
 		t.Fatalf("resend gave %d", res.StatusCode)
 	}
@@ -708,7 +732,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 		t.Error("the invitation survived revoking")
 	}
 
-	res, body = h.post("/settings/tokens", url.Values{
+	res, body = h.postBack("/settings/tokens", url.Values{
 		"csrf": {h.csrf("/settings")}, "name": {"research agent"}, "scopes": {"read write"},
 	})
 	if res.StatusCode != http.StatusOK {
@@ -747,10 +771,10 @@ func TestRoleChangesAreGuarded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, body := h.post("/settings/team/role", url.Values{
+	res, body := h.postBack("/settings/team/role", url.Values{
 		"csrf": {h.csrf("/settings")}, "user": {itoa(owner.ID)}, "role": {auth.RoleEditor},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "your own role") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "your own role") {
 		t.Errorf("changing your own role gave %d", res.StatusCode)
 	}
 
@@ -783,18 +807,18 @@ func TestPasswordChangeAndResetLink(t *testing.T) {
 	h := newHarness(t)
 	password, secret := h.setupOwner()
 
-	res, body := h.post("/profile/password", url.Values{
+	res, body := h.postBack("/profile/password", url.Values{
 		"csrf": {h.csrf("/profile")}, "current": {"not my password"},
 		"password": {"a brand new password"}, "code": {code(t, secret)},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "current password") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "current password") {
 		t.Errorf("a wrong current password gave %d", res.StatusCode)
 	}
-	res, body = h.post("/profile/password", url.Values{
+	res, body = h.postBack("/profile/password", url.Values{
 		"csrf": {h.csrf("/profile")}, "current": {password},
 		"password": {"short"}, "code": {code(t, secret)},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "twelve") {
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "twelve") {
 		t.Errorf("a short new password gave %d", res.StatusCode)
 	}
 	if res, _ := h.post("/profile/password", url.Values{
@@ -837,8 +861,8 @@ func TestDeleteAccountRefusesTheLastOwner(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	res, body := h.post("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}})
-	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "last owner") {
+	res, body := h.postBack("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}})
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "last owner") {
 		t.Fatalf("deleting the last owner gave %d", res.StatusCode)
 	}
 	if n, _ := store.CountUsers(ctx, h.db); n != 1 {
@@ -1075,7 +1099,7 @@ func TestNoResetOrInviteLinkReachesTheLog(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	if res, _ := h.post("/settings/team/invite", url.Values{
+	if res, _ := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
 	}); res.StatusCode != http.StatusOK {
 		t.Fatalf("invite gave %d", res.StatusCode)
@@ -1212,8 +1236,8 @@ func TestARefusedDeleteLeavesNoActivityRow(t *testing.T) {
 	h.setupOwner()
 	before := activityCount(t, h, "delete")
 
-	res, body := h.post("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}})
-	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "last owner") {
+	res, body := h.postBack("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}})
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "last owner") {
 		t.Fatalf("deleting the last owner gave %d", res.StatusCode)
 	}
 	if got := activityCount(t, h, "delete"); got != before {
@@ -1276,7 +1300,7 @@ func TestANewInvitationShowsItsLinkOnce(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	res, body := h.post("/settings/team/invite", url.Values{
+	res, body := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
 	})
 	if res.StatusCode != http.StatusOK {
@@ -1303,7 +1327,7 @@ func TestANewInvitationShowsItsLinkOnce(t *testing.T) {
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending invitations = %v, %v", pending, err)
 	}
-	res, body = h.post("/settings/team/invite/"+itoa(pending[0].ID)+"/resend",
+	res, body = h.postBack("/settings/team/invite/"+itoa(pending[0].ID)+"/resend",
 		url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("resend gave %d", res.StatusCode)
@@ -1334,9 +1358,9 @@ func TestRenderedPagesAreNotCached(t *testing.T) {
 		}
 	}
 
-	// A page rendered as the answer to a POST, which is where the once-only
-	// panels live.
-	res, _ := h.post("/settings/tokens", url.Values{
+	// The page a form lands the browser on, which is where the once-only panels
+	// are printed.
+	res, _ := h.postBack("/settings/tokens", url.Values{
 		"csrf": {h.csrf("/settings")}, "name": {"research agent"}, "scopes": {"read"},
 	})
 	if got := res.Header.Get("Cache-Control"); got != "no-store" {

@@ -57,7 +57,7 @@
           </li>{{end}}
           {{range .ChannelForms}}{{if not .ID}}<li>
             <b>{{.KindLabel}}</b><span class="mono dim">not set</span><span></span>
-            <span class="chanacts"><button class="lnk" type="button" data-dialog="{{.DialogID}}">Add</button></span>
+            <span class="chanacts"><button class="btn" type="button" data-dialog="{{.DialogID}}">Add channel</button></span>
           </li>{{end}}{{end}}
         </ul>
         {{range .Channels}}<form method="post" action="/profile/notifications/channel/{{.ID}}/test" id="test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}

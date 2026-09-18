@@ -10,7 +10,7 @@
     {{template "notice" .}}
 
     <form class="form" method="post" action="/settings" id="workspace">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="workspace">
       <section class="fs">
         <div class="fsh"><h3>Workspace</h3><p>The workspace these propositions belong to, and when an episode is due.</p></div>
         <div class="fsb">
@@ -29,7 +29,7 @@
     </form>
 
     <form class="form" method="post" action="/settings" id="defaults">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="defaults">
       <section class="fs">
         <div class="fsh"><h3>Defaults</h3><p>What a new proposition starts with. Existing boards and documents keep their own.</p></div>
         <div class="fsb">
@@ -43,7 +43,7 @@
     </form>
 
     <form class="form" method="post" action="/settings" id="storage">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="storage">
       <section class="fs">
         <div class="fsh"><h3>Storage</h3><p>Where files and recordings live. Changing a bucket does not move what is already in the old one. The bucket needs a CORS rule allowing PUT, GET and HEAD from this origin, because the browser talks to it directly.</p></div>
         <div class="fsb">
@@ -58,16 +58,18 @@
     <form class="form" method="post" action="/settings/test/storage">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       {{if .StorageResult}}<p class="notice{{if .StorageFailed}} bad{{end}}">{{.StorageResult}}</p>{{end}}
-      <button class="lnk" type="submit" name="prefix" value="storage.primary">Test the primary bucket</button>
-      <button class="lnk" type="submit" name="prefix" value="storage.recordings">Test the recordings bucket</button>
-      <button class="lnk" type="button" data-cors="storage.primary">Check CORS from this browser</button>
-      <button class="lnk" type="button" data-cors="storage.recordings">Check CORS on recordings</button>
+      <div class="tests">
+        <button class="lnk" type="submit" name="prefix" value="storage.primary">Test the primary bucket</button>
+        <button class="lnk" type="submit" name="prefix" value="storage.recordings">Test the recordings bucket</button>
+        <button class="lnk" type="button" data-cors="storage.primary">Check CORS from this browser</button>
+        <button class="lnk" type="button" data-cors="storage.recordings">Check CORS on recordings</button>
+      </div>
       <p class="notice" id="corsresult" hidden></p>
       <p class="small dim">The first two write, read and delete one probe object with the saved keys. The other two upload a probe object from this page the way the browser does, which is the only way to find out whether the CORS rule below lets this origin through.</p>
     </form>
 
     <form class="form" method="post" action="/settings" id="mail">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="mail">
       <section class="fs">
         <div class="fsh"><h3>Mail</h3><p>Invitations, password resets and notifications go out through this server. Sending is queued, so a hiccup never fails a request.</p></div>
         <div class="fsb">
@@ -90,12 +92,14 @@
       {{if .MailProblem}}<p class="notice bad">{{.MailProblem}}. Queued messages wait until then.</p>{{end}}
       {{if .MailResult}}<p class="notice{{if .MailFailed}} bad{{end}}">{{.MailResult}}</p>{{end}}
       <p class="small dim">Outbox: {{.Outbox.Pending}} waiting{{if .Outbox.GivenUp}}, {{.Outbox.GivenUp}} given up and kept for inspection{{end}}.{{if .Outbox.LastError}} Last failure: <span class="mono">{{.Outbox.LastError}}</span>{{end}}</p>
-      <button class="lnk" type="submit">Send a test message</button>
-      <button class="lnk" type="submit" formaction="/settings/mail/retry">Retry the outbox now</button>
+      <div class="tests">
+        <button class="lnk" type="submit">Send a test message</button>
+        <button class="lnk" type="submit" formaction="/settings/mail/retry">Retry the outbox now</button>
+      </div>
     </form>
 
     <form class="form" method="post" action="/settings" id="signin">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="signin">
       <section class="fs">
         <div class="fsh"><h3>Sign-in</h3><p>Account name, password and an authenticator code, in one form. There is no other way in.</p></div>
         <div class="fsb">
@@ -110,7 +114,7 @@
     </form>
 
     <form class="form" method="post" action="/settings" id="backups">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="backups">
       <section class="fs">
         <div class="fsh"><h3>Backups</h3><p>Every night the database and the markdown mirror go to the bucket under the <span class="mono">{{.Backups.Prefix}}</span> prefix, as one archive encrypted with a key derived from THESES_SECRET_KEY: a restore needs that variable and nothing else. Three things are set up on the bucket, because none of them can be done from here. One, an application key restricted to that prefix with write and list but no delete, which is the key below. Two, Object Lock in compliance mode with a retention of the keep window, so nothing, including the account owner, can remove a backup before it expires. Three, server-side encryption on the bucket. Old archives are expired by the bucket's lifecycle rule; nothing here ever deletes one.</p></div>
         <div class="fsb">
@@ -133,8 +137,10 @@
       {{if .BackupResult}}<p class="notice{{if .BackupFailed}} bad{{end}}">{{.BackupResult}}</p>{{end}}
       {{if .Backups.Restore}}<p class="notice">{{.Backups.Restore}}</p>{{end}}
       <p class="small dim">{{.Backups.State}}{{if .Backups.Running}} One is running now.{{end}}{{if .Backups.Failure}} Last failure: <span class="mono">{{.Backups.Failure}}</span>{{end}}</p>
-      <button class="lnk" type="submit">Test backup key</button>
-      <button class="lnk" type="submit" formaction="/settings/backups/now">Back up now</button>
+      <div class="tests">
+        <button class="lnk" type="submit">Test backup key</button>
+        <button class="btn" type="submit" formaction="/settings/backups/now">Back up now</button>
+      </div>
       <p class="small dim">The test writes and lists one object under {{.Backups.Prefix}} and then tries to delete it. A refused delete is the pass: it is what says this key cannot take the history with it.</p>
       {{if .Backups.ListError}}<p class="notice bad">{{.Backups.ListError}}</p>{{end}}
       <ul class="pending">
@@ -173,15 +179,18 @@
           </tr>{{end}}
         </tbody></table>
 
+        <p class="small dim">The invitation link appears here, once, as soon as it is made, whether or not the mail goes out.</p>
         <form class="invite" method="post" action="/settings/team/invite">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
-          <input type="email" name="email" placeholder="Invite by email" spellcheck="false" required>
-          <select name="role">{{range .InviteRoles}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
-          <button class="lnk" type="submit">Send invite</button>
+          <label class="f"><span class="l">Email</span><input type="email" name="email" placeholder="someone@example.com" spellcheck="false" required></label>
+          <label class="f"><span class="l">Role</span><select name="role">{{range .InviteRoles}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select></label>
+          <button class="btn" type="submit">Send invite</button>
         </form>
+        {{if .NewInvite}}<p class="notice">{{.InviteSaid}} The link is shown here once and not again.
+          <span class="once" id="new-invite">{{.NewInvite}}</span>
+          <button class="lnk" type="button" data-copy="new-invite">Copy</button></p>{{end}}
 
         <h3 class="sub">Pending invitations</h3>
-        {{if .NewInvite}}<p class="notice">Send this to them now; it is not shown again. <span class="mono">{{.NewInvite}}</span></p>{{end}}
         <ul class="pending">
           {{range .Invitations}}<li>
             <span>{{.Email}}</span>
@@ -191,9 +200,8 @@
           </li>{{else}}<li><span class="mono dim">None outstanding.</span></li>{{end}}
         </ul>
 
-        <h3 class="sub">API tokens</h3>
-        <p class="small dim">A token carries the permissions of the account that made it. It is shown once.</p>
-        {{if .NewToken}}<p class="notice">Copy this now; it is not shown again. <span class="mono">{{.NewToken}}</span></p>{{end}}
+        <h3 class="sub" id="tokens">API tokens</h3>
+        <p class="small dim">A token carries the permissions of the account that made it. It is shown here once, as soon as it is made.</p>
         <ul class="pending">
           {{range .Tokens}}<li>
             <span>{{.Name}}</span>
@@ -203,15 +211,18 @@
         </ul>
         <form class="invite" method="post" action="/settings/tokens">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
-          <input name="name" placeholder="What is it for" required>
-          <select name="scopes"><option value="read">read</option><option value="read write">read and write</option><option value="read write files">read, write and files</option><option value="read write files admin">everything</option></select>
-          <button class="lnk" type="submit">Create a token</button>
+          <label class="f"><span class="l">Name</span><input name="name" placeholder="What is it for" required></label>
+          <label class="f"><span class="l">Scopes</span><select name="scopes"><option value="read">read</option><option value="read write">read and write</option><option value="read write files">read, write and files</option><option value="read write files admin">everything</option></select></label>
+          <button class="btn" type="submit">Create a token</button>
         </form>
+        {{if .NewToken}}<p class="notice">The token is shown here once and not again.
+          <span class="once" id="new-token">{{.NewToken}}</span>
+          <button class="lnk" type="button" data-copy="new-token">Copy</button></p>{{end}}
       </div>
     </section>
 
     <form class="form" method="post" action="/settings" id="notifications">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="notifications">
       <section class="fs">
         <div class="fsh"><h3>Notifications</h3><p>What the workspace holds for everybody: the Pushover application, the ntfy server and the hour the digest and the date pass run.</p></div>
         <div class="fsb">
@@ -270,7 +281,7 @@
             <span class="mono">{{.URL}}</span>
             <span class="chanacts"><button class="lnk" type="button" data-dialog="hook-{{.ID}}">Configure</button><button class="lnk" type="submit" form="hook-test-{{.ID}}">Test</button></span>
           </li>{{end}}{{end}}
-          <li><b>Webhook</b><span class="mono dim">not set</span><span>POST JSON on the events you choose</span><span class="chanacts"><button class="lnk" type="button" data-dialog="hook-new">Add</button></span></li>
+          <li><b>Webhook</b><span class="mono dim">not set</span><span>POST JSON on the events you choose</span><span class="chanacts"><button class="btn" type="button" data-dialog="hook-new">Add a webhook</button></span></li>
         </ul>
         {{range .Hooks}}{{if .ID}}<form method="post" action="/settings/integrations/webhook/{{.ID}}/test" id="hook-test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}{{end}}
         <form method="post" action="/settings/integrations/drive/connect" id="drive-connect" hidden><input type="hidden" name="csrf" value="{{.CSRF}}"></form>
@@ -285,7 +296,7 @@
       <h3>Google Drive</h3>
       <p>Make an OAuth client of type Web application in a Google Cloud project with the Drive API turned on, and list this address as an authorized redirect URI: <span class="mono">{{.Ints.Redirect}}</span>. Then paste the client id and secret here, save, and press Connect. The access is read only.</p>
       <form class="form" method="post" action="/settings">
-        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="integrations">
         <div class="row3">
           <label class="f"><span class="l">Client id</span><input type="password" name="integrations.drive.client_id" autocomplete="off" placeholder="{{if index .Set "integrations.drive.client_id"}}set, leave empty to keep{{end}}"></label>
           <label class="f"><span class="l">Client secret</span><input type="password" name="integrations.drive.client_secret" autocomplete="off" placeholder="{{if index .Set "integrations.drive.client_secret"}}set, leave empty to keep{{end}}"></label>
@@ -301,7 +312,7 @@
       <h3>Transistor</h3>
       <p>Paste an API key from the Transistor account. Test it with the show field empty and this page prints the shows the key reaches, with their ids; put the right one in and test again.</p>
       <form class="form" method="post" action="/settings">
-        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="integrations">
         <div class="row3">
           <label class="f"><span class="l">API key</span><input type="password" name="integrations.transistor.api_key" autocomplete="off" placeholder="{{if index .Set "integrations.transistor.api_key"}}set, leave empty to keep{{end}}"></label>
           <label class="f"><span class="l">Show</span><input name="integrations.transistor.show_id" value="{{index .S "integrations.transistor.show_id"}}" spellcheck="false"><small>The show's id.</small></label>
@@ -347,7 +358,8 @@
   </div>
 </section>{{end}}
 
-{{define "scripts"}}<script type="module" src="{{asset "app/storage.js"}}"></script>
+{{define "scripts"}}<script type="module" src="{{asset "app/copy.js"}}"></script>
+<script type="module" src="{{asset "app/storage.js"}}"></script>
 <script type="module" src="{{asset "app/notify.js"}}"></script>{{end}}
 
 {{define "bucket"}}<div class="row3">

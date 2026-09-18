@@ -244,14 +244,14 @@ func (s *Server) integrationResult(w http.ResponseWriter, r *http.Request, said 
 		s.integrationRefused(w, r, err)
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"IntegrationResult": said})
+	s.back(w, r, "/settings#integrations", map[string]any{"IntegrationResult": said})
 }
 
 // integrationRefused prints why on the section rather than taking the whole
 // page out. Whatever the message carries is redacted against the secrets this
 // section holds, because a provider is free to quote back what it was sent.
 func (s *Server) integrationRefused(w http.ResponseWriter, r *http.Request, err error) {
-	s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+	s.back(w, r, "/settings#integrations", map[string]any{
 		"IntegrationResult": s.redactSecrets(r.Context(), err.Error()), "IntegrationFailed": true,
 	})
 }

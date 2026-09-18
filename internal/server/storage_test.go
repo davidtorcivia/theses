@@ -50,7 +50,7 @@ func TestStorageProbeWritesReadsAndDeletes(t *testing.T) {
 	h.setupOwner()
 	h.configureBucket(endpoint, "theses")
 
-	res, body := h.post("/settings/test/storage", url.Values{
+	res, body := h.postBack("/settings/test/storage", url.Values{
 		"csrf": {h.csrf("/settings")}, "prefix": {"storage.primary"},
 	})
 	if res.StatusCode != http.StatusOK ||
@@ -65,10 +65,10 @@ func TestStorageProbeReportsAMissingBucket(t *testing.T) {
 	h.setupOwner()
 	h.configureBucket(endpoint, "elsewhere")
 
-	res, body := h.post("/settings/test/storage", url.Values{
+	res, body := h.postBack("/settings/test/storage", url.Values{
 		"csrf": {h.csrf("/settings")}, "prefix": {"storage.primary"},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a bucket that is not there gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "blob: probe put") {

@@ -559,3 +559,22 @@ button:focus-visible{outline:2px solid var(--y);outline-offset:2px}
 #top .setgs:hover{color:var(--y)}
 body.plain{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "work"}
 body.plain #top .show{display:inline;margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 18: the section heading is the loud one and the sub heading the quiet one, so
+   the hierarchy reads down the page, and the section nav follows the top bar so
+   it stays reachable on a page thousands of pixels long. Below 900 the nav is
+   three rows of links, which would take a third of the screen, so it scrolls
+   away there. A landing on a fragment clears both bars. */
+.fsh h3{font-size:15px;font-weight:800;letter-spacing:.06em;font-stretch:85%}
+#admin h3.sub{font-weight:500;font-size:12px;letter-spacing:.08em;font-stretch:80%;color:var(--dim);margin:2.2rem 0 .5rem}
+#admin [id]{scroll-margin-top:calc(var(--toph) + 3.2rem)}
+@media (min-width:901px){#admin nav{position:sticky;top:var(--toph);z-index:15;background:var(--k)}}
+/* 19: an action that makes something is a button, told apart from the filled
+   Save and from the links that revoke and remove, and the tests beside it are
+   separate buttons rather than one run of yellow words. */
+.btn{display:inline-block;border:1px solid var(--y);color:var(--y);padding:.4rem .9rem;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%}
+.btn:hover{background:var(--y);color:var(--k)}
+.tests{display:flex;flex-wrap:wrap;gap:.6rem 1.6rem;align-items:baseline;margin:.6rem 0}
+.invite{align-items:flex-end}
+.invite .f{flex:1 1 200px;margin:0}
+/* 8: a value the page shows once, selectable in one click beside its Copy. */
+.once{display:block;font-family:var(--monof);font-size:12px;letter-spacing:.05em;color:var(--p);overflow-wrap:anywhere;user-select:all;margin:.4rem 0 .3rem}

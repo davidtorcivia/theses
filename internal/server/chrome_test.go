@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -106,5 +107,95 @@ func TestTheErrorPageActionFollowsTheSession(t *testing.T) {
 	}
 	if !strings.Contains(body, `<a href="/login">Sign in</a>`) {
 		t.Error("404 with no session does not offer a sign-in")
+	}
+}
+
+// Finding 8: every form on these two pages answers with a redirect to the
+// section it posted from, so the browser never sits on an address that only
+// accepts POST and never lands at the top of a page thousands of pixels long.
+func TestEveryFormRedirectsToItsSection(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	for _, c := range []struct {
+		name, path, want string
+		form             url.Values
+	}{
+		{"a settings section saves", "/settings", "/settings?saved=1#storage",
+			url.Values{"section": {"storage"}, "storage.primary.region": {"us-west-000"}}},
+		{"a settings section refuses a value", "/settings", "/settings#workspace",
+			url.Values{"section": {"workspace"}, "workspace.episode_start": {"soon"}}},
+		{"a mail test", "/settings/test/mail", "/settings#mail", url.Values{}},
+		{"the outbox retry", "/settings/mail/retry", "/settings#mail", url.Values{}},
+		{"a storage probe", "/settings/test/storage", "/settings#storage",
+			url.Values{"prefix": {"storage.primary"}}},
+		{"a backup now", "/settings/backups/now", "/settings#backups", url.Values{}},
+		{"an invitation", "/settings/team/invite", "/settings#team",
+			url.Values{"email": {"mara@example.com"}, "role": {auth.RoleEditor}}},
+		{"a role change", "/settings/team/role", "/settings#team",
+			url.Values{"user": {"1"}, "role": {auth.RoleEditor}}},
+		{"a token", "/settings/tokens", "/settings#tokens",
+			url.Values{"name": {"research agent"}, "scopes": {"read"}}},
+		{"the notification defaults", "/settings/notifications/defaults",
+			"/settings?saved=1#notifications", url.Values{"event": {"mentioned"}}},
+		{"a webhook with no events", "/settings/integrations/webhook", "/settings#integrations",
+			url.Values{"id": {"0"}, "url": {"https://example.com/hook"}}},
+		{"the profile", "/profile", "/profile?saved=1#you",
+			url.Values{"handle": {"ada"}, "name": {"Ada Lovelace"}, "initials": {"AL"},
+				"email": {"ada@example.com"}, "colour": {Palette[1]}}},
+		{"a password change that is refused", "/profile/password", "/profile#security",
+			url.Values{"current": {"not my password"}, "password": {"a brand new password"}}},
+		{"deleting the last owner", "/profile/delete", "/profile#danger", url.Values{}},
+	} {
+		form := url.Values{"csrf": {h.csrf("/settings")}}
+		for k, v := range c.form {
+			form[k] = v
+		}
+		res, _ := h.post(c.path, form)
+		if res.StatusCode != http.StatusSeeOther {
+			t.Errorf("%s: %s gave %d, want a redirect", c.name, c.path, res.StatusCode)
+			continue
+		}
+		if got := res.Header.Get("Location"); got != c.want {
+			t.Errorf("%s: landed on %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
+// The flash is what carries a value the page shows once across that redirect.
+func TestTheOneTimeValuesSurviveTheRedirectOnlyOnce(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	res, body := h.postBack("/settings/tokens", url.Values{
+		"csrf": {h.csrf("/settings")}, "name": {"research agent"}, "scopes": {"read"},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("the token page gave %d", res.StatusCode)
+	}
+	token := tokenRe.FindStringSubmatch(body)
+	if token == nil {
+		t.Fatalf("the new token is not on the page it landed on:\n%s", body)
+	}
+	if !strings.Contains(body, `id="new-token"`) || !strings.Contains(body, `data-copy="new-token"`) {
+		t.Error("the token has no copyable value beside a Copy button")
+	}
+	if _, again := h.get("/settings"); strings.Contains(again, token[1]) {
+		t.Error("the flash was not spent: the token is on the next load too")
+	}
+
+	// Finding 20: the invitation says which of the three things happened to the
+	// mail, and no mail server is configured here.
+	_, body = h.postBack("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
+	})
+	if link := inviteLinkRe.FindStringSubmatch(body); link == nil {
+		t.Fatalf("the invitation link is not on the page it landed on:\n%s", body)
+	}
+	if !strings.Contains(body, "Mail is not configured") {
+		t.Errorf("the notice does not say the mail is only queued:\n%s", firstNotice(body))
+	}
+	if !strings.Contains(body, `data-copy="new-invite"`) {
+		t.Error("the invitation link has no Copy button")
 	}
 }

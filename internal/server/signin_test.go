@@ -229,7 +229,7 @@ func TestInvitationAcceptanceAlwaysEnrols(t *testing.T) {
 		[]string{"owners"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	res, body := h.post("/settings/team/invite", url.Values{
+	res, body := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleGuest},
 	})
 	if res.StatusCode != http.StatusOK {

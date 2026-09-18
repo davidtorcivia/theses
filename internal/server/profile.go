@@ -9,36 +9,52 @@ import (
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
-func (s *Server) renderProfile(w http.ResponseWriter, r *http.Request, status int, extra map[string]any) {
+// profileSections are the anchors a form on the profile page may send the
+// browser back to.
+var profileSections = map[string]bool{"you": true, "security": true, "notifications": true, "danger": true}
+
+// profileTo is the profile page's half of settingsTo.
+func profileTo(section string, saved bool) string {
+	to := "/profile"
+	if saved {
+		to += "?saved=1"
+	}
+	if profileSections[section] {
+		to += "#" + section
+	}
+	return to
+}
+
+func (s *Server) renderProfile(w http.ResponseWriter, r *http.Request, extra map[string]any) {
 	u := userOf(r)
 	notifications, err := s.notifyProfile(r)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, status, "profile.html", s.page(r, "Profile", merge(merge(map[string]any{
+	s.render(w, r, http.StatusOK, "profile.html", s.page(r, "Profile", merge(merge(map[string]any{
 		"Plain":    true,
 		"Swatches": swatches(u.Colour),
 	}, notifications), extra)))
 }
 
 func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
-	extra := map[string]any{}
+	extra := s.pending.takeFlash(w, r, s.cfg.CookieSecure)
 	if r.URL.Query().Get("saved") != "" {
 		extra["Notice"] = "Saved."
 	}
-	s.renderProfile(w, r, http.StatusOK, extra)
+	s.renderProfile(w, r, extra)
 }
 
 func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
 	handle, err := auth.NormaliseHandle(r.PostFormValue("handle"))
 	if err != nil {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, "/profile#you", map[string]any{"Error": err.Error()})
 		return
 	}
 	if min := s.handleMinLength(); len(handle) < min {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": errShort(min).Error()})
+		s.back(w, r, "/profile#you", map[string]any{"Error": errShort(min).Error()})
 		return
 	}
 	name := strings.TrimSpace(r.PostFormValue("name"))
@@ -49,14 +65,14 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		colour = u.Colour
 	}
 	if name == "" || initials == "" || len([]rune(initials)) > 2 {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/profile#you", map[string]any{
 			"Error": "A name, and one or two initials, are what appear on cards.",
 		})
 		return
 	}
 	if handle != u.Handle {
 		if _, err := store.UserByHandle(r.Context(), s.db, handle); err == nil {
-			s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "That account name is taken."})
+			s.back(w, r, "/profile#you", map[string]any{"Error": "That account name is taken."})
 			return
 		} else if !errors.Is(err, store.ErrNotFound) {
 			s.fail(w, r, err)
@@ -64,7 +80,7 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if other, err := store.UserByEmail(r.Context(), s.db, email); err == nil && other.ID != u.ID {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "Another account already uses that email address."})
+		s.back(w, r, "/profile#you", map[string]any{"Error": "Another account already uses that email address."})
 		return
 	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, r, err)
@@ -76,24 +92,24 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/profile?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, profileTo("you", true), http.StatusSeeOther)
 }
 
 func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
 	if !auth.CheckPassword(u.PasswordHash, r.PostFormValue("current")) {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "That is not your current password."})
+		s.back(w, r, "/profile#security", map[string]any{"Error": "That is not your current password."})
 		return
 	}
 	hash, err := auth.HashPassword(r.PostFormValue("password"))
 	if err != nil {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, "/profile#security", map[string]any{"Error": err.Error()})
 		return
 	}
 	// The code is claimed last, so a password the rules refuse does not use one up.
 	if u.TOTPSecret != "" {
 		if err := s.auth.CheckTOTP(r.Context(), u, r.PostFormValue("code")); err != nil {
-			s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": "That authenticator code did not match."})
+			s.back(w, r, "/profile#security", map[string]any{"Error": "That authenticator code did not match."})
 			return
 		}
 	}
@@ -103,7 +119,7 @@ func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/profile?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, profileTo("security", true), http.StatusSeeOther)
 }
 
 // postReenrol starts enrollment for someone already signed in. The new secret
@@ -149,7 +165,7 @@ func (s *Server) postDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}); err != nil {
 		if errors.Is(err, errRefused) {
-			s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
+			s.back(w, r, "/profile#danger", map[string]any{
 				"Error": "You are the last owner. Make someone else an owner first.",
 			})
 			return
