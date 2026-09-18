@@ -26,6 +26,21 @@ func mirrorFixture(t *testing.T) (*fixture, string) {
 	return f, path
 }
 
+// save writes a file the way an editor that renames into place does. A truncate
+// and a write are two events and a watcher can read between them, which the two
+// seconds the mirror waits in earnest cover but the milliseconds these tests
+// wait do not.
+func save(t *testing.T, path, content string) {
+	t.Helper()
+	tmp := path + ".saving"
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func read(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -427,10 +442,7 @@ func TestRunImportsAHandEditAndNotItsOwnWrites(t *testing.T) {
 	})
 
 	// A change on disk reaches the database.
-	content := strings.Replace(read(t, path), "# From the browser", "# From the terminal", 1)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	save(t, path, strings.Replace(read(t, path), "# From the browser", "# From the terminal", 1))
 	waitFor(t, "the hand edit to reach the database", func() bool {
 		b, err := GetBlock(ctx, f.db, blocks[0].ID)
 		return err == nil && b.Text == "# From the terminal"
@@ -514,11 +526,8 @@ func TestRunKeepsTheConflictMarkersItWrote(t *testing.T) {
 	// this worth testing: the commands the import applies publish events of
 	// their own, and writing the file for one of those would take the marker
 	// off the block the import could not apply.
-	if err := os.WriteFile(path,
-		[]byte(strings.Replace(stale, "## Is it true?", "## Is it true at the terminal?", 1)+
-			"\nAnd a paragraph typed into the file.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	save(t, path, strings.Replace(stale, "## Is it true?", "## Is it true at the terminal?", 1)+
+		"\nAnd a paragraph typed into the file.\n")
 	waitFor(t, "the paragraph typed into the file", func() bool {
 		blocks := f.blocks(t)
 		return blocks[len(blocks)-1].Text == "And a paragraph typed into the file."
@@ -866,5 +875,76 @@ func TestMirrorForgetsAMarkerOnABlockThatIsGone(t *testing.T) {
 	}
 	if !strings.Contains(back, "## Is it true in the browser?") {
 		t.Fatalf("the restored block is not in the file:\n%s", back)
+	}
+}
+
+// texts is a document's blocks in order, for comparing a whole document.
+func texts(blocks []Block) []string {
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, b.Text)
+	}
+	return out
+}
+
+// A sentence written straight under a heading is a block of its own, and it
+// belongs between the heading and whatever the file has after it. The command
+// that writes the heading's own change puts it there and answers with the
+// heading, so following that answer would leave the next chunk of the file in
+// between the two.
+func TestImportKeepsAParagraphWrittenUnderABlockInPlace(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+
+	if err := os.WriteFile(path, []byte(strings.Replace(read(t, path), "## Is it true?",
+		"## Is it true?\nA note under it.\n\nBrand new paragraph.", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	got := texts(f.blocks(t))
+	want := []string{"# The sea is a battery.", "## Is it true?", "A note under it.",
+		"Brand new paragraph.", "## Who pays?"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("the document reads %v, want %v", got, want)
+	}
+}
+
+// The same, for a block whose own change the database will not take. What was
+// written under it is words that are in the file and nowhere else, so it goes
+// in even though the block itself stays as the database has it and comes back
+// marked.
+func TestImportKeepsAParagraphWrittenUnderABlockItCouldNotSet(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	blocks := f.blocks(t)
+
+	// The terminal rewrites the heading and writes a note under it.
+	stale := strings.Replace(read(t, path), "## Is it true?",
+		"## Is it true at the terminal?\nA note under it.", 1)
+	// The browser rewrites the same heading another way.
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version,
+		"## Is it true in the browser?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+
+	got := texts(f.blocks(t))
+	want := []string{"# The sea is a battery.", "## Is it true in the browser?",
+		"A note under it.", "## Who pays?"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("the document reads %v, want %v", got, want)
+	}
+	if !strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("the block that would not take the change came back unmarked:\n%s", read(t, path))
 	}
 }

@@ -335,19 +335,36 @@ func (s *Service) Import(ctx context.Context, path string) error {
 		}
 		seen[item.ID] = true
 		after = item.ID
-		if item.Text == current.Text {
-			continue
+		// The paragraphs are cut here for the same reason they are on the
+		// branch above: a set whose text holds more than one paragraph writes
+		// the first to the named block and puts the rest in after it, and
+		// answers with the named one, so whatever came next in the file would
+		// land in among them.
+		parts := Paragraphs(item.Text)
+		if len(parts) == 0 {
+			parts = []string{""}
 		}
-		// The version in the comment is the version the person at the terminal
-		// started from, so this is the same stale set the browser sends and it
-		// goes through the same merge.
-		if _, err := s.SetBlock(ctx, fileActor, item.ID, item.Version, item.Text); err != nil {
-			var clash *core.ConflictError
-			if errors.As(err, &clash) {
+		if parts[0] != current.Text {
+			// The version in the comment is the version the person at the
+			// terminal started from, so this is the same stale set the browser
+			// sends and it goes through the same merge.
+			if _, err := s.SetBlock(ctx, fileActor, item.ID, item.Version, parts[0]); err != nil {
+				var clash *core.ConflictError
+				if !errors.As(err, &clash) {
+					return err
+				}
 				conflicted[item.ID] = true
-				continue
 			}
-			return err
+		}
+		// What was written under the block is words that are in the file and
+		// not in the database, so it goes in whether or not the block itself
+		// would take its own change, which is the rule the branch above uses.
+		for _, part := range parts[1:] {
+			e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part)
+			if err != nil {
+				return err
+			}
+			after = e.EntityID
 		}
 	}
 
