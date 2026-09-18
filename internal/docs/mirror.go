@@ -139,6 +139,11 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	if !force {
 		conflicted = was.conflicted
 	}
+	// A marker is remembered by block id, and a block can go: deleting one and
+	// undoing the delete would otherwise bring back a marker for a conflict
+	// that was settled long before. What is remembered is cut down to the
+	// blocks the document still has, before it is written or recorded.
+	conflicted = stillThere(conflicted, blocks)
 	content := render(d, blocks, conflicted)
 	sum := hashOf(content)
 
@@ -178,6 +183,21 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	// anything now.
 	s.forgetOthers(document, path)
 	return nil
+}
+
+// stillThere drops the blocks a remembered set of markers names that the
+// document no longer has.
+func stillThere(conflicted map[int64]bool, blocks []Block) map[int64]bool {
+	if len(conflicted) == 0 {
+		return conflicted
+	}
+	out := map[int64]bool{}
+	for _, b := range blocks {
+		if conflicted[b.ID] {
+			out[b.ID] = true
+		}
+	}
+	return out
 }
 
 // writeAtomic writes through a temporary file in the same directory and renames
@@ -231,6 +251,10 @@ type fileBlock struct {
 	ID      int64
 	Version int64
 	Text    string
+	// Conflicted is a block the file already carries a marker on, put there by
+	// an earlier import. It is read back rather than assumed, because after a
+	// restart the file is the only record of it.
+	Conflicted bool
 }
 
 type fileDoc struct {
@@ -292,6 +316,7 @@ func parseMirror(content []byte) (fileDoc, error) {
 			// A marker this process wrote onto a block it could not take from
 			// the file is not part of the text.
 			if strings.TrimSpace(lines[0]) == conflictMarker {
+				block.Conflicted = true
 				lines = lines[1:]
 				continue
 			}

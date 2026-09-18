@@ -287,9 +287,14 @@ func (s *Service) Import(ctx context.Context, path string) error {
 		return err
 	}
 	if sameAs(file, blocks) {
-		// Whitespace, a reordered comment, an editor's newline at the end. The
-		// file is rewritten so that it matches again, and nothing is recorded.
-		return s.Mirror(ctx, document.ID, nil, true)
+		// Whitespace, a reordered comment, an editor's newline at the end.
+		// Nothing is applied, but the file is still rewritten, because that is
+		// what puts the hash this process remembers back in step with what is
+		// on disk. The markers the file already carries go back on it: after a
+		// restart the file is the only thing that remembers them, and dropping
+		// them here would take away the one notice the person at the terminal
+		// has that a block of theirs never went in.
+		return s.Mirror(ctx, document.ID, markedIn(file), true)
 	}
 
 	// A bad hand edit is one restore away.
@@ -315,11 +320,17 @@ func (s *Service) Import(ctx context.Context, path string) error {
 			if strings.TrimSpace(item.Text) == "" {
 				continue
 			}
-			e, err := s.InsertBlock(ctx, fileActor, document.ID, after, item.Text)
-			if err != nil {
-				return err
+			// The paragraphs are cut here rather than left to the command.
+			// InsertBlock answers with the first block when the text it is
+			// given holds more than one paragraph, and following that one
+			// would put the next chunk of the file in among them.
+			for _, part := range Paragraphs(item.Text) {
+				e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part)
+				if err != nil {
+					return err
+				}
+				after = e.EntityID
 			}
-			after = e.EntityID
 			continue
 		}
 		seen[item.ID] = true
@@ -360,6 +371,18 @@ func (s *Service) Import(ctx context.Context, path string) error {
 		}
 	}
 	return s.Mirror(ctx, document.ID, conflicted, true)
+}
+
+// markedIn is the blocks the file already carries a conflict marker on, which
+// after a restart is all this process knows about them.
+func markedIn(file fileDoc) map[int64]bool {
+	out := map[int64]bool{}
+	for _, item := range file.Blocks {
+		if item.Conflicted && item.ID != 0 {
+			out[item.ID] = true
+		}
+	}
+	return out
 }
 
 // sameAs reports whether the file already says exactly what the database holds,

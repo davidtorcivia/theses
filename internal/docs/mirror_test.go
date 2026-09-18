@@ -741,3 +741,130 @@ func TestRunImportsEveryFileItFindsAtStart(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// Paragraphs the file adds go in in the order the file has them, whether or not
+// one of them is a heading. Text between two comments is cut into blocks here,
+// and following only the first of them would put whatever came next in the file
+// in among them.
+func TestImportKeepsAddedParagraphsInOrder(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+
+	if err := os.WriteFile(path,
+		[]byte(read(t, path)+"\nFirst new line.\n## Second as a heading.\n\nThird paragraph.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	blocks := f.blocks(t)
+	var got []string
+	for _, b := range blocks[len(blocks)-3:] {
+		got = append(got, b.Text)
+	}
+	want := []string{"First new line.", "## Second as a heading.", "Third paragraph."}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("the file's new paragraphs landed as %v, want %v", got, want)
+	}
+}
+
+// After a restart nothing remembers which blocks were in conflict but the file,
+// so the import that reads it back has to take the markers from it rather than
+// rub them out on its way past.
+func TestImportKeepsTheMarkersItFindsAfterARestart(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	blocks := f.blocks(t)
+
+	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("no conflict marker to start with:\n%s", read(t, path))
+	}
+
+	// A restart: the file is registered the way catchUp registers one it found
+	// already there, with nothing known about what is in it.
+	f.mu.Lock()
+	f.written = map[string]mirrored{path: {document: f.doc}}
+	f.mu.Unlock()
+
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	after := read(t, path)
+	if !strings.Contains(after, conflictMarker) {
+		t.Fatalf("the restart took the marker off:\n%s", after)
+	}
+	// And the rewrite still happened, which is what puts the remembered hash
+	// back in step with the file.
+	f.mu.Lock()
+	recorded := f.written[path]
+	f.mu.Unlock()
+	if recorded.hash != hashOf([]byte(after)) {
+		t.Fatal("the import left the recorded hash out of step with the file")
+	}
+	if !recorded.conflicted[f.blocks(t)[1].ID] {
+		t.Fatalf("the marker was written but not remembered: %+v", recorded.conflicted)
+	}
+}
+
+// A marker is remembered by block id, and a block can go. Deleting one and
+// undoing the delete must not bring its marker back with it.
+func TestMirrorForgetsAMarkerOnABlockThatIsGone(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	blocks := f.blocks(t)
+
+	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("no conflict marker to start with:\n%s", read(t, path))
+	}
+
+	deleted, err := f.DeleteBlock(ctx, f.who["editor"], blocks[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("the marker outlived the block it was on:\n%s", read(t, path))
+	}
+
+	if _, err := f.Undo(ctx, f.who["editor"], deleted.Seq); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	back := read(t, path)
+	if strings.Contains(back, conflictMarker) {
+		t.Fatalf("undoing the delete brought the marker back:\n%s", back)
+	}
+	if !strings.Contains(back, "## Is it true in the browser?") {
+		t.Fatalf("the restored block is not in the file:\n%s", back)
+	}
+}
