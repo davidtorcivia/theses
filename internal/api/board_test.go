@@ -153,7 +153,7 @@ func TestTheBoardRoundTripsOverREST(t *testing.T) {
 	if w = h.do("POST", "/api/v1/cards/"+card+"/done", token, ""); w.Code != http.StatusOK {
 		t.Fatalf("done gave %d: %s", w.Code, w.Body)
 	}
-	if w = h.do("POST", "/api/v1/cards/"+card+"/checklist", token, `{"text":"Ring the harbour"}`); w.Code != http.StatusOK {
+	if w = h.do("POST", "/api/v1/cards/"+card+"/checklist", token, `{"text":"Ring the harbor"}`); w.Code != http.StatusOK {
 		t.Fatalf("a checklist item gave %d: %s", w.Code, w.Body)
 	}
 	item := strconv.FormatInt(h.event(w).EntityID, 10)
@@ -271,7 +271,7 @@ func TestUndoOverTheAPIIsRefusedTheSameWay(t *testing.T) {
 	token := h.token(auth.ScopeRead, auth.ScopeWrite)
 	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 
-	created, err := h.board.CreateCard(ctx, owner, h.column, "Call the harbour", nil)
+	created, err := h.board.CreateCard(ctx, owner, h.column, "Call the harbor", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestUndoOverTheAPIIsRefusedTheSameWay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edited, err := h.board.EditCardTitle(ctx, owner, created.EntityID, fresh.Version, "Call the harbour master")
+	edited, err := h.board.EditCardTitle(ctx, owner, created.EntityID, fresh.Version, "Call the harbor master")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestUndoOverTheAPIIsRefusedTheSameWay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Title != "Call the harbour" {
+	if back.Title != "Call the harbor" {
 		t.Errorf("title = %q", back.Title)
 	}
 	if w := undo(edited.Seq); w.Code != http.StatusConflict {
