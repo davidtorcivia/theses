@@ -619,7 +619,8 @@ it.
 Two rules run through all of them. A proposition the token's owner is not a
 member of answers `404` on every route, the same as one that is not there; an
 owner is a member of every proposition. An archived proposition is read only,
-and a write to one answers `409`; restoring it is the write that still works.
+and a write to one answers `409`; restoring it and deleting it are the writes
+that still work.
 
 ## `GET /api/v1/propositions`
 
@@ -712,7 +713,9 @@ Scope `write`, and the role has to be one that may delete, which a researcher
 is not. A token whose owner may not delete is answered `404`, the same as a
 proposition that is not there. The board, the documents, the links and the
 files go with it, and the record of the deletion is filed with no proposition
-so that it survives the cascade.
+so that it survives the cascade. An archived proposition can be deleted without
+being restored first: deleting and restoring are the two writes an archived one
+still takes.
 
 ## `POST /api/v1/propositions/{id}/members/{user}`
 
@@ -720,10 +723,15 @@ Scope `write`. Puts somebody on the proposition, which is what lets them read
 it at all. Somebody who is not in the workspace is `404`. Adding somebody
 already on it changes nothing and answers `200`.
 
+```
+POST /api/v1/propositions/10/members/2
+```
+
 ## `DELETE /api/v1/propositions/{id}/members/{user}`
 
 Scope `write`. Takes them off again, after which the proposition answers `404`
-to their tokens.
+to their tokens. Somebody who was not on it is `404`, so a removal that answers
+`200` is one that happened.
 
 ## `GET /api/v1/propositions/{id}/columns`
 

@@ -170,6 +170,13 @@ func (s *Server) postNotificationRules(w http.ResponseWriter, r *http.Request) {
 		ticked[event] = append(ticked[event], channel)
 	}
 	if err := notify.SetRules(r.Context(), s.db, s.settings, u.ID, ticked); err != nil {
+		// A failure to read or write is this side's: logged, and answered with
+		// the error page rather than printed to the person as a matrix they
+		// could have posted differently.
+		if errors.Is(err, notify.ErrStorage) {
+			s.fail(w, r, err)
+			return
+		}
 		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
@@ -260,6 +267,10 @@ func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Ch
 	saved, err := notify.SaveChannel(r.Context(), s.db, s.settings, c)
 	if errors.Is(err, store.ErrNotFound) {
 		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, notify.ErrStorage) {
+		s.fail(w, r, err)
 		return
 	}
 	if err != nil {

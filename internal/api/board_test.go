@@ -588,6 +588,27 @@ func TestMembershipAndDeleteOverREST(t *testing.T) {
 		t.Fatalf("somebody taken off still reads it: %d %s", w.Code, w.Body)
 	}
 
+	// Taking off somebody who is not on is nothing happening, and it says so
+	// rather than writing a row and telling every board watching that it did.
+	var before int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM activity WHERE entity = 'member'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{who, "9999"} {
+		if w := h.do("DELETE", "/api/v1/propositions/"+prop+"/members/"+id, token, ""); w.Code != http.StatusNotFound {
+			t.Errorf("removing %s again gave %d: %s", id, w.Code, w.Body)
+		}
+	}
+	var after int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM activity WHERE entity = 'member'`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("%d rows were written for removals that did nothing", after-before)
+	}
+
 	// A researcher may edit and not delete, and is told the proposition is not
 	// there rather than that the role is wrong.
 	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`,

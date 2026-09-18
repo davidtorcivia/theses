@@ -359,10 +359,17 @@ func (s *Service) member(ctx context.Context, a core.Actor, proposition, user in
 			}
 			return core.Change{Entity: "member", EntityID: user, Action: "add", After: row}, nil
 		}
-		if _, err := tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`DELETE FROM proposition_members WHERE proposition_id = ? AND user_id = ?`,
-			proposition, user); err != nil {
+			proposition, user)
+		if err != nil {
 			return core.Change{}, err
+		}
+		// Taking off somebody who was never on is nothing happening, and an
+		// activity row and an event saying it happened would be a lie every
+		// board watching would draw.
+		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			return core.Change{}, core.ErrNotFound
 		}
 		return core.Change{Entity: "member", EntityID: user, Action: "remove", Before: row}, nil
 	})
