@@ -7,7 +7,7 @@
       <h1>Sign in.</h1>
       {{template "notice" .}}
       <label class="f"><span class="l sm">Account name</span><input name="handle" value="{{.Handle}}" autocomplete="username" spellcheck="false" autofocus required></label>
-      <label class="f"><span class="l sm row">Password <a class="lnk quiet" href="/reset">Forgot it</a></span><input type="password" name="password" autocomplete="current-password" required></label>
+      <div class="f pw"><label><span class="l sm">Password</span><input type="password" name="password" autocomplete="current-password" required></label><a class="lnk quiet forgot" href="/reset">Forgot it</a></div>
       <label class="f"><span class="l sm">Authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digits" maxlength="6"></label>
       <button class="btn" type="submit" data-busy="Signing in">Sign in</button>
     </form>
