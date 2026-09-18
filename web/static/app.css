@@ -385,6 +385,7 @@ select option{color:#000}
 #drawer .comments li{padding:.5rem 0;border-bottom:1px solid var(--hair)}
 #drawer .when{color:var(--dim)}
 #drawer .cf{margin-top:1rem;border-top:1px solid var(--hair);padding-top:.8rem}
+#drawer .cf select{font:inherit;font-weight:600;color:var(--y);background:none;border:0;padding:0;cursor:pointer}
 #drawer .cf textarea{border:1px solid var(--hair);padding:.4rem .6rem;resize:none}
 #drawer .cite{color:var(--dim);font-size:12px;letter-spacing:0;text-transform:none}
 #drawer .src a{color:var(--y);font-weight:600}
