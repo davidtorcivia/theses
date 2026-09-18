@@ -1,7 +1,7 @@
 package config
 
 import (
-	"bytes"
+	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
 	"strings"
@@ -15,7 +15,7 @@ func env(m map[string]string) func(string) (string, bool) {
 const (
 	hexKey  = "d3f0a1b2c4e5968778695a4b3c2d1e0fa9b8c7d6e5f4031223344556678899aa"
 	rawKey  = "correct horse battery staple, thirty-eight bytes"
-	otherHx = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	otherHx = "7c1e5b90af23d64801bd3fe7a95c28460df1b73e2a86c95041fe3b7d2c680a95"
 )
 
 func good() map[string]string {
@@ -79,6 +79,9 @@ func TestLoadRejects(t *testing.T) {
 		{"half length hex key", "THESES_SECRET_KEY", strings.Repeat("ab", 16), "which is 16 bytes"},
 		{"placeholder key", "THESES_SESSION_KEY", strings.Repeat("changeme", 5), "placeholder"},
 		{"repeated word", "THESES_SESSION_KEY", strings.Repeat("abcdefgh", 4), "placeholder"},
+		{"hex zeros", "THESES_SECRET_KEY", strings.Repeat("0", 64), "placeholder"},
+		{"hex of one repeated byte", "THESES_SESSION_KEY", strings.Repeat("de", 32), "placeholder"},
+		{"hex of four repeated bytes", "THESES_SECRET_KEY", strings.Repeat("deadbeef", 8), "placeholder"},
 		{"missing session key", "THESES_SESSION_KEY", "", "THESES_SESSION_KEY is required"},
 		{"bad bool", "THESES_TRUST_PROXY", "yes please", "must be true or false"},
 		{"bad level", "THESES_LOG_LEVEL", "chatty", "debug, info, warn or error"},
@@ -108,11 +111,16 @@ func TestHexIsNeverRereadAsBytes(t *testing.T) {
 	}
 }
 
-// What .env.example tells the owner to run has to pass.
+// What .env.example tells the owner to run has to pass. `openssl rand -hex 32`
+// is 32 random bytes as hex, so that is what this generates.
 func TestTheDocumentedCommandProducesAnAcceptableKey(t *testing.T) {
 	m := good()
 	for _, name := range []string{"THESES_SECRET_KEY", "THESES_SESSION_KEY"} {
-		m[name] = hex.EncodeToString(bytes.Repeat([]byte{1, 2, 3, 4}, 8))
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			t.Fatal(err)
+		}
+		m[name] = hex.EncodeToString(b)
 	}
 	c, err := Load(env(m))
 	if err != nil {

@@ -100,17 +100,18 @@ func key(lookup func(string) (string, bool), name string) ([]byte, error) {
 	if v == "" {
 		return nil, fmt.Errorf("%s is required: %s", name, keyAdvice)
 	}
+	b := []byte(v)
 	if decoded, err := hex.DecodeString(v); err == nil {
 		if len(decoded) < MinKeyLen {
 			return nil, fmt.Errorf("%s is %d hex characters, which is %d bytes; need at least %d bytes: %s",
 				name, len(v), len(decoded), MinKeyLen, keyAdvice)
 		}
-		return decoded, nil
-	}
-	b := []byte(v)
-	if len(b) < MinKeyLen {
+		b = decoded
+	} else if len(b) < MinKeyLen {
 		return nil, fmt.Errorf("%s is too short: %d bytes, need at least %d; %s", name, len(b), MinKeyLen, keyAdvice)
 	}
+	// The variety check is on the bytes that end up being the key, hex or not,
+	// so that 64 zeros is refused the same as a repeated word.
 	if distinct(b) < MinDistinctBytes {
 		return nil, fmt.Errorf("%s has only %d distinct bytes, so it looks like a placeholder rather than a random key; %s",
 			name, distinct(b), keyAdvice)
