@@ -16,10 +16,12 @@ import (
 // may write. Anything else refuses, and so do creates and deletes: putting a
 // deleted row back would give it a new id and orphan everything that pointed at
 // it, and unmaking a created one is a delete wearing a different name.
-var undoable = map[string]struct {
+type undoSpec struct {
 	table string
 	cols  []string
-}{
+}
+
+var undoable = map[string]undoSpec{
 	"proposition":    {"propositions", []string{"title", "statement", "blurb", "status", "episode", "target_date", "position", "archived_at"}},
 	"column":         {"columns", []string{"name", "position"}},
 	"card":           {"cards", []string{"column_id", "position", "title", "description_md", "question", "due_date", "done_at"}},
@@ -69,7 +71,7 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 			return Change{}, ErrNotUndoable
 		}
 
-		was, err := snapshot(ctx, tx, spec.table, spec.cols, id)
+		was, err := s.whole(ctx, tx, entity, spec, id)
 		if err != nil {
 			return Change{}, err
 		}
@@ -97,12 +99,28 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 			return Change{}, err
 		}
 
-		now, err := snapshot(ctx, tx, spec.table, spec.cols, id)
+		now, err := s.whole(ctx, tx, entity, spec, id)
 		if err != nil {
 			return Change{}, err
 		}
 		return Change{Entity: entity, EntityID: id, Action: "undo", Before: was, After: now}, nil
 	})
+}
+
+// whole reads the row the way the commands do, so that an undo's payload is
+// the same shape as every other event's and a tab can replace what it holds
+// with it. Without a Reader it falls back to the columns undo itself writes.
+func (s *Service) whole(ctx context.Context, tx *sql.Tx, entity string, spec undoSpec, id int64) (any, error) {
+	if s.Read != nil {
+		row, err := s.Read(ctx, tx, entity, id)
+		if err == nil {
+			return row, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+	return snapshot(ctx, tx, spec.table, spec.cols, id)
 }
 
 // snapshot reads one row as the map that goes into an activity payload. It is

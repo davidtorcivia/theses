@@ -77,12 +77,20 @@ func (e *ConflictError) Error() string {
 	return fmt.Sprintf("%s %d %s changed under you", e.Entity, e.EntityID, e.Field)
 }
 
+// Reader returns one row whole, by the name core knows it under. board sets
+// it, because core must not know the board's types, and undo publishes what it
+// returns: a tab replaces the row it holds with the payload of an event, so
+// half a row would take the rest of it away.
+type Reader func(ctx context.Context, q store.Querier, entity string, id int64) (any, error)
+
 // Service holds the database and the bus every command publishes on.
 type Service struct {
 	DB  *store.DB
 	Bus *Bus
 	// Now is the clock, replaced in tests.
 	Now func() time.Time
+	// Read is how undo reads back the entity it restored.
+	Read Reader
 }
 
 func New(db *store.DB, bus *Bus) *Service {

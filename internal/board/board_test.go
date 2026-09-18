@@ -451,3 +451,68 @@ func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
 		t.Errorf("deleting an archived proposition was refused: %v", err)
 	}
 }
+
+// A tab replaces the card it holds with the payload of an event, so an undo
+// has to carry the whole card and not only the columns it wrote. Before this,
+// undoing a title edit took the card's assignees, checklist and notes with it.
+func TestUndoPublishesTheWholeCard(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
+	editor, researcher := f.who["editor"], f.who["researcher"]
+
+	if _, err := f.AssignCard(ctx, editor, card.ID, researcher.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.AddChecklistItem(ctx, editor, card.ID, "find her number"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.PostComment(ctx, editor, card.ID, "she is away until Friday"); err != nil {
+		t.Fatal(err)
+	}
+	now, err := GetCard(ctx, f.db, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	edit, err := f.EditCardTitle(ctx, editor, card.ID, now.Version, "Call the surveyor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	undone, err := f.Undo(ctx, editor, edit.Seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var published Card
+	if err := json.Unmarshal(undone.After, &published); err != nil {
+		t.Fatal(err)
+	}
+	if published.Title != "Call the engineer" {
+		t.Errorf("the undo published the title %q", published.Title)
+	}
+	if len(published.Assignees) != 1 || len(published.Checklist) != 1 || len(published.Comments) != 1 {
+		t.Errorf("the undo published a card with %d assignees, %d checklist items and %d notes",
+			len(published.Assignees), len(published.Checklist), len(published.Comments))
+	}
+	if published.ColumnID != card.ColumnID || published.Version <= now.Version {
+		t.Errorf("the undo published %+v", published)
+	}
+
+	// A proposition comes back whole too, members and all.
+	e, err := f.SetStatus(ctx, f.who["owner"], f.prop, "recording")
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := f.Undo(ctx, f.who["owner"], e.Seq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p Proposition
+	if err := json.Unmarshal(back.After, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Status != "idea" || p.Title == "" || len(p.Members) != 4 {
+		t.Errorf("the undo published %+v", p)
+	}
+}

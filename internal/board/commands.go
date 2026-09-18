@@ -349,9 +349,9 @@ func (s *Service) column(ctx context.Context, a core.Actor, id int64, need, acti
 	})
 }
 
-func readColumn(ctx context.Context, tx *sql.Tx, id int64) (Column, error) {
+func readColumn(ctx context.Context, q store.Querier, id int64) (Column, error) {
 	var c Column
-	err := tx.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT id, proposition_id, name, position FROM columns WHERE id = ?`, id).
 		Scan(&c.ID, &c.Proposition, &c.Name, &c.Position)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -665,9 +665,9 @@ func (s *Service) checklistItem(ctx context.Context, a core.Actor, id int64, act
 	})
 }
 
-func readChecklistItem(ctx context.Context, tx *sql.Tx, id int64) (ChecklistItem, error) {
+func readChecklistItem(ctx context.Context, q store.Querier, id int64) (ChecklistItem, error) {
 	var it ChecklistItem
-	err := tx.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT id, card_id, text, done, position FROM checklist_items WHERE id = ?`, id).
 		Scan(&it.ID, &it.CardID, &it.Text, &it.Done, &it.Position)
 	if errors.Is(err, sql.ErrNoRows) {

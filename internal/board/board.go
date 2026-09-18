@@ -32,7 +32,24 @@ type Service struct {
 }
 
 func New(c *core.Service, defaults func() Defaults) *Service {
+	c.Read = readEntity
 	return &Service{Service: c, Defaults: defaults}
+}
+
+// readEntity is how core reads a board row back after an undo. Undo writes
+// columns; an event carries the row, so it reads it the way the commands do.
+func readEntity(ctx context.Context, q store.Querier, entity string, id int64) (any, error) {
+	switch entity {
+	case "proposition":
+		return GetProposition(ctx, q, id)
+	case "card":
+		return GetCard(ctx, q, id)
+	case "column":
+		return readColumn(ctx, q, id)
+	case "checklist_item":
+		return readChecklistItem(ctx, q, id)
+	}
+	return nil, core.ErrNotFound
 }
 
 // Nullable columns are pointers so that a JSON payload round-trips a NULL as
