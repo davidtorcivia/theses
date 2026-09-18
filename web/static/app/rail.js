@@ -183,7 +183,12 @@ function foot() {
     form.hidden = true;
     hold(false);
     send('proposition.create', { title })
-      .then((ev) => { location.href = `/p/${ev.entity_id}/settings`; })
+      .then((ev) => {
+        // A command that was kept rather than sent has no event yet, and so no
+        // proposition to open.
+        if (!ev) { say('Kept on this device. It is made when the connection is back.'); return; }
+        location.href = `/p/${ev.entity_id}/settings`;
+      })
       .catch((err) => say(err.message));
   });
   return el('div', { class: 'railfoot' }, button, form);

@@ -2,7 +2,7 @@
 // the palette, the offline line and the socket that keeps them live. The board
 // and the per proposition settings page both start from here and add their own.
 
-import { $, el, clear, initials, offlineLine } from './dom.js';
+import { $, el, clear, initials, offlineLine, saying } from './dom.js';
 import { state, boot, restore, subscribe, user } from './state.js';
 import { connect, count } from './net.js';
 import { renderRail } from './rail.js';
@@ -89,6 +89,9 @@ function renderPresence() {
 // says the same thing when the browser has no network and when the outbox is
 // still going up, because from the desk they are one situation.
 function renderNet() {
+  // A line somebody has just been told is worth more than the count, and it
+  // puts itself away after four seconds.
+  if (saying()) return;
   const bar = $('#netbar');
   const off = !navigator.onLine;
   if (!off && !state.waiting) {

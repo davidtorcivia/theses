@@ -7,9 +7,8 @@
 
 import { el, initials, say } from './dom.js';
 import { state, user, emit, canEdit } from './state.js';
-import { send, count } from './net.js';
+import { send, again, letGo, resend } from './net.js';
 import * as api from './api.js';
-import * as offline from './offline.js';
 
 export function openPanel() {
   state.panel = true;
@@ -20,6 +19,7 @@ export function openPanel() {
 
 export function closePanel() {
   state.panel = false;
+  emit();
 }
 
 // seen is the stream position the list was read at. Every applied event moves
@@ -50,7 +50,7 @@ export function renderPanel(drawer) {
   refresh();
   drawer.append(el('div', { class: 'dh' },
     el('span', { class: 'mono', text: 'Activity' }),
-    el('button', { class: 'x', type: 'button', text: 'Close', onclick: () => { closePanel(); emit(); } })));
+    el('button', { class: 'x', type: 'button', text: 'Close', onclick: closePanel })));
 
   if (state.refused.length) {
     drawer.append(el('h4', { text: 'Not taken' }));
@@ -117,6 +117,11 @@ function refusedRow(row) {
       class: 'lnk', type: 'button', text: 'Keep mine',
       onclick: () => resolve(row, { ...row.args, base: detail.version }),
     }), ' ');
+  } else {
+    // A refusal with nothing to compare is the server saying no rather than
+    // somebody else saying something different, and some of those are worth one
+    // more go: a moment when it was busy, a fault it has since recovered from.
+    li.append(el('button', { class: 'lnk', type: 'button', text: 'Try it again', onclick: () => again(row.n) }), ' ');
   }
   li.append(el('button', {
     class: 'lnk plain', type: 'button', text: detail ? 'Take theirs' : 'Let it go',
@@ -125,13 +130,21 @@ function refusedRow(row) {
   return li;
 }
 
-// resolve is what the two buttons do: send it again as it now has to be sent,
-// or drop it. Either way the entry leaves the outbox, because the choice has
-// been made and offering it a second time would be asking twice.
+// resolve is what the choice comes to: send it again as it now has to be sent,
+// or drop it and put the row back to what the server says it holds. Either way
+// the entry leaves the outbox, because the choice has been made and offering it
+// a second time would be asking twice. The row carries the proposition it was
+// made on, which need not be the open one.
 async function resolve(row, args) {
-  if (args) send(row.cmd, args).catch((err) => say(err.message));
-  await offline.drop(row.n);
-  await count();
+  if (!args) {
+    await letGo(row.n, row.detail);
+    return;
+  }
+  try {
+    await resend(row, args);
+  } catch (err) {
+    say(err.message);
+  }
 }
 
 function when(unix) {
@@ -144,4 +157,4 @@ function when(unix) {
 
 // outstanding is what the tab says beside its name: the queue plus whatever the
 // server has already refused.
-export const outstanding = () => state.waiting + state.refused.length;
+export const outstanding = () => state.waitingHere + state.refused.length;

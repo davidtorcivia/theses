@@ -97,14 +97,25 @@ export function ask(heading, lead, confirmText) {
 }
 
 // say puts a line where somebody can see it, for a refusal that has no field of
-// its own to sit under.
+// its own to sit under. It borrows the offline bar for four seconds, and saying
+// so is what stops the next render taking the line away before it was read.
+let until = 0;
+
 export function say(text) {
   const bar = $('#netbar');
   bar.textContent = text;
   bar.hidden = false;
+  until = Date.now() + 4000;
   clearTimeout(say.timer);
-  say.timer = setTimeout(() => { bar.hidden = navigator.onLine; bar.textContent = offlineLine; }, 4000);
+  say.timer = setTimeout(() => {
+    until = 0;
+    bar.hidden = navigator.onLine;
+    bar.textContent = offlineLine;
+  }, 4000);
 }
+
+// saying reports whether a line is still on the bar.
+export const saying = () => Date.now() < until;
 
 export const offlineLine = 'Offline. Your changes are kept on this device.';
 
