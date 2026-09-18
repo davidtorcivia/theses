@@ -211,7 +211,7 @@ func (b *Backup) tick(ctx context.Context, now time.Time) {
 		// A time or a zone that will not parse is a settings mistake. Recording
 		// it puts it on the page; the same message every minute writes nothing,
 		// because storing a setting that has not changed is a no-op.
-		_ = b.set.Set(context.WithoutCancel(ctx), "backups.last_error", []string{err.Error()}, 0)
+		_ = b.set.SetAs(context.WithoutCancel(ctx), "backups.last_error", []string{err.Error()}, settings.System())
 		return
 	}
 	if !due {
@@ -494,7 +494,7 @@ func (b *Backup) record(ctx context.Context, m Manifest, runErr error) {
 	// reason not to write down what happened.
 	ctx = context.WithoutCancel(ctx)
 	set := func(key, value string) {
-		if err := b.set.Set(ctx, key, []string{value}, 0); err != nil {
+		if err := b.set.SetAs(ctx, key, []string{value}, settings.System()); err != nil {
 			b.log.Error("recording the backup", "key", key, "err", err)
 		}
 	}

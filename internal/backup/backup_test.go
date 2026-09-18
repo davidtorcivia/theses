@@ -101,7 +101,7 @@ func newFake(t *testing.T) *fake {
 
 func (f *fake) save(key, value string) {
 	f.Helper()
-	if err := f.set.Set(context.Background(), key, []string{value}, 0); err != nil {
+	if err := f.set.SetAs(context.Background(), key, []string{value}, settings.System()); err != nil {
 		f.Fatalf("set %s: %v", key, err)
 	}
 }
@@ -303,6 +303,16 @@ func TestTheSchedulerFiresAtTheConfiguredMinuteAndOnlyOnce(t *testing.T) {
 	}
 	if settings.Get[int](f.set, "backups.last_ok_at") != int(at(3, 30).Unix()) {
 		t.Error("the run was not recorded")
+	}
+	// Nobody pressed anything, so the row says the app did it rather than
+	// naming a person who does not exist.
+	var kind string
+	if err := f.db.QueryRowContext(ctx, `SELECT actor_kind FROM activity
+		WHERE entity = 'setting' AND entity_id = 'backups.last_ok_at'`).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "system" {
+		t.Errorf("the scheduled run was recorded as %q", kind)
 	}
 
 	// Every tick for the rest of the day sees a run that has already happened.
