@@ -186,7 +186,7 @@ func TestDriveListIsRefusedToAGuest(t *testing.T) {
 	if res, _ := h.signIn("mara", password, ""); res.Header.Get("Location") != "/" {
 		t.Fatalf("the guest could not sign in: %s", res.Header.Get("Location"))
 	}
-	if res, _ := h.get("/app/drive"); res.StatusCode != http.StatusForbidden {
+	if res, _ := h.get("/app/drive"); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("a guest listing Drive gave %d", res.StatusCode)
 	}
 }
@@ -240,12 +240,15 @@ func TestDriveRoutesCheckStandingBeforeAskingDrive(t *testing.T) {
 		// said is what the refusal has to name, where naming it is the point.
 		said string
 	}{
-		{"a guest who is a member", "gwen", live, http.StatusForbidden, http.StatusForbidden, ""},
-		{"an editor who is not a member", "stranger", live, http.StatusOK, http.StatusNotFound, ""},
+		// Not allowed and not there are one answer, as they are on every other
+		// route under /app: core says the role and the membership with one
+		// error, and telling them apart would say whether the row is there.
+		{"a guest who is a member", "gwen", live, http.StatusNotFound, http.StatusNotFound, "that is not there"},
+		{"an editor who is not a member", "stranger", live, http.StatusOK, http.StatusNotFound, "that is not there"},
 		// Archived is not forbidden: the person may edit, and what is wrong is
 		// the proposition, so the answer says which and what to do about it.
 		{"an editor on an archived proposition", "mara", archived, http.StatusOK,
-			http.StatusUnprocessableEntity, "that proposition is archived; restore it first"},
+			http.StatusConflict, "that proposition is archived; restore it first"},
 	}
 	// The stranger is an editor of the workspace and a member of nothing.
 	h.withoutAuthenticator("stranger", auth.RoleEditor, password)

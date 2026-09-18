@@ -38,34 +38,44 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-// refuseJSON maps a refusal to a status the way the rest of the app does, and
-// says the same thing to a person whether a proposition is not theirs or not
-// there.
+// refuseJSON maps a refusal to a status. It follows internal/api's refuse line
+// for line, because these two routes answer the same clients as the links and
+// files routes beside them and the same refusal must not have two statuses
+// depending on which one was asked. It is a second copy only because that one
+// is a method on the API and unexported; when it is reachable from here, this
+// goes and the calls move to it.
+//
+// Not there and not allowed are one answer, as they are there: core says the
+// role and the membership with one error, and telling them apart would tell
+// somebody who is not a member that the proposition exists. A refusal about
+// the state of a thing rather than the request is 409, which is what an
+// archived proposition and an integration nobody has connected both are.
 func (s *Server) refuseJSON(w http.ResponseWriter, r *http.Request, err error) {
-	status, known := http.StatusUnprocessableEntity, true
 	switch {
-	case errors.Is(err, core.ErrForbidden):
-		status = http.StatusForbidden
-	case errors.Is(err, core.ErrNotFound):
-		status = http.StatusNotFound
-	case errors.Is(err, integrations.ErrNotConnected), errors.Is(err, integrations.ErrReconnect):
-		status = http.StatusConflict
+	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
+		s.writeJSON(w, http.StatusNotFound, map[string]string{"error": "that is not there"})
 	case errors.Is(err, board.ErrArchived):
-		// The same status the links and files routes give it, because this is
-		// one more way of adding a file to a proposition.
-		//
-		// ponytail: parity unifies archived to 409 across the API. On the
-		// rebase take whatever internal/api maps it to and delete this case if
-		// the mapping moves into a shared one.
-		status = http.StatusUnprocessableEntity
+		s.refusal(w, r, http.StatusConflict, err)
+	case errors.Is(err, integrations.ErrNotConnected), errors.Is(err, integrations.ErrReconnect):
+		s.refusal(w, r, http.StatusConflict, err)
+	case errors.Is(err, files.ErrKind), errors.Is(err, files.ErrBadSize),
+		errors.Is(err, files.ErrState), errors.Is(err, files.ErrSize),
+		errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong):
+		s.refusal(w, r, http.StatusUnprocessableEntity, err)
+	case errors.Is(err, files.ErrNoBucket):
+		s.refusal(w, r, http.StatusServiceUnavailable, err)
 	default:
-		// Anything not named here is Drive's answer or the bucket's, which is
-		// worth a line in the log; a refusal the app itself chose is not.
-		known = false
-	}
-	if !known {
+		// Whatever is left is Drive's answer or the bucket's rather than a
+		// refusal this app chose, so it is worth a line in the log. It still
+		// goes back as 422: it is a plain sentence about a file, and a 500
+		// would say the server broke when Drive only said no.
 		s.log.Warn("drive request refused", "path", r.URL.Path, "err", err)
+		s.refusal(w, r, http.StatusUnprocessableEntity, err)
 	}
+}
+
+// refusal writes one, with every stored secret taken out of the message.
+func (s *Server) refusal(w http.ResponseWriter, r *http.Request, status int, err error) {
 	s.writeJSON(w, status, map[string]string{"error": s.redactSecrets(r.Context(), err.Error())})
 }
 
