@@ -317,6 +317,8 @@ func (s *Server) routes() http.Handler {
 	// the links and files routes are mounted on, so these win the match.
 	mux.HandleFunc("GET /app/drive", s.requireUser(s.getDriveList))
 	mux.HandleFunc("POST /app/drive/import", s.requireUser(s.postDriveImport))
+
+	mux.HandleFunc("POST /p/{id}/publish", s.requireUser(s.postPublish))
 	return mux
 }
 

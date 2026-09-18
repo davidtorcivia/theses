@@ -84,6 +84,27 @@
       </section>
     </form>
 
+    {{if .Publish.On}}<form class="form" method="post" action="/p/{{.P.ID}}/publish" id="publish">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Publish</h3><p>Send this proposition to Transistor as an episode: the title and blurb above, the show notes rendered from a document, and one recording as the audio. Publishing again updates the same episode rather than making another.</p></div>
+        <div class="fsb">
+          {{if .PublishResult}}<p class="notice{{if .PublishFailed}} bad{{end}}">{{.PublishResult}}</p>{{end}}
+          {{if .Publish.Error}}<p class="notice bad">{{.Publish.Error}}</p>{{end}}
+          <div class="row3">
+            <label class="f"><span class="l">Show notes</span><select name="document"{{if not .CanEdit}} disabled{{end}}>{{range .Publish.Documents}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select><small>The document the episode notes are rendered from.</small></label>
+            <label class="f"><span class="l">Audio</span><select name="file"{{if not .CanEdit}} disabled{{end}}>{{range .Publish.Files}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select><small>From the Recordings folder.</small></label>
+            <label class="f"><span class="l">Episode</span><span class="mono {{if .Publish.Episode}}ok{{else}}dim{{end}}">{{if .Publish.Episode}}{{.Publish.Episode}}{{else}}not published{{end}}</span>{{if .Publish.URL}}<small><a href="{{.Publish.URL}}" rel="noreferrer noopener">Open it on Transistor</a></small>{{end}}</label>
+          </div>
+          {{if .Publish.Why}}<p class="mono dim">{{.Publish.Why}}</p>{{end}}
+          {{if .CanEdit}}<div class="acts">
+            <button class="save" type="submit" name="do" value="save">Save</button>
+            <button class="lnk" type="submit" name="do" value="publish"{{if not .Publish.Ready}} disabled{{end}}>{{if .Publish.Episode}}Publish again{{else}}Publish{{end}}</button>
+          </div>{{end}}
+        </div>
+      </section>
+    </form>{{end}}
+
     <section class="fs last">
       <div class="fsh"><h3>Danger</h3><p>These are not undoable from here.</p></div>
       <div class="fsb"><div class="danger">
