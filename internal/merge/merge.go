@@ -10,7 +10,7 @@ import (
 )
 
 // Merge combines the changes ours and theirs each made to base. Line endings
-// in all three are normalised to LF. When both sides changed the same words
+// in all three are normalized to LF. When both sides changed the same words
 // differently, or one side deleted lines the other edited, there is nothing
 // honest to return, so Merge reports a conflict and returns ours exactly as it
 // was passed in and the caller decides.

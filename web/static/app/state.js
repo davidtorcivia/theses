@@ -434,7 +434,7 @@ const seconds = () => Math.floor(Date.now() / 1000);
 // Keys are base 62, so a tilde is above every character one can end in.
 //
 // ponytail: it is a guess, not the key the server will allocate, and a card
-// dropped above a neighbour whose key runs deeper than one character can land a
+// dropped above a neighbor whose key runs deeper than one character can land a
 // place out until the echo arrives with the real one. The upgrade is the
 // server's fractional key generator in the browser as well.
 function behind(after, row) {

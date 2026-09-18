@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// Palette is the eight colours a person can be. The mockup fixed this list, and
-// fixing it here is what lets the CSS carry the colours instead of a style
+// Palette is the eight colors a person can be. The mockup fixed this list, and
+// fixing it here is what lets the CSS carry the colors instead of a style
 // attribute, which a strict CSP would refuse.
 var Palette = []string{"#1100ff", "#d0021b", "#0a8a3a", "#b35c00", "#7b2cbf", "#008b8b", "#c2185b", "#111"}
 
@@ -144,7 +144,7 @@ func (s *Server) funcs() template.FuncMap {
 	}
 }
 
-// colourClass maps a stored colour to its class, because the CSP forbids the
+// colourClass maps a stored color to its class, because the CSP forbids the
 // style attribute the mockup used.
 func colourClass(hex string) string {
 	for i, c := range Palette {

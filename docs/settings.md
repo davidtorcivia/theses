@@ -58,13 +58,13 @@ days a sign-in lasts before it has to be repeated, and the shortest account
 name allowed.
 
 The requirement is enforced at the sign-in itself. Setup and invitation
-acceptance both enrol before the account row is written, so an invited account
+acceptance both enroll before the account row is written, so an invited account
 always has an authenticator whatever this is set to; what the setting decides
 is what happens to an account that has none, which is one whose role changed
 or whose secret was removed. With **Everyone**, any such account is sent to
-enrol as soon as its password is accepted and signs in at the end of it. With
+enroll as soon as its password is accepted and signs in at the end of it. With
 **Owners only**, an editor, researcher or guest signs straight in, and an owner
-is sent to enrol: owners are always required, because this setting is theirs to
+is sent to enroll: owners are always required, because this setting is theirs to
 change.
 
 ## Notifications
@@ -87,7 +87,7 @@ written to a log or into an error message.
 
 **Google Drive**, files in. Make an OAuth client of type Web application in a
 Google Cloud project with the Drive API enabled, list the redirect address the
-section prints as an authorised redirect URI, and paste the client id and
+section prints as an authorized redirect URI, and paste the client id and
 secret. Connect then sends you to Google to approve read-only access to the
 Drive account the files are in, and the refresh token that comes back is what
 every later request is made on; it is renewed on its own and stored again the

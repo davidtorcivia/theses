@@ -643,7 +643,7 @@ func TestProbeDeletesTheObjectWhenTheContextIsCancelled(t *testing.T) {
 	c, log := countingFake(t, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Cancelling as the head goes out leaves the put done and the head in
+	// Canceling as the head goes out leaves the put done and the head in
 	// flight, which is the shape of a slow bucket and an impatient caller.
 	log.before = func(r *http.Request) {
 		if r.Method == http.MethodHead {
@@ -653,7 +653,7 @@ func TestProbeDeletesTheObjectWhenTheContextIsCancelled(t *testing.T) {
 	}
 	err := c.Probe(ctx)
 	if err == nil || !strings.Contains(err.Error(), "probe head") {
-		t.Fatalf("Probe with the context cancelled after the put = %v, want an error naming the head step", err)
+		t.Fatalf("Probe with the context canceled after the put = %v, want an error naming the head step", err)
 	}
 	methods, paths := log.seen()
 	var put, del string
@@ -669,7 +669,7 @@ func TestProbeDeletesTheObjectWhenTheContextIsCancelled(t *testing.T) {
 		t.Fatal("Probe made no PUT")
 	}
 	if del != put {
-		t.Errorf("probe object %q was not deleted after the context was cancelled, deletes saw %q", put, del)
+		t.Errorf("probe object %q was not deleted after the context was canceled, deletes saw %q", put, del)
 	}
 }
 

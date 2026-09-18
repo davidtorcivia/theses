@@ -164,7 +164,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.notify = notify.New(db, set, log, cfg.BaseURL)
 
 	// Drive and Transistor share one outbound client, safehttp's, which is
-	// what checks every address they resolve to before it is dialled.
+	// what checks every address they resolve to before it is dialed.
 	outbound := integrations.Client()
 	s.drive = &integrations.Drive{HTTP: outbound, Save: s.saveDriveToken}
 	s.transistor = &integrations.Transistor{HTTP: outbound}
@@ -301,7 +301,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /shell", s.offlineShell)
 	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
 
-	// Wave 4, integrations. Enrolment on the way in, for an account the
+	// Integrations. Enrollment on the way in, for an account the
 	// workspace requires an authenticator of and has none.
 	mux.HandleFunc("GET /login/authenticator", s.getEnrol)
 	mux.HandleFunc("POST /login/authenticator", s.postEnrol)

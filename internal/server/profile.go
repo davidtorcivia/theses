@@ -105,7 +105,7 @@ func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/profile?saved=1", http.StatusSeeOther)
 }
 
-// postReenrol starts enrolment for someone already signed in. The new secret
+// postReenrol starts enrollment for someone already signed in. The new secret
 // does not replace the old one until a code from it comes back.
 func (s *Server) postReenrol(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)

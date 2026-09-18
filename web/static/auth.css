@@ -1,4 +1,4 @@
-/* Sign-in, invitation, enrolment and error pages. AUTH_CSS from
+/* Sign-in, invitation, enrollment and error pages. AUTH_CSS from
    docs/internal/mockup/_build/gen.js, with the Google Fonts link replaced by
    self-hosted faces and the mockup's style attributes turned into classes. */
 /* Self-hosted, because the CSP names no third party. Archivo is the variable
@@ -95,7 +95,7 @@ h1{margin:0 0 .6rem;font-weight:800;font-size:clamp(30px,3.4vw,44px);line-height
 .swatches input:focus-visible+label{outline:2px solid var(--p);outline-offset:2px}
 .dim{color:var(--dim)}
 .lnk.quiet{font-weight:500;font-size:12px}
-/* Enrolment, notices and the reset page: parts of the flow the mockup drew
+/* Enrollment, notices and the reset page: parts of the flow the mockup drew
    only as a signed-in state. */
 .qr{display:block;width:240px;height:240px;background:#fff;padding:.5rem;margin:0 0 1rem}
 .secret{font-family:var(--monof);font-size:13px;letter-spacing:.06em;word-break:break-all;color:var(--dim);margin:0 0 1.6rem}

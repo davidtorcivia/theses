@@ -12,7 +12,7 @@
         <label class="f"><span class="l sm">Name</span><input name="name" value="{{.Form.name}}" autocomplete="name" required></label>
         <label class="f"><span class="l sm">Initials</span><input name="initials" value="{{.Form.initials}}" maxlength="2" required></label>
       </div>
-      <div class="f"><span class="l sm">Colour</span>{{template "swatches" .Swatches}}</div>
+      <div class="f"><span class="l sm">Color</span>{{template "swatches" .Swatches}}</div>
       <label class="f"><span class="l sm">Password</span><input type="password" name="password" placeholder="At least twelve characters" autocomplete="new-password" required></label>
       <button class="btn" type="submit" data-busy="Joining">Join</button>
     </form>

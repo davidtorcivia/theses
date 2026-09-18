@@ -100,7 +100,7 @@
         <div class="fsh"><h3>Sign-in</h3><p>Account name, password and an authenticator code, in one form. There is no other way in.</p></div>
         <div class="fsb">
           <div class="row3">
-            <label class="f"><span class="l">Require an authenticator</span><select name="signin.require_totp"><option value="all"{{if eq (index .S "signin.require_totp") "all"}} selected{{end}}>Everyone</option><option value="owners"{{if eq (index .S "signin.require_totp") "owners"}} selected{{end}}>Owners only</option></select><small>Owners are always required to enrol.</small></label>
+            <label class="f"><span class="l">Require an authenticator</span><select name="signin.require_totp"><option value="all"{{if eq (index .S "signin.require_totp") "all"}} selected{{end}}>Everyone</option><option value="owners"{{if eq (index .S "signin.require_totp") "owners"}} selected{{end}}>Owners only</option></select><small>Owners are always required to enroll.</small></label>
             <label class="f"><span class="l">Session length</span><input name="signin.session_days" value="{{index .S "signin.session_days"}}"><small>Days a sign-in lasts.</small></label>
             <label class="f"><span class="l">Shortest account name</span><input name="signin.handle_min_length" value="{{index .S "signin.handle_min_length"}}"><small>Lowercase letters, digits and hyphens, up to 32.</small></label>
           </div>
@@ -283,7 +283,7 @@
 
     <dialog id="int-drive">
       <h3>Google Drive</h3>
-      <p>Make an OAuth client of type Web application in a Google Cloud project with the Drive API turned on, and list this address as an authorised redirect URI: <span class="mono">{{.Ints.Redirect}}</span>. Then paste the client id and secret here, save, and press Connect. The access is read only.</p>
+      <p>Make an OAuth client of type Web application in a Google Cloud project with the Drive API turned on, and list this address as an authorized redirect URI: <span class="mono">{{.Ints.Redirect}}</span>. Then paste the client id and secret here, save, and press Connect. The access is read only.</p>
       <form class="form" method="post" action="/settings">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <div class="row3">

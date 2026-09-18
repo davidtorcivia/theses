@@ -18,7 +18,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
-// person is an account as the workspace sees it. The colour is the class the
+// person is an account as the workspace sees it. The color is the class the
 // CSS carries, because a strict CSP refuses the style attribute the mockup used.
 type person struct {
 	ID       int64  `json:"id"`

@@ -174,7 +174,7 @@ func (s *Server) getDriveCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		s.integrationRefused(w, r, errors.New("Google sent no authorisation code"))
+		s.integrationRefused(w, r, errors.New("Google sent no authorization code"))
 		return
 	}
 

@@ -90,7 +90,7 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 	}
 
 	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}
-	// The row's name, not the one that came in: filename trims and normalises,
+	// The row's name, not the one that came in: filename trims and normalizes,
 	// and a name ending in a dot or a space has no extension until it has been
 	// through that, so signing the type of the raw one would sign
 	// octet-stream for a file the list calls markdown.
@@ -209,7 +209,7 @@ func (s *Service) Parts(ctx context.Context, a core.Actor, id int64, after int) 
 	if err != nil {
 		return Upload{}, err
 	}
-	// A part URL is a licence to write into the bucket, so this needs the same
+	// A part URL is a license to write into the bucket, so this needs the same
 	// standing as the upload it belongs to. Without it a guest, who may read
 	// the list, could ask for one.
 	if err := s.mayWrite(ctx, a, row.Proposition); err != nil {
@@ -756,7 +756,7 @@ func slug(title string) string {
 	return clip(out, 60)
 }
 
-// maxName is what a file name may be once sanitised. Every provider allows far
+// maxName is what a file name may be once sanitized. Every provider allows far
 // more; this is what a person types and what a listing shows on one line.
 const maxName = 120
 

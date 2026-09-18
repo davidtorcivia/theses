@@ -809,7 +809,7 @@ else is `422`.
 
 ```
 PATCH /api/v1/cards/7
-{"base_version": 1, "title": "Call the harbour engineer"}
+{"base_version": 1, "title": "Call the harbor engineer"}
 ```
 
 ```json
@@ -859,7 +859,7 @@ checklist.
 
 ```json
 {"event": {"entity": "checklist_item", "entity_id": 4, "action": "create",
-  "after": {"id": 4, "card_id": 7, "text": "Ring the harbour",
+  "after": {"id": 4, "card_id": 7, "text": "Ring the harbor",
             "done": false, "position": "V"}}}
 ```
 
@@ -894,7 +894,7 @@ moderate.
 ## `POST /api/v1/activity/{id}/undo`
 
 Scope `write`. Puts back the `before` of one activity row and marks the row
-undone. The undo is itself a command: it is authorised, recorded and published
+undone. The undo is itself a command: it is authorized, recorded and published
 like any other edit, so an open board sees it happen.
 
 It is `409` when the change cannot be put back: a create, a delete that took

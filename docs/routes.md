@@ -14,14 +14,14 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `GET POST /setup` | First run only: create the owner. Every other route redirects here until one exists. |
 | `GET POST /setup/authenticator` | Scan the QR code and confirm a code. The account is written only when the code matches. |
 | `GET POST /login` | Account name, password and authenticator code, in one form. |
-| `GET POST /login/authenticator` | Enrol before signing in, for an account this workspace requires an authenticator of and that has none. The session starts when a code from the new secret comes back. |
+| `GET POST /login/authenticator` | Enroll before signing in, for an account this workspace requires an authenticator of and that has none. The session starts when a code from the new secret comes back. |
 | `POST /logout` | End this browser's session. |
 | `GET POST /reset` | Ask for a reset link by account name or email. Always answers the same. |
 | `GET POST /reset/{token}` | Choose a new password. One use, one hour. |
-| `GET POST /invite/{token}` | Accept an invitation: account name, name, initials, colour, password. |
-| `GET POST /invite/{token}/authenticator` | Enrol, then sign in. |
+| `GET POST /invite/{token}` | Accept an invitation: account name, name, initials, color, password. |
+| `GET POST /invite/{token}/authenticator` | Enroll, then sign in. |
 | `GET /profile` | You, security, danger. |
-| `POST /profile` | Account name, name, initials, colour, email. |
+| `POST /profile` | Account name, name, initials, color, email. |
 | `POST /profile/password` | Change the password. |
 | `POST /profile/totp` | Start enrolling a new authenticator. |
 | `GET POST /profile/authenticator` | Scan and confirm it. |
@@ -47,7 +47,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /settings/integrations/webhook` | Add a workspace webhook or change it: its URL, its secret, the events it fires on and the column it watches. |
 | `POST /settings/integrations/webhook/{id}/test` | Send one message to it and mark it verified when it arrives. |
 | `POST /settings/integrations/webhook/{id}/delete` | Remove it. |
-| `POST /settings/integrations/drive/connect` | Start the Drive authorisation: a random value in a cookie, the same value as the state parameter, and a redirect to Google. |
+| `POST /settings/integrations/drive/connect` | Start the Drive authorization: a random value in a cookie, the same value as the state parameter, and a redirect to Google. |
 | `GET /settings/integrations/drive/callback` | Where Google sends the owner back. The code is exchanged only when the state matches this browser's cookie, which is spent either way. |
 | `POST /settings/integrations/drive/disconnect` | Throw the Drive token away and keep the client id. |
 | `POST /settings/integrations/transistor/disconnect` | Throw the Transistor key away. |

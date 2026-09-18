@@ -207,7 +207,7 @@ func clip(value string, most int) string {
 	return string(runes[:most])
 }
 
-// mayWrite is the authorisation asked before the fetch. core asks it again
+// mayWrite is the authorization asked before the fetch. core asks it again
 // inside the transaction, where it is authoritative; this one is here so that
 // somebody who may not write to this proposition cannot use the paste field as
 // a way to make the server fetch a URL of their choosing.

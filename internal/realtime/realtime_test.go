@@ -690,7 +690,7 @@ func TestLongPollHoldsOpenAndMissesNothingInTheWindow(t *testing.T) {
 // A proposition somebody makes is a proposition they are on, so their other
 // open tab hears about it rather than waiting for a reload. The membership row
 // goes in with the proposition, not through a member command, because every
-// later command on it is authorised against that row.
+// later command on it is authorized against that row.
 func TestCreatorsOtherTabSeesTheNewProposition(t *testing.T) {
 	r := newRig(t)
 	one := r.mustDial("grace")
@@ -698,7 +698,7 @@ func TestCreatorsOtherTabSeesTheNewProposition(t *testing.T) {
 	two := r.mustDial("grace")
 	read(t, two, "presence")
 
-	send(t, one, command{ID: 1, Cmd: "proposition.create", Args: args{Title: "Harbour Walls"}})
+	send(t, one, command{ID: 1, Cmd: "proposition.create", Args: args{Title: "Harbor Walls"}})
 	made := read(t, one, "ack")
 	if made.Event == nil {
 		t.Fatalf("the create was answered with %+v", made)
@@ -716,7 +716,7 @@ func TestCreatorsOtherTabSeesTheNewProposition(t *testing.T) {
 		if err := json.Unmarshal(e.Event.After, &p); err != nil {
 			t.Fatal(err)
 		}
-		if p.Title != "Harbour Walls" || len(p.Members) != 1 || p.Members[0] != r.users["grace"].ID {
+		if p.Title != "Harbor Walls" || len(p.Members) != 1 || p.Members[0] != r.users["grace"].ID {
 			t.Errorf("the other tab saw %+v", p)
 		}
 		break

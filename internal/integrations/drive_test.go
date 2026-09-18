@@ -361,7 +361,7 @@ func TestDriveOpenReadsTheBytes(t *testing.T) {
 		t.Fatalf("read %q", read)
 	}
 	if !strings.HasPrefix(g.bearer, "Bearer ") || strings.Contains(g.bearer, "refresh") {
-		t.Fatalf("the download was authorised with %q", g.bearer)
+		t.Fatalf("the download was authorized with %q", g.bearer)
 	}
 }
 
@@ -372,7 +372,7 @@ func TestDriveWithoutATokenSaysSo(t *testing.T) {
 		t.Fatalf("a listing with no token gave %v", err)
 	}
 	// A stored token that will not parse is the same dead end as a refresh
-	// token Google has stopped honouring, and says the same thing.
+	// token Google has stopped honoring, and says the same thing.
 	err := d.Configure(Settings{"client_id": "id", "token": "not json"})
 	if !errors.Is(err, ErrReconnect) {
 		t.Fatalf("a token that will not parse gave %v", err)

@@ -106,7 +106,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	s.auth.ResetLimits(auth.BucketLogin, handle)
 	// The password, and the code where there was a secret to check it against,
 	// have both been accepted. An account this workspace requires an
-	// authenticator of and has none gets the enrolment page rather than a
+	// authenticator of and has none gets the enrollment page rather than a
 	// session, and signs in at the end of it.
 	if u.TOTPSecret == "" && s.needsAuthenticator(u.Role) {
 		s.startEnrolment(w, r, u)
@@ -308,7 +308,7 @@ func validColour(c string) bool {
 	return false
 }
 
-// Enrolment, shared by setup, invitation acceptance and re-enrolment from the
+// Enrollment, shared by setup, invitation acceptance and re-enrollment from the
 // profile page. Which one it is comes from the cookie, not the URL.
 
 func (s *Server) getEnrol(w http.ResponseWriter, r *http.Request) {
@@ -467,7 +467,7 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// enrolRestart sends someone whose enrolment cookie is gone back to the start of
+// enrolRestart sends someone whose enrollment cookie is gone back to the start of
 // whichever flow they were in.
 func (s *Server) enrolRestart(r *http.Request) string {
 	switch {

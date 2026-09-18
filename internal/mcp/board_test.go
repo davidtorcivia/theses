@@ -184,7 +184,7 @@ func TestTheBoardToolsWriteAsThePersonAndTheClient(t *testing.T) {
 	}
 
 	var card writeOut
-	h.call(cs, "create_card", map[string]any{"column": f.column, "title": "Call the harbour"}, &card)
+	h.call(cs, "create_card", map[string]any{"column": f.column, "title": "Call the harbor"}, &card)
 	h.call(cs, "assign_card", map[string]any{"card": card.ID, "user": h.user.ID}, nil)
 	h.call(cs, "complete_card", map[string]any{"card": card.ID}, nil)
 	h.call(cs, "comment", map[string]any{"card": card.ID, "text": "Done before lunch."}, nil)

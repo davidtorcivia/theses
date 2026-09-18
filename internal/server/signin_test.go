@@ -15,7 +15,7 @@ import (
 
 // withoutAuthenticator makes an account with a password and no authenticator,
 // which is what a role promoted past the requirement, or an account whose
-// secret was cleared, looks like. No handler makes one; the enrolment step is
+// secret was cleared, looks like. No handler makes one; the enrollment step is
 // what this file is about.
 func (h *harness) withoutAuthenticator(handle, role, password string) int64 {
 	h.Helper()
@@ -50,12 +50,12 @@ func TestSignInEnrolsWhenTheWorkspaceRequiresAnAuthenticator(t *testing.T) {
 		role    string
 		enrol   bool
 	}{
-		{"all requires an editor to enrol", "all", auth.RoleEditor, true},
-		{"all requires a guest to enrol", "all", auth.RoleGuest, true},
-		{"all requires an owner to enrol", "all", auth.RoleOwner, true},
+		{"all requires an editor to enroll", "all", auth.RoleEditor, true},
+		{"all requires a guest to enroll", "all", auth.RoleGuest, true},
+		{"all requires an owner to enroll", "all", auth.RoleOwner, true},
 		{"owners lets an editor in without one", "owners", auth.RoleEditor, false},
 		{"owners lets a guest in without one", "owners", auth.RoleGuest, false},
-		{"owners still requires an owner to enrol", "owners", auth.RoleOwner, true},
+		{"owners still requires an owner to enroll", "owners", auth.RoleOwner, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -101,13 +101,13 @@ func TestSignInEnrolsWhenTheWorkspaceRequiresAnAuthenticator(t *testing.T) {
 				t.Fatal("the secret was stored before the code was checked")
 			}
 			if res, _ := h.get("/"); res.StatusCode != http.StatusSeeOther {
-				t.Fatal("the enrolment page handed out a session before the code was checked")
+				t.Fatal("the enrollment page handed out a session before the code was checked")
 			}
 
 			_, page := h.get("/login/authenticator")
 			m := secretRe.FindStringSubmatch(page)
 			if m == nil {
-				t.Fatal("the enrolment page did not print the key")
+				t.Fatal("the enrollment page did not print the key")
 			}
 			code, err := totp.GenerateCode(m[1], time.Now())
 			if err != nil {
@@ -117,7 +117,7 @@ func TestSignInEnrolsWhenTheWorkspaceRequiresAnAuthenticator(t *testing.T) {
 				"csrf": {csrfRe.FindStringSubmatch(page)[1]}, "code": {code},
 			})
 			if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/" {
-				t.Fatalf("enrolment gave %d %s", res.StatusCode, res.Header.Get("Location"))
+				t.Fatalf("enrollment gave %d %s", res.StatusCode, res.Header.Get("Location"))
 			}
 			u, err = store.UserByID(context.Background(), h.db, id)
 			if err != nil {
@@ -127,7 +127,7 @@ func TestSignInEnrolsWhenTheWorkspaceRequiresAnAuthenticator(t *testing.T) {
 				t.Fatal("the authenticator was not stored")
 			}
 			if res, _ := h.get("/"); res.StatusCode != http.StatusOK {
-				t.Fatalf("the app gave %d after enrolment", res.StatusCode)
+				t.Fatalf("the app gave %d after enrollment", res.StatusCode)
 			}
 			// And the next sign-in asks for a code like everybody else's.
 			h.signOut()
@@ -163,7 +163,7 @@ func TestEnrolmentOnTheWayInRefusesAWrongCode(t *testing.T) {
 	}
 }
 
-// A sign-in enrolment cookie names whose secret it is, and the enrolment page
+// A sign-in enrollment cookie names whose secret it is, and the enrollment page
 // is also reachable while signed in. Completing one there would rewrite the
 // signed-in person's authenticator with a secret somebody else has.
 func TestASignInEnrolmentCannotBeFinishedFromSomebodyElsesSession(t *testing.T) {
@@ -178,7 +178,7 @@ func TestASignInEnrolmentCannotBeFinishedFromSomebodyElsesSession(t *testing.T) 
 	_, page := h.get("/login/authenticator")
 	m := secretRe.FindStringSubmatch(page)
 	if m == nil {
-		t.Fatal("the enrolment page did not print the key")
+		t.Fatal("the enrollment page did not print the key")
 	}
 	code, err := totp.GenerateCode(m[1], time.Now())
 	if err != nil {
@@ -191,7 +191,7 @@ func TestASignInEnrolmentCannotBeFinishedFromSomebodyElsesSession(t *testing.T) 
 		"csrf": {h.csrf("/profile")}, "code": {code},
 	})
 	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("the enrolment was accepted with %d", res.StatusCode)
+		t.Fatalf("the enrollment was accepted with %d", res.StatusCode)
 	}
 	u, err := store.UserByID(context.Background(), h.db, victim)
 	if err != nil {
@@ -219,7 +219,7 @@ func signInAsOwner(t *testing.T, h *harness, password string) {
 	}
 }
 
-// An invitation enrols before the account exists, whatever the setting says,
+// An invitation enrolls before the account exists, whatever the setting says,
 // so there is never an invited account without an authenticator to enforce
 // the rule against.
 func TestInvitationAcceptanceAlwaysEnrols(t *testing.T) {
@@ -253,7 +253,7 @@ func TestInvitationAcceptanceAlwaysEnrols(t *testing.T) {
 		"initials": {"MO"}, "colour": {Palette[2]}, "password": {"a long enough password"},
 	})
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != path+"/authenticator" {
-		t.Fatalf("accepting an invitation gave %d %s, want the enrolment page",
+		t.Fatalf("accepting an invitation gave %d %s, want the enrollment page",
 			res.StatusCode, res.Header.Get("Location"))
 	}
 }

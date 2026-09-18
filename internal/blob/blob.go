@@ -47,7 +47,7 @@ const requestTimeout = 30 * time.Second
 
 // validKey rejects keys the bucket would not see the way they were signed. A
 // browser collapses dot segments before it sends the request, so the signature
-// no longer matches, and an endpoint that normalises the path could resolve
+// no longer matches, and an endpoint that normalizes the path could resolve
 // such a key out of the caller's prefix and into the backups/ prefix the file
 // key must never reach.
 func validKey(key string) error {

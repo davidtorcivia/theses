@@ -51,7 +51,7 @@ type Document struct {
 }
 
 // Block is one paragraph, heading or list. Position is a fractional index, so
-// an insert or a move never renumbers its neighbours.
+// an insert or a move never renumbers its neighbors.
 type Block struct {
 	ID        int64  `json:"id"`
 	Document  int64  `json:"document_id"`
@@ -308,7 +308,7 @@ func ListRevisions(ctx context.Context, q store.Querier, document int64) ([]Revi
 }
 
 // The queries that answer which proposition a row belongs to, which is what a
-// command is authorised against and what a read is allowed by.
+// command is authorized against and what a read is allowed by.
 const (
 	documentScope = `SELECT proposition_id FROM documents WHERE id = ?`
 	blockScope    = `SELECT d.proposition_id FROM blocks b JOIN documents d ON d.id = b.document_id WHERE b.id = ?`

@@ -234,7 +234,7 @@ func (h *Hub) serve(ws *websocket.Conn) {
 		}
 		// The handshake is not enough on a connection that stays open for
 		// hours: a sign out, a sign out everywhere or a deleted account has to
-		// stop the writes it was authorising.
+		// stop the writes it was authorizing.
 		if !h.stillSignedIn(c, r) {
 			return
 		}

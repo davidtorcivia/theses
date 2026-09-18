@@ -32,7 +32,7 @@ export function clear(node) {
   return node;
 }
 
-// initials is the coloured square a person appears as. The colour is a class
+// initials is the colored square a person appears as. The color is a class
 // because the CSP has no unsafe-inline in style-src.
 export function initials(person, extra = '') {
   return el('span', { class: ('u ' + person.colour + ' ' + extra).trim(), title: person.name, text: person.initials });

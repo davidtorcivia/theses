@@ -309,7 +309,7 @@ func TestSendReturnsOnCancel(t *testing.T) {
 			t.Error("want an error after the cancel")
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Send did not return after the context was cancelled")
+		t.Fatal("Send did not return after the context was canceled")
 	}
 }
 

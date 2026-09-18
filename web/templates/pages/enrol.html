@@ -4,7 +4,7 @@
     <div class="top"><span class="brand">THESES</span><span class="sm dim">{{.Workspace}}</span></div>
     <form class="mid" method="post" action="{{.Action}}">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <h1>Enrol an authenticator.</h1>
+      <h1>Enroll an authenticator.</h1>
       <p class="lead">Scan this with the authenticator app on your phone, then type the six digits it shows.</p>
       {{template "notice" .}}
       <img class="qr" src="{{.QR}}" width="240" height="240" alt="Authenticator QR code">

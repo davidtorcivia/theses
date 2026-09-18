@@ -178,7 +178,7 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 // TestRequestGoesToTheCheckedAddress points a channel at a name nothing
 // resolves and hands the check the loopback address of the test server, so the
 // request can only arrive if the address that was checked is the address that
-// was dialled.
+// was dialed.
 func TestRequestGoesToTheCheckedAddress(t *testing.T) {
 	srv, got := serve(t, 200, "")
 	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))

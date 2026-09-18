@@ -9,10 +9,10 @@ import (
 )
 
 // signin.require_totp is enforced here, at the one place a session is started
-// from a password. Setup and invitation acceptance enrol before they write the
+// from a password. Setup and invitation acceptance enroll before they write the
 // account at all, so the only way to reach a sign-in without an authenticator
 // is an account that lost one or a role that gained the requirement, and both
-// land on the same page: enrol, then in.
+// land on the same page: enroll, then in.
 
 // needsAuthenticator reports whether this role has to have an authenticator
 // before it may sign in. Owners always do, whatever the setting says, because
@@ -25,7 +25,7 @@ func (s *Server) needsAuthenticator(role string) bool {
 }
 
 // startEnrolment sends someone who has just proved a password, and who has no
-// authenticator the workspace requires, to the enrolment page instead of to a
+// authenticator the workspace requires, to the enrollment page instead of to a
 // session. The cookie carries the new secret; nothing is written until a code
 // from it comes back.
 func (s *Server) startEnrolment(w http.ResponseWriter, r *http.Request, u *store.User) {
