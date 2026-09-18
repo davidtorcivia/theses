@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -173,13 +174,23 @@ func (s *Server) postPropositionSettings(w http.ResponseWriter, r *http.Request)
 		_, refused = s.board.EditProposition(ctx, actor, id,
 			form.Get("title"), form.Get("statement"), form.Get("blurb"))
 	case "schedule":
-		if _, refused = s.board.SetStatus(ctx, actor, id, form.Get("status")); refused == nil {
-			_, refused = s.board.Schedule(ctx, actor, id, form.Get("episode"), form.Get("target"))
-		}
+		// A section is several commands and one save, so they go in together:
+		// a refusal on the second must not leave the first applied.
+		refused = s.board.Together(ctx, func(ctx context.Context) error {
+			if _, err := s.board.SetStatus(ctx, actor, id, form.Get("status")); err != nil {
+				return err
+			}
+			_, err := s.board.Schedule(ctx, actor, id, form.Get("episode"), form.Get("target"))
+			return err
+		})
 	case "members":
-		refused = s.saveMembers(r, actor, id, form["member"])
+		refused = s.board.Together(ctx, func(ctx context.Context) error {
+			return s.saveMembers(ctx, actor, id, form["member"])
+		})
 	case "columns":
-		refused = s.saveColumns(r, actor, id)
+		refused = s.board.Together(ctx, func(ctx context.Context) error {
+			return s.saveColumns(ctx, actor, id, form)
+		})
 	case "document":
 		_, refused = s.board.SetDocumentSettings(ctx, actor, id, board.DocumentSettings{
 			OpenEditing: form.Get("open_editing") != "",
@@ -248,8 +259,7 @@ func lengths(form url.Values) error {
 	return nil
 }
 
-func (s *Server) saveMembers(r *http.Request, actor core.Actor, id int64, wanted []string) error {
-	ctx := r.Context()
+func (s *Server) saveMembers(ctx context.Context, actor core.Actor, id int64, wanted []string) error {
 	p, err := board.GetProposition(ctx, s.db, id)
 	if err != nil {
 		return err
@@ -281,8 +291,7 @@ func (s *Server) saveMembers(r *http.Request, actor core.Actor, id int64, wanted
 
 // saveColumns applies the one control that was pressed, then the renames, so
 // that a reorder and a retitle in the same submission both land.
-func (s *Server) saveColumns(r *http.Request, actor core.Actor, id int64) error {
-	ctx := r.Context()
+func (s *Server) saveColumns(ctx context.Context, actor core.Actor, id int64, form url.Values) error {
 	cols, err := board.ListColumns(ctx, s.db, id)
 	if err != nil {
 		return err
@@ -291,7 +300,6 @@ func (s *Server) saveColumns(r *http.Request, actor core.Actor, id int64) error 
 	for i, c := range cols {
 		index[c.ID] = i
 	}
-	form := r.PostForm
 
 	if v := strings.TrimSpace(form.Get("add")); v != "" {
 		if _, err := s.board.CreateColumn(ctx, actor, id, v); err != nil {

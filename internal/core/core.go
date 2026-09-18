@@ -128,13 +128,21 @@ type Change struct {
 // proposition itself.
 func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need string,
 	apply func(context.Context, *sql.Tx) (Change, error)) (Event, error) {
-	// The DSN sets _txlock=immediate, so this takes the write lock now rather
-	// than deadlocking later on an upgrade.
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return Event{}, err
+	// Inside Together, every command shares the one transaction and neither
+	// commits nor publishes: the outer call does both, once, if all of them
+	// got through.
+	group, joined := ctx.Value(groupKey{}).(*group)
+	tx := group.tx()
+	if !joined {
+		// The DSN sets _txlock=immediate, so this takes the write lock now
+		// rather than deadlocking later on an upgrade.
+		opened, err := s.DB.BeginTx(ctx, nil)
+		if err != nil {
+			return Event{}, err
+		}
+		defer opened.Rollback()
+		tx = opened
 	}
-	defer tx.Rollback()
 
 	if err := authorise(ctx, tx, a, proposition, need); err != nil {
 		return Event{}, err
@@ -165,16 +173,65 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 	if err != nil {
 		return Event{}, err
 	}
-	if err := tx.Commit(); err != nil {
-		return Event{}, err
-	}
-
 	e := Event{
 		Seq: seq, Proposition: prop, Entity: change.Entity, EntityID: change.EntityID,
 		Action: change.Action, Actor: a, Before: before, After: after, At: at,
 	}
+	if joined {
+		group.events = append(group.events, e)
+		return e, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return Event{}, err
+	}
 	s.Bus.Publish(e)
 	return e, nil
+}
+
+type groupKey struct{}
+
+// group is the transaction a run of commands shares and the events they are
+// waiting to publish.
+type group struct {
+	open   *sql.Tx
+	events []Event
+}
+
+// tx is nil safe, so Do can ask for the shared transaction before it knows
+// whether there is one.
+func (g *group) tx() *sql.Tx {
+	if g == nil {
+		return nil
+	}
+	return g.open
+}
+
+// Together runs several commands in one transaction, so a refusal partway
+// through leaves none of them applied. A form that saves a section is one of
+// these: adding a column and then failing to remove another used to leave the
+// added one behind and say the save was refused. Nothing is published until
+// the transaction commits, because until then nothing has happened.
+func (s *Service) Together(ctx context.Context, run func(context.Context) error) error {
+	if _, joined := ctx.Value(groupKey{}).(*group); joined {
+		return run(ctx)
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	g := &group{open: tx}
+	if err := run(context.WithValue(ctx, groupKey{}, g)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, e := range g.events {
+		s.Bus.Publish(e)
+	}
+	return nil
 }
 
 // authorise resolves the actor's role and, for anyone but an owner, checks that

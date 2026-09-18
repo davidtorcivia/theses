@@ -60,7 +60,9 @@ token sees its own owner's address in `/me` and no one else's.
 
 Scope `read`. Full text search over cards, document blocks, links, files and
 comments, plus propositions and people matched by name. `limit` is per kind,
-10 by default and 50 at most.
+10 by default and 50 at most. Results are limited to the propositions the
+token's owner is a member of; an owner searches every one. People are found by
+anyone who may search at all, because a person belongs to no proposition.
 
 `q` is cut into words at every character that is not a letter or a digit, and
 each word is matched as written. Punctuation is therefore dropped from the full
@@ -97,7 +99,9 @@ text with an ellipsis where they were cut.
 Scope `read`. The activity log as a cursor, not a feed: the rows after `since`
 in id order. `since` is the id of the last row you have seen, `0` or absent for
 the beginning. `limit` is 50 by default and 200 at most. Poll by asking again
-with the last id you were given.
+with the last id you were given. Rows about a proposition are limited to the
+propositions the token's owner is a member of; an owner sees every one. Rows
+about the workspace itself are not about a proposition and are unaffected.
 
 ```json
 {"activity": [
@@ -127,7 +131,8 @@ sequence number of the last event you have seen, `0` or absent for the
 beginning. With events waiting it answers at once. With none it holds the
 request open for twenty five seconds and answers with the first that arrives,
 or with an empty list if none does. `wait=0` answers at once either way, which
-is what a client catching up after a reconnect asks for.
+is what a client catching up after a reconnect asks for. An answer is capped at
+200 events; ask again with the highest `seq` you were given.
 
 ```json
 {"events": [

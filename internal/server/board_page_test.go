@@ -546,3 +546,82 @@ func TestTheSettingsPageOfAnArchivedPropositionOffersNoEdits(t *testing.T) {
 		t.Error("the page does not offer a delete")
 	}
 }
+
+// A section is one save, so it is one transaction: an add that goes through
+// and a remove that does not must leave the board as it was, not half changed
+// with a refusal on top of it.
+func TestARefusedSectionLeavesNothingBehind(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.srv.board.CreateCard(ctx, owner, cols[0].ID, "Call the engineer", nil); err != nil {
+		t.Fatal(err)
+	}
+	path := "/p/" + strconv.FormatInt(e.EntityID, 10) + "/settings"
+	_, body := h.get(path)
+	csrf := csrfRe.FindStringSubmatch(body)[1]
+
+	// Add a column and remove one that still has a card, in one submit.
+	res, page := h.post(path, url.Values{"csrf": {csrf}, "do": {"columns"},
+		"add":    {"Fact check"},
+		"remove": {strconv.FormatInt(cols[0].ID, 10)},
+	})
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("removing a column with a card gave %d", res.StatusCode)
+	}
+	if !strings.Contains(page, "move the cards out") {
+		t.Errorf("the page does not say why")
+	}
+	after, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(cols) {
+		t.Errorf("%d columns after a refused section, want the %d there were", len(after), len(cols))
+	}
+	for i, c := range after {
+		if c.Name != cols[i].Name {
+			t.Errorf("column %d is %q, want %q", i, c.Name, cols[i].Name)
+		}
+	}
+
+	// The members section is the same shape: a removal that goes through and
+	// an addition of somebody who is not there must leave the list alone.
+	before, err := board.GetProposition(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ = h.post(path, url.Values{"csrf": {csrf}, "do": {"members"}, "member": {"9999"}})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("adding somebody who is not there gave %d", res.StatusCode)
+	}
+	now, err := board.GetProposition(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(now.Members) != len(before.Members) {
+		t.Errorf("members are %v, want the %v there were", now.Members, before.Members)
+	}
+
+	// And a section that is refused writes no activity either.
+	var rows int
+	if err := h.db.QueryRowContext(ctx, `SELECT count(*) FROM activity
+		WHERE proposition_id = ? AND entity IN ('column', 'member')`, e.EntityID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	// Creating a proposition seeds its columns and its first member with the
+	// proposition itself, so neither refused section should have left a row.
+	if rows != 0 {
+		t.Errorf("%d column and member rows in activity, want none from a refused section", rows)
+	}
+}

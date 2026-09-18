@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -66,6 +67,88 @@ func TestActorsWithoutARoleAreRefused(t *testing.T) {
 	for _, a := range []Actor{{Kind: "token", ID: 1}, {Kind: KindUser, ID: 404}} {
 		if _, err := s.Do(context.Background(), a, 0, auth.CanEdit, never); err != ErrForbidden {
 			t.Errorf("actor %+v got %v, want ErrForbidden", a, err)
+		}
+	}
+}
+
+// Together is one transaction behind several commands: a refusal partway
+// through leaves none of them applied, and nothing is published either,
+// because until the transaction commits nothing has happened.
+func TestTogetherRollsBackAndPublishesOnlyOnCommit(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	bus := NewBus()
+	sub := bus.Subscribe(0)
+	defer sub.Close()
+	s := New(db, bus)
+
+	id, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "grace", Email: "grace@example.com", Name: "Grace Hopper",
+		Initials: "GH", Colour: "#111", Role: auth.RoleOwner, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	who := Actor{Kind: KindUser, ID: id, Name: "Grace Hopper"}
+	write := func(ctx context.Context, name string) error {
+		_, err := s.Do(ctx, who, 0, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+			_, err := tx.ExecContext(ctx, `INSERT INTO propositions
+				(number, title, status, position, created_at) VALUES (?, ?, 'idea', 'V', 0)`,
+				len(name), name)
+			return Change{Entity: "proposition", Action: "create", After: map[string]any{"title": name}}, err
+		})
+		return err
+	}
+
+	refused := errors.New("no")
+	err = s.Together(ctx, func(ctx context.Context) error {
+		if err := write(ctx, "one"); err != nil {
+			return err
+		}
+		return refused
+	})
+	if !errors.Is(err, refused) {
+		t.Fatalf("Together returned %v", err)
+	}
+	var rows int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM propositions`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("%d propositions left behind by a refused run", rows)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM activity`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("%d activity rows left behind by a refused run", rows)
+	}
+	select {
+	case e := <-sub.C:
+		t.Errorf("a refused run published %+v", e)
+	default:
+	}
+
+	// A run that gets through commits once and publishes what it did.
+	if err := s.Together(ctx, func(ctx context.Context) error {
+		if err := write(ctx, "two"); err != nil {
+			return err
+		}
+		return write(ctx, "three")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM propositions`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 {
+		t.Errorf("%d propositions after a run that got through, want 2", rows)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-sub.C:
+		default:
+			t.Errorf("only %d of 2 events were published", i)
 		}
 	}
 }
