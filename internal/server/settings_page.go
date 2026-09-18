@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -44,6 +46,8 @@ type bucketView struct {
 	PublicBaseURL            string
 	AccessSet, SecretSet     bool
 	Providers                []option
+	ProviderLabel            string
+	Origin, CORS             string
 }
 
 type envRow struct{ Name, Value, Why string }
@@ -54,6 +58,9 @@ var roleLabels = []option{
 	{Value: auth.RoleResearcher, Label: "Researcher"},
 	{Value: auth.RoleGuest, Label: "Guest"},
 }
+
+// blobProvider maps the settings vocabulary to internal/blob's.
+var blobProvider = map[string]string{"backblaze": "b2", "r2": "r2", "s3": "s3"}
 
 var providerLabels = []option{
 	{Value: "backblaze", Label: "Backblaze B2"},
@@ -173,9 +180,14 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 func (s *Server) bucket(prefix string, shown map[string]string, isSet map[string]bool) bucketView {
 	providers := make([]option, len(providerLabels))
 	copy(providers, providerLabels)
+	label := ""
 	for i := range providers {
 		providers[i].On = providers[i].Value == shown[prefix+".provider"]
+		if providers[i].On {
+			label = providers[i].Label
+		}
 	}
+	origin := s.origin()
 	return bucketView{
 		Prefix:        prefix,
 		Endpoint:      shown[prefix+".endpoint"],
@@ -185,7 +197,29 @@ func (s *Server) bucket(prefix string, shown map[string]string, isSet map[string
 		AccessSet:     isSet[prefix+".access_key"],
 		SecretSet:     isSet[prefix+".secret_key"],
 		Providers:     providers,
+		ProviderLabel: label,
+		Origin:        origin,
+		CORS:          corsRule(shown[prefix+".provider"], origin),
 	}
+}
+
+// origin is the scheme and host of THESES_BASE_URL, which is what the bucket's
+// CORS rule has to allow: the browser sends the origin, never the path.
+func (s *Server) origin() string {
+	u, err := url.Parse(s.cfg.BaseURL)
+	if err != nil || u.Host == "" {
+		return s.cfg.BaseURL
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// corsRule is the document for the chosen provider. B2 keeps its own rule shape
+// even behind the S3 endpoint; everything else takes the S3 one.
+func corsRule(provider, origin string) string {
+	if provider == "backblaze" {
+		return blob.CORSRuleB2(origin)
+	}
+	return blob.CORSRuleR2(origin)
 }
 
 func (s *Server) envRows() []envRow {
@@ -227,10 +261,64 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings?saved=1", http.StatusSeeOther)
 }
 
+// postTestStorage writes, heads and deletes one probe object with the saved
+// credentials. Whether the bucket's CORS rule is right is not checked here; that
+// needs a preflight from the browser and belongs with the upload code.
 func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
+	prefix := r.PostFormValue("prefix")
+	if prefix != "storage.primary" && prefix != "storage.recordings" {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	cfg, err := s.bucketConfig(r.Context(), prefix)
+	refuse := func(msg string) {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"StorageResult": mail.Redact(msg, cfg.SecretKey), "StorageFailed": true,
+		})
+	}
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	c, err := blob.New(cfg)
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	defer cancel()
+	if err := c.Probe(ctx); err != nil {
+		refuse(err.Error())
+		return
+	}
 	s.renderSettings(w, r, http.StatusOK, map[string]any{
-		"Error": "Testing the bucket is not wired yet. It arrives with the files step.",
+		"StorageResult": "Wrote, read and deleted a probe object in " + cfg.Bucket + ".",
 	})
+}
+
+// probeTimeout bounds the whole three-call probe, so a bucket that accepts the
+// connection and then says nothing does not hold the settings page open.
+const probeTimeout = 30 * time.Second
+
+func (s *Server) bucketConfig(ctx context.Context, prefix string) (blob.Config, error) {
+	get := func(name string) string { return settings.Get[string](s.settings, prefix+"."+name) }
+	access, err := s.settings.Secret(ctx, prefix+".access_key")
+	if err != nil {
+		return blob.Config{}, err
+	}
+	secret, err := s.settings.Secret(ctx, prefix+".secret_key")
+	if err != nil {
+		return blob.Config{}, err
+	}
+	return blob.Config{
+		Provider:      blobProvider[get("provider")],
+		Endpoint:      get("endpoint"),
+		Region:        get("region"),
+		Bucket:        get("bucket"),
+		AccessKey:     access,
+		SecretKey:     secret,
+		PublicBaseURL: get("public_base_url"),
+	}, nil
 }
 
 // postTestMail sends to the owner who asked, there and then rather than through
