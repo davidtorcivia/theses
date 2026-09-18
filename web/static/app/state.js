@@ -17,6 +17,9 @@ export const state = {
   seq: 0,
   presence: [],
   can: {},
+  documents: [],
+  document: 0,
+  docSource: false,
 
   tab: 'board',
   railFilter: null,
@@ -41,6 +44,14 @@ export function boot(payload) {
   sortProps();
   state.open = payload.open || 0;
   loadBoard(payload.board);
+  loadDocuments(payload.documents);
+}
+
+function loadDocuments(documents) {
+  state.documents = documents || [];
+  state.documents.sort(order);
+  state.document = state.documents.length ? state.documents[0].id : 0;
+  state.docSource = false;
 }
 
 function loadBoard(board) {
@@ -167,6 +178,42 @@ export function apply(ev) {
         state.cards.set(now.id, now);
       }
       break;
+
+    case 'document': {
+      if (ev.proposition !== state.open) break;
+      if (ev.action === 'delete') {
+        state.documents = state.documents.filter((d) => d.id !== ev.entity_id);
+        if (state.document === ev.entity_id) {
+          state.document = state.documents.length ? state.documents[0].id : 0;
+        }
+        break;
+      }
+      // Only a create carries the blocks it seeded; a rename carries the row
+      // alone, so the blocks already here are kept.
+      const at = state.documents.findIndex((d) => d.id === now.id);
+      if (at < 0) state.documents.push({ blocks: [], ...now });
+      else state.documents[at] = { ...state.documents[at], ...now };
+      state.documents.sort(order);
+      break;
+    }
+
+    case 'block': {
+      if (ev.proposition !== state.open) break;
+      const row = now || was;
+      const doc = state.documents.find((d) => d.id === row.document_id);
+      if (!doc) break;
+      const blocks = (doc.blocks ||= []);
+      const at = blocks.findIndex((b) => b.id === row.id);
+      // A deleted block is a tombstone, so it leaves the list rather than
+      // sitting in it with a date on it; undo sends it back without one.
+      if (!now || now.deleted_at) {
+        if (at >= 0) blocks.splice(at, 1);
+        break;
+      }
+      if (at < 0) blocks.push(now); else blocks[at] = now;
+      blocks.sort(order);
+      break;
+    }
 
     case 'checklist_item':
     case 'comment': {

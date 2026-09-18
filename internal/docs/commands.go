@@ -201,11 +201,21 @@ func (s *Service) CreateDocument(ctx context.Context, a core.Actor, proposition 
 					return core.Change{}, err
 				}
 			}
+			// A create carries the blocks it seeded as well as the row, which
+			// is the one event that does: they were written in this
+			// transaction and no block.insert was published for them, so a tab
+			// would otherwise show a document with nothing in it until the
+			// next reload. Every key the row has is still there.
 			document, err := GetDocument(ctx, tx, id)
 			if err != nil {
 				return core.Change{}, err
 			}
-			return core.Change{Entity: "document", EntityID: id, Action: "create", After: document}, nil
+			blocks, err := Blocks(ctx, tx, id)
+			if err != nil {
+				return core.Change{}, err
+			}
+			return core.Change{Entity: "document", EntityID: id, Action: "create",
+				After: Doc{Document: document, Blocks: blocks}}, nil
 		})
 }
 
