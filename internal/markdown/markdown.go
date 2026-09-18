@@ -177,7 +177,39 @@ type nodeRenderer struct{}
 func (r nodeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(kindMention, r.renderMention)
 	reg.Register(kindNote, r.renderNote)
+	reg.Register(ast.KindLink, r.renderLink)
 }
+
+// A link is written out only when its target is http or https, and then with
+// rel="noopener" on it. Every other scheme is put back as the text it was
+// written as, because this is a workspace where anyone may type a paragraph and
+// a mailto: or a javascript: target is never something the page should offer to
+// follow. The browser's own renderer does exactly this, so an export and the
+// live view agree.
+func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	link := n.(*ast.Link)
+	if !httpURL.Match(link.Destination) {
+		if entering {
+			_ = w.WriteByte('[')
+		} else {
+			_, _ = w.WriteString("](")
+			_, _ = w.Write(util.EscapeHTML(link.Destination))
+			_ = w.WriteByte(')')
+		}
+		return ast.WalkContinue, nil
+	}
+	if entering {
+		_, _ = w.WriteString(`<a href="`)
+		_, _ = w.Write(util.EscapeHTML(util.URLEscape(link.Destination, true)))
+		_, _ = w.WriteString(`" rel="noopener">`)
+	} else {
+		_, _ = w.WriteString("</a>")
+	}
+	return ast.WalkContinue, nil
+}
+
+// httpURL is the only kind of target a link in this app may point at.
+var httpURL = regexp.MustCompile(`^(?i:https?)://`)
 
 func (nodeRenderer) renderMention(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {

@@ -46,20 +46,33 @@ export function num(n) {
 const MENTION = /@([a-z0-9][a-z0-9-]*)/g;
 
 // inline renders the little markdown the cards and notes use: bold, italic,
-// mentions and the bracketed note the show writes to itself.
+// links, mentions and the two bracketed notes the show writes to itself, an
+// aside addressed to somebody and a check to come back to.
+//
+// The link alternative comes before the note so that [AL: read this](url) is a
+// link with an odd label rather than an aside, which is what the server makes
+// of the same text. The scheme is in the pattern, so a target that is not http
+// or https never matches and the whole of it stays the text somebody typed.
+// The groups are named because the order of the alternatives is a reading
+// decision and numbering them makes it one more thing to keep in step.
+const INLINE = /\*\*(?<bold>.+?)\*\*|\*(?<italic>.+?)\*|\[(?<label>[^\]\n]+)\]\((?<href>https?:\/\/[^\s)]+)\)|\[(?<by>[A-Za-z0-9-]+): (?<aside>[^\]]+)\]|\[(?<check>check[^\]]*)\]|@(?<handle>[a-z0-9][a-z0-9-]*)/g;
+
 export function inline(text, lookup) {
   const out = [];
-  const pattern = /\*\*(.+?)\*\*|\*(.+?)\*|\[([A-Za-z0-9-]+): ([^\]]+)\]|@([a-z0-9][a-z0-9-]*)/g;
+  INLINE.lastIndex = 0;
   let at = 0;
-  for (let m; (m = pattern.exec(text)); ) {
+  for (let m; (m = INLINE.exec(text)); ) {
     if (m.index > at) out.push(text.slice(at, m.index));
-    if (m[1]) out.push(el('b', { text: m[1] }));
-    else if (m[2]) out.push(el('i', { text: m[2] }));
-    else if (m[3]) out.push(el('mark', { class: 'note', text: m[3] + ': ' + m[4] }));
+    const g = m.groups;
+    if (g.bold) out.push(el('b', { text: g.bold }));
+    else if (g.italic) out.push(el('i', { text: g.italic }));
+    else if (g.href) out.push(el('a', { href: g.href, rel: 'noopener', text: g.label }));
+    else if (g.aside) out.push(el('mark', { class: 'note', text: g.by + ': ' + g.aside }));
+    else if (g.check) out.push(el('mark', { class: 'note', text: g.check }));
     else {
-      const person = lookup(m[5]);
+      const person = lookup(g.handle);
       out.push(person
-        ? el('b', { class: 'mention ' + person.colour, text: '@' + m[5] })
+        ? el('b', { class: 'mention ' + person.colour, text: '@' + g.handle })
         : m[0]);
     }
     at = m.index + m[0].length;

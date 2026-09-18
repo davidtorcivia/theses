@@ -66,7 +66,27 @@ func TestRenderBlock(t *testing.T) {
 		{
 			name: "a link that reads like a note stays a link",
 			in:   "[AL: the paper](https://example.com)",
-			want: "<p><a href=\"https://example.com\">AL: the paper</a></p>\n",
+			want: "<p><a href=\"https://example.com\" rel=\"noopener\">AL: the paper</a></p>\n",
+		},
+		{
+			name: "a link carries rel",
+			in:   "The [tide station](http://example.com/rance) record.",
+			want: "<p>The <a href=\"http://example.com/rance\" rel=\"noopener\">tide station</a> record.</p>\n",
+		},
+		{
+			name: "a mailto link is text",
+			in:   "Write to [Ada](mailto:ada@example.com).",
+			want: "<p>Write to [Ada](mailto:ada@example.com).</p>\n",
+		},
+		{
+			name: "an ftp link is text",
+			in:   "[the archive](ftp://example.com/x)",
+			want: "<p>[the archive](ftp://example.com/x)</p>\n",
+		},
+		{
+			name: "a relative link is text",
+			in:   "[the other page](/p/1)",
+			want: "<p>[the other page](/p/1)</p>\n",
 		},
 		{
 			name: "heading and list",
@@ -107,7 +127,7 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 		{
 			name: "javascript link",
 			in:   "[click](javascript:alert(1))",
-			want: "<p><a href=\"\">click</a></p>\n",
+			want: "<p>[click](javascript:alert(1))</p>\n",
 		},
 		{
 			name: "data image",
@@ -136,7 +156,10 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("RenderBlock(%q) =\n%q\nwant\n%q", tt.in, got, tt.want)
 			}
-			if strings.Contains(got, "<script") || strings.Contains(got, "onerror") || strings.Contains(got, "javascript:") {
+			// A scheme this renderer refuses is written back as the text it was
+			// typed as, so the check is on what the page would follow rather
+			// than on the word appearing at all.
+			if strings.Contains(got, "<script") || strings.Contains(got, "onerror") || strings.Contains(got, `href="javascript:`) {
 				t.Errorf("RenderBlock(%q) let markup through: %q", tt.in, got)
 			}
 		})
