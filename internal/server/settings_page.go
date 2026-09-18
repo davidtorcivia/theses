@@ -160,6 +160,17 @@ func (s *Server) said(w http.ResponseWriter, r *http.Request, data map[string]an
 // the browser drops without a word, taking the whole notice with it.
 const flashValueMax = 1024
 
+// cutForFlash is one value shortened to what the cookie can carry. The cut is
+// by byte and a provider answers in whatever alphabet it likes, so the rune the
+// cut lands inside goes rather than half of it, which would reach the page as a
+// replacement character or not at all.
+func cutForFlash(text string) string {
+	if len(text) <= flashValueMax {
+		return text
+	}
+	return strings.ToValidUTF8(text[:flashValueMax], "") + "… The rest is in the log."
+}
+
 // back is how every form on the settings and profile pages answers. The
 // browser goes to the section it posted from, carrying what the form has to
 // say in a one-time cookie. Rendering the answer instead left it on an address
@@ -179,7 +190,7 @@ func (s *Server) back(w http.ResponseWriter, r *http.Request, to string, say map
 				continue
 			}
 			s.log.Warn("a notice was too long for the page to carry", "key", k, "said", text)
-			say[k] = text[:flashValueMax] + "… The rest is in the log."
+			say[k] = cutForFlash(text)
 		}
 		f := &flash{UserID: userOf(r).ID, Path: path, Section: sectionOf(to, known), Say: say}
 		if err := s.pending.putFlash(w, s.cfg.CookieSecure, f); err != nil {

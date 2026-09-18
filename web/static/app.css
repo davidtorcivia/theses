@@ -564,15 +564,17 @@ body.plain #top .show{display:inline;margin-right:auto;min-width:0;overflow:hidd
    section nav follows the top bar so it stays reachable on a page thousands of
    pixels long; below 900 it is three rows of links and would take a third of
    the screen, so it scrolls away there. A landing on a fragment clears both. */
-#admin [id]{scroll-margin-top:calc(var(--toph) + 3.2rem)}
-@media (min-width:901px){#admin nav{position:sticky;top:var(--toph);z-index:15;background:var(--k);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}#admin nav a{white-space:nowrap}#admin nav .back{position:sticky;right:0;background:var(--k)}}
+#admin [id]{scroll-margin-top:calc(var(--toph) + 4rem)}
+@media (min-width:901px){#admin nav{position:sticky;top:var(--toph);z-index:15;background:var(--k);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}#admin nav a{white-space:nowrap}}
 /* 19: an action that makes something is a button, told apart from the filled
    Save and from the links that revoke and remove, and the tests beside it are
    separate buttons rather than one run of yellow words. */
 .act{display:inline-block;border:1px solid var(--y);color:var(--y);padding:.4rem .9rem;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%}
 .act:hover{background:var(--y);color:var(--k)}
 .tests{display:flex;flex-wrap:wrap;gap:.6rem 1.6rem;align-items:baseline;margin:.6rem 0}
-.invite{align-items:flex-end}
+/* Only the rows whose fields carry labels: the invite row on the proposition
+   page has none, and a bare link there belongs on the middle of the field. */
+.invite:has(.f){align-items:flex-end}
 .invite .f{flex:1 1 200px;margin:0}
 .invite .f select{width:100%}
 /* 8: a value the page shows once, selectable in one click beside its Copy. */
@@ -584,3 +586,6 @@ body.plain #top .show{display:inline;margin-right:auto;min-width:0;overflow:hidd
 /* 6, second half: the input rules inside .form answer :focus with a border, and
    every control outside one had nothing at all. The ring is the buttons'. */
 input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--y);outline-offset:2px}
+/* The palette is one yellow frame around its own field; a second inside it is
+   a frame too many. */
+#palette input:focus-visible{outline:0}

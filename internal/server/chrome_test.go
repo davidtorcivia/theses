@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/backup"
@@ -451,5 +452,39 @@ func TestALongNoticeIsCutRatherThanLost(t *testing.T) {
 	}
 	if !strings.Contains(h.log.String(), "a notice was too long") {
 		t.Error("what was cut is not in the log")
+	}
+}
+
+// A message is cut by byte, and a provider answers in whatever alphabet it
+// likes, so the cut has to land between runes and not inside one.
+func TestTheCutForTheFlashLandsBetweenRunes(t *testing.T) {
+	for _, c := range []struct{ name, text string }{
+		{"short enough to keep whole", "the bucket said no"},
+		{"exactly the limit", strings.Repeat("a", flashValueMax)},
+		{"one byte over", strings.Repeat("a", flashValueMax+1)},
+		{"a two byte rune across the cut", strings.Repeat("a", flashValueMax-1) + "ü" + "more"},
+		{"a three byte rune across the cut", strings.Repeat("a", flashValueMax-1) + "→" + "more"},
+		{"a four byte rune across the cut", strings.Repeat("a", flashValueMax-2) + "𝄞" + "more"},
+		{"nothing but multibyte runes", strings.Repeat("→", flashValueMax)},
+	} {
+		got := cutForFlash(c.text)
+		if !utf8.ValidString(got) {
+			t.Errorf("%s: the cut left invalid UTF8", c.name)
+		}
+		if strings.ContainsRune(got, utf8.RuneError) && !strings.ContainsRune(c.text, utf8.RuneError) {
+			t.Errorf("%s: the cut left a replacement character", c.name)
+		}
+		if len(c.text) <= flashValueMax {
+			if got != c.text {
+				t.Errorf("%s: a value that fits was changed", c.name)
+			}
+			continue
+		}
+		if !strings.HasSuffix(got, "… The rest is in the log.") {
+			t.Errorf("%s: the cut does not say there is more", c.name)
+		}
+		if !strings.HasPrefix(c.text, strings.TrimSuffix(got, "… The rest is in the log.")) {
+			t.Errorf("%s: what was kept is not the start of what was said", c.name)
+		}
 	}
 }
