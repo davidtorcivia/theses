@@ -59,7 +59,10 @@
       {{if .StorageResult}}<p class="notice{{if .StorageFailed}} bad{{end}}">{{.StorageResult}}</p>{{end}}
       <button class="lnk" type="submit" name="prefix" value="storage.primary">Test the primary bucket</button>
       <button class="lnk" type="submit" name="prefix" value="storage.recordings">Test the recordings bucket</button>
-      <p class="small dim">Writes, reads and deletes one probe object with the saved keys. Whether the CORS rule below is in place cannot be checked from here; that takes a preflight from the browser and comes with the upload code.</p>
+      <button class="lnk" type="button" data-cors="storage.primary">Check CORS from this browser</button>
+      <button class="lnk" type="button" data-cors="storage.recordings">Check CORS on recordings</button>
+      <p class="notice" id="corsresult" hidden></p>
+      <p class="small dim">The first two write, read and delete one probe object with the saved keys. The other two upload a probe object from this page the way the browser does, which is the only way to find out whether the CORS rule below lets this origin through.</p>
     </form>
 
     <form class="form" method="post" action="/settings" id="mail">
@@ -216,6 +219,8 @@
     </section>
   </div>
 </section>{{end}}
+
+{{define "scripts"}}<script type="module" src="{{asset "app/storage.js"}}"></script>{{end}}
 
 {{define "bucket"}}<div class="row3">
   <label class="f"><span class="l">Provider</span><select name="{{.Prefix}}.provider">{{range .Providers}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>

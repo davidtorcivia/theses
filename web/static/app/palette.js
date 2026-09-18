@@ -2,10 +2,15 @@
 // holds, which at four people and thirty propositions is everything.
 
 import { $, el, clear, num } from './dom.js';
-import { state } from './state.js';
+import { state, material } from './state.js';
 import { openCard } from './drawer.js';
+import { openLink, host } from './links.js';
+import { openFile } from './files.js';
 
 export function openPalette() {
+  // The links and files are two requests away and the palette searches them,
+  // so opening it loads them if the tab has not been on either pane yet.
+  material().then(() => list($('#palette input').value)).catch(() => {});
   const palette = $('#palette');
   palette.hidden = false;
   const field = palette.querySelector('input');
@@ -28,6 +33,22 @@ function items() {
       if (!$('#drawer')) { location.href = '/p/' + state.open; return; }
       closePalette();
       openCard(card.id);
+    } });
+  }
+  for (const link of state.links) {
+    rows.push({ kind: link.kind || 'link', label: link.title || host(link.url), go: () => {
+      if (!$('#drawer')) { location.href = '/p/' + state.open + '#links'; return; }
+      closePalette();
+      location.hash = 'links';
+      openLink(link.id);
+    } });
+  }
+  for (const file of state.files) {
+    rows.push({ kind: 'file', label: file.name, go: () => {
+      if (!$('#drawer')) { location.href = '/p/' + state.open + '#files'; return; }
+      closePalette();
+      location.hash = 'files';
+      openFile(file.id);
     } });
   }
   if (state.can.settings) {
