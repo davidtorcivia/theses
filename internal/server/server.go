@@ -251,8 +251,13 @@ func (s *Server) routes() http.Handler {
 	// and under /app for the browser, which has a session instead. The browser
 	// cannot use the first, because /api/ carries no CSRF check.
 	machine := s.api.Authenticate(api.FilesHandler(s.api, s.files))
+	// The card patterns name the two paths attachments use rather than the
+	// whole of /api/v1/cards/, which would shadow the board's own resources
+	// when they land: the outer mux wins on specificity, so a wider pattern
+	// here would take them.
 	for _, pattern := range []string{"/api/v1/links", "/api/v1/links/", "/api/v1/files",
-		"/api/v1/files/", "/api/v1/attachments", "/api/v1/cards/"} {
+		"/api/v1/files/", "/api/v1/attachments",
+		"/api/v1/cards/{card}/links/", "/api/v1/cards/{card}/files/"} {
 		mux.Handle(pattern, machine)
 	}
 	mux.Handle("/app/", s.requireUser(api.SessionHandler(s.api, s.files, userOf).ServeHTTP))

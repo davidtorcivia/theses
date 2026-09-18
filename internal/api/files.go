@@ -290,7 +290,8 @@ func (f *fileAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, board.ErrTooLong), errors.Is(err, files.ErrKind),
 		errors.Is(err, files.ErrQuestion), errors.Is(err, files.ErrURL),
 		errors.Is(err, files.ErrState), errors.Is(err, files.ErrSize),
-		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket):
+		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
+		errors.Is(err, files.ErrPart):
 		f.fail(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		f.serverError(w, r, err)

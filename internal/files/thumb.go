@@ -20,11 +20,14 @@ import (
 
 // What a thumbnail costs at most. The bytes read bound the download, and the
 // pixel count bounds the decode: a small compressed file can declare an image
-// of a hundred million pixels, and decoding one is four hundred megabytes of
-// memory in a process that is also serving the app.
+// of a hundred million pixels, and the header says nothing about how much each
+// one costs. A 16 bit per channel PNG with alpha decodes to eight bytes a
+// pixel, so the cap is set against that rather than against the four an 8 bit
+// image takes: 25 million pixels is 200 MB of decoded image in a process that
+// is also serving the app.
 const (
 	thumbMaxBytes  = 32 << 20
-	thumbMaxPixels = 50_000_000
+	thumbMaxPixels = 25_000_000
 	thumbSide      = 480
 	thumbQuality   = 80
 )

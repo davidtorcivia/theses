@@ -111,14 +111,22 @@ async function carryOn(up, file, onProgress) {
 // margin is how long before its URLs expire a batch is abandoned for a fresh
 // one. A part can take minutes on a slow line, and a URL that expires mid PUT
 // comes back as a refusal from the bucket rather than as something to retry.
-const margin = 120;
+const margin = 120000;
+
+// deadline is when a batch stops being usable, counted from the moment its
+// answer arrived rather than from the expiry time the server put on it. The two
+// clocks are not the same one: a browser minutes fast would read every fresh
+// batch as already expired and ask for another without ever sending a byte.
+function deadline(up) {
+  return up.ttl_seconds ? Date.now() + up.ttl_seconds * 1000 : 0;
+}
 
 async function parts(up, file, onProgress) {
   const size = blockSize(up);
   const total = Math.ceil(file.size / size);
   let done = new Set(up.done || []);
   let batch = up.parts || [];
-  let expires = up.expires_at || 0;
+  let expires = deadline(up);
   let sent = done.size * size;
 
   while (done.size < total) {
@@ -126,14 +134,14 @@ async function parts(up, file, onProgress) {
       const next = await api.get('/files/' + up.file.id + '/parts?after=' + highest(done));
       done = new Set(next.done || []);
       batch = next.parts || [];
-      expires = next.expires_at || 0;
+      expires = deadline(next);
       if (!batch.length) break;
     }
     for (const part of batch) {
       // The batch is dropped rather than finished when its hour is nearly up:
       // the next pass asks for the parts still missing and is signed again,
       // which is also what tells the server the upload is still going.
-      if (expires && Date.now() / 1000 > expires - margin) break;
+      if (expires && Date.now() > expires - margin) break;
       const from = (part.number - 1) * size;
       const chunk = file.slice(from, Math.min(from + size, file.size));
       await api.put(part.url, null, chunk, (loaded) => onProgress((sent + loaded) / file.size));

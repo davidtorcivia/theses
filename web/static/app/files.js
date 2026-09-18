@@ -142,9 +142,10 @@ async function resumeWhatIsLeft() {
       if (ready) put(ready);
     } catch (err) {
       state.uploads.set(row.file, { name, at: 0, error: err.message });
-      // A file the server no longer has is one the sweep took; the note goes
-      // with it rather than being offered again on every reload.
-      if (err.status === 404) {
+      // A file the server no longer has is one the sweep took, and one it
+      // refuses outright is one it will refuse again: the note goes with both
+      // rather than being offered on every reload from now on.
+      if (err.status === 404 || err.status === 422) {
         await upload.forget(row.file);
         state.uploads.delete(row.file);
       }

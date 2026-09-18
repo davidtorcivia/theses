@@ -13,6 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/board"
@@ -50,9 +52,14 @@ type Upload struct {
 	// Done are the part numbers the bucket already holds, which is what a
 	// resumed upload skips.
 	Done []int `json:"done,omitempty"`
-	// ExpiresAt is when the part URLs stop working. Asking for them again is
-	// how a client that took longer carries on.
+	// ExpiresAt is when the part URLs stop working, as this server counts
+	// time. It is for a person reading the answer.
 	ExpiresAt int64 `json:"expires_at,omitempty"`
+	// TTLSeconds is how long they last from the moment this answer arrives,
+	// which is what the client counts from. A browser clock that is minutes
+	// fast would otherwise think every batch it is handed has already expired
+	// and ask for another, forever, without sending a byte.
+	TTLSeconds int64 `json:"ttl_seconds,omitempty"`
 }
 
 // A Part is one presigned part URL.
@@ -142,7 +149,7 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 		return Upload{}, err
 	}
 
-	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix()}
+	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}
 	kind := contentType(name)
 	if size <= blob.PartSize {
 		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, kind, size, uploadTTL)
@@ -193,6 +200,15 @@ func (s *Service) Parts(ctx context.Context, a core.Actor, id int64, after int) 
 	if row.State != stateUploading {
 		return Upload{}, ErrState
 	}
+	// after is a number off the wire. Negative, it would sign part zero, which
+	// no bucket has; past the end it would sign nothing and the client would
+	// ask again forever.
+	if after < 0 {
+		after = 0
+	}
+	if after >= partCount(row.Size) {
+		return Upload{}, ErrPart
+	}
 	// ponytail: a file small enough for one PUT has no uploads row, so this
 	// answers not found and the browser drops its note and waits for the sweep
 	// to clear the row. A resume for those is a second presigned PUT, which is
@@ -217,16 +233,50 @@ func (s *Service) Parts(ctx context.Context, a core.Actor, id int64, after int) 
 	}
 	out := Upload{
 		File: row, UploadID: uploadID, PartSize: blob.PartSize,
-		ExpiresAt: s.Now().Add(uploadTTL).Unix(),
+		ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds()),
 	}
 	out.Parts, out.Done, err = s.presign(ctx, bucket, row, multipart, after)
 	return out, err
 }
 
+// partCount is how many parts an object of this size is sent in.
+func partCount(size int64) int {
+	return int((size + blob.PartSize - 1) / blob.PartSize)
+}
+
+// atLeastZero is a number a client measured, floored. Zero is how "not known"
+// is stored, so a negative one becomes that.
+func atLeastZero(n int64) int64 {
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// abandon throws away a file that cannot be finished: the row, through a
+// command so that every tab drops it, and then the object and any parts. It
+// acts as the file actor, the one with no person behind it, because the person
+// who could not finish the upload may not be allowed to delete.
+func (s *Service) abandon(ctx context.Context, row File) {
+	actor := core.Actor{Kind: core.KindFile, Name: "the upload sweep"}
+	_, multipart, err := s.upload(ctx, row.ID)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		slog.Warn("could not read the upload of a file being abandoned", "file", row.ID, "err", err)
+	}
+	if _, err := s.file(ctx, actor, row.ID, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, row.ID)
+		return err
+	}); err != nil {
+		slog.Warn("could not remove a file that could not be finished", "file", row.ID, "err", err)
+		return
+	}
+	s.forget(ctx, row, multipart)
+}
+
 // presign returns URLs for the next batch of parts that are not in the bucket
 // yet, and the numbers of the ones that are.
 func (s *Service) presign(ctx context.Context, bucket *blob.Client, row File, multipart string, after int) ([]Part, []int, error) {
-	total := int((row.Size + blob.PartSize - 1) / blob.PartSize)
+	total := partCount(row.Size)
 	held, err := bucket.ListParts(ctx, row.ObjectKey, multipart)
 	if err != nil {
 		return nil, nil, err
@@ -301,6 +351,13 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		if err != nil {
 			return core.Event{}, err
 		}
+		// CompleteMultipart refuses a gap but not a short tail, so a completion
+		// sent before the last parts arrived would assemble a truncated object
+		// and throw the upload away with it. The count is checked here, while
+		// the parts are still there to go on uploading to.
+		if len(held) != partCount(row.Size) {
+			return core.Event{}, ErrState
+		}
 		if err := bucket.CompleteMultipart(ctx, row.ObjectKey, multipart, held); err != nil {
 			return core.Event{}, err
 		}
@@ -318,8 +375,17 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 	// multipart upload assembled from short parts, a key written by some other
 	// holder of the credentials, a client that lied about the size to get a URL.
 	if stored != row.Size {
+		// The object is the wrong size and the multipart upload, if there was
+		// one, has already been assembled into it: there is nothing left to go
+		// on uploading to. Both are cleared so that the same file can be added
+		// again, rather than leaving a row stuck at uploading forever.
+		s.abandon(ctx, row)
 		return core.Event{}, ErrSize
 	}
+	// Duration and dimensions are what the browser measured, so they are a
+	// number a client chose. Nothing downstream divides by them, but a negative
+	// duration draws a clock running backwards.
+	duration, width, height = atLeastZero(duration), atLeastZero(width), atLeastZero(height)
 	if w, h := s.thumbnail(ctx, bucket, row); w > 0 {
 		width, height = w, h
 	}
@@ -499,6 +565,15 @@ func (s *Service) ThumbURL(ctx context.Context, a core.Actor, id int64) (string,
 	if err != nil {
 		return "", err
 	}
+	// Rendering a thumbnail is best effort and its failures are logged rather
+	// than raised, so knowing the image had dimensions is not knowing the
+	// thumbnail was written. Asking the bucket is, and it is one call on a
+	// drawer that is already open.
+	if _, _, err := bucket.Head(ctx, key); errors.Is(err, blob.ErrNotFound) {
+		return "", core.ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
 	return bucket.PresignGet(ctx, key, "", downloadTTL)
 }
 
@@ -555,20 +630,27 @@ func (s *Service) Sweep(ctx context.Context) error {
 			continue
 		}
 		if err != nil {
-			return err
-		}
-		// The row is claimed before anything is thrown away, so a completion
-		// that started a moment ago either already moved the deadline or finds
-		// the upload gone and refuses.
-		claimed, err := s.DB.ExecContext(ctx,
-			`DELETE FROM uploads WHERE file_id = ? AND expires_at < ?`, one.id, cutoff)
-		if err != nil {
-			return err
-		}
-		if n, _ := claimed.RowsAffected(); n == 0 && one.multipart != "" {
+			slog.Error("could not read an abandoned upload", "file", one.id, "err", err)
 			continue
 		}
+		// The claim and the delete are one transaction. Claiming first in a
+		// transaction of its own would commit the loss of the multipart id
+		// before the row it belongs to went, and a failure in between would
+		// leave parts in the bucket with nothing left to find them by.
 		if _, err := s.file(ctx, actor, one.id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
+			if one.multipart != "" {
+				// A completion that started a moment ago has already moved the
+				// deadline, so there is nothing here to claim and this sweep
+				// leaves the upload to it.
+				claimed, err := tx.ExecContext(ctx,
+					`DELETE FROM uploads WHERE file_id = ? AND expires_at < ?`, one.id, cutoff)
+				if err != nil {
+					return err
+				}
+				if n, err := claimed.RowsAffected(); err != nil || n == 0 {
+					return ErrState
+				}
+			}
 			// The state is checked again inside the transaction: a completion
 			// that got through between the listing and here leaves a ready
 			// file, which is not abandoned at all.
@@ -582,10 +664,13 @@ func (s *Service) Sweep(ctx context.Context) error {
 			}
 			return nil
 		}); err != nil {
-			if errors.Is(err, ErrState) {
-				continue
+			// One upload that will not go is not a reason to leave the rest
+			// where they are, and the sweep runs again in an hour: it is logged
+			// and the run carries on.
+			if !errors.Is(err, ErrState) {
+				slog.Error("could not abandon an upload", "file", one.id, "err", err)
 			}
-			return err
+			continue
 		}
 		s.forget(ctx, row, one.multipart)
 	}
@@ -662,7 +747,11 @@ const maxName = 120
 // control character or a leading dot, and blob validates the whole key again
 // before it signs anything.
 func filename(name string) (string, error) {
-	name = strings.TrimSpace(name)
+	// One spelling. A name typed on one platform and a name typed on another
+	// can be the same characters in two encodings, and without this they are
+	// two keys in the bucket and two files that never offer to replace each
+	// other.
+	name = norm.NFC.String(strings.TrimSpace(name))
 	// A browser sends the base name, but a form, the API and MCP send whatever
 	// they were given, and "../../backups/x" is a path.
 	name = path.Base(strings.ReplaceAll(name, `\`, "/"))

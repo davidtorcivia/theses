@@ -7,29 +7,13 @@ import (
 	"github.com/davidtorcivia/theses/internal/files"
 )
 
-// A linkView is a link with the line the drawer copies. The citation is built
-// from the fields rather than stored, so a corrected author appears in it
-// without the row being touched twice.
-type linkView struct {
-	files.Link
-	Citation string `json:"citation"`
-}
-
-func view(l files.Link) linkView {
-	return linkView{Link: l, Citation: files.Citation(l)}
-}
-
 func (f *fileAPI) listLinks(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	rows, err := f.svc.ListLinks(r.Context(), a, id(r, "proposition"))
 	if err != nil {
 		f.refuse(w, r, err)
 		return
 	}
-	out := make([]linkView, 0, len(rows))
-	for _, l := range rows {
-		out = append(out, view(l))
-	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"links": out, "kinds": files.Kinds})
+	f.writeJSON(w, http.StatusOK, map[string]any{"links": rows, "kinds": files.Kinds})
 }
 
 func (f *fileAPI) getLink(w http.ResponseWriter, r *http.Request, a core.Actor) {
@@ -38,7 +22,7 @@ func (f *fileAPI) getLink(w http.ResponseWriter, r *http.Request, a core.Actor) 
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, view(l))
+	f.writeJSON(w, http.StatusOK, l)
 }
 
 // addLink takes a URL and reads the page before it answers, so the row the
@@ -134,5 +118,5 @@ func (f *fileAPI) answerLink(w http.ResponseWriter, r *http.Request, a core.Acto
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, view(l))
+	f.writeJSON(w, http.StatusOK, l)
 }

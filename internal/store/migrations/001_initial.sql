@@ -215,11 +215,12 @@ CREATE TABLE files (
 );
 CREATE INDEX files_proposition ON files(proposition_id);
 
+-- What the bucket holds is asked of the bucket: ListParts is the only answer
+-- that cannot go stale, so there is no mirror of it here.
 CREATE TABLE uploads (
   id           INTEGER PRIMARY KEY,
   file_id      INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
   multipart_id TEXT    NOT NULL,
-  parts_json   TEXT    NOT NULL DEFAULT '[]',
   created_at   INTEGER NOT NULL,
   expires_at   INTEGER NOT NULL
 );

@@ -102,17 +102,17 @@ func TestAddLinkIsAttributedToTheTokenOwner(t *testing.T) {
 	proposition, card, page := h.withFiles(t)
 	cs := h.connect(auth.ScopeRead, auth.ScopeWrite)
 
-	var added linkOut
+	var added files.Link
 	if res := h.call(cs, "add_link", map[string]any{
 		"proposition": proposition, "url": page, "note": "Chapter 3.", "question": "II",
 	}, &added); res.IsError {
 		t.Fatalf("add_link: %v", res.Content)
 	}
 	if added.Title != "The tide tables" || added.Author != "Ada Lovelace" {
-		t.Fatalf("the page was not read: %+v", added.Link)
+		t.Fatalf("the page was not read: %+v", added)
 	}
 	if added.Note != "Chapter 3." || added.Question == nil || *added.Question != "II" {
-		t.Fatalf("the agent's own words were not saved: %+v", added.Link)
+		t.Fatalf("the agent's own words were not saved: %+v", added)
 	}
 	if !strings.Contains(added.Citation, "Ada Lovelace") {
 		t.Fatalf("citation %q", added.Citation)

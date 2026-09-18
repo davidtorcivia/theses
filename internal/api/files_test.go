@@ -220,6 +220,11 @@ func TestFileRoutesAuthorisation(t *testing.T) {
 			token: h.token(h.owner, auth.ScopeRead), want: http.StatusNotFound,
 		},
 		{
+			name:   "a part number outside the upload is refused",
+			method: "GET", target: "/api/v1/files/1/parts?after=-1",
+			token: h.token(h.owner, auth.ScopeFiles), want: http.StatusNotFound,
+		},
+		{
 			name: "a URL that is not a web address is refused", method: "POST", target: "/api/v1/links",
 			body:  `{"proposition":` + proposition + `,"url":"file:///etc/passwd"}`,
 			token: h.token(h.owner, auth.ScopeWrite), want: http.StatusUnprocessableEntity,

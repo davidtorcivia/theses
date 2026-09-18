@@ -235,6 +235,30 @@ func TestArchivedIsReadOnly(t *testing.T) {
 	}
 }
 
+// The citation is on the row, not on one surface's view of it, so an event is
+// as complete as an HTTP answer: a tab that replaces the link it holds with an
+// event's payload keeps the line it was showing.
+func TestEveryLinkCarriesItsCitation(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	e, err := f.AddLink(ctx, f.who["editor"], f.prop, page(t,
+		`<html><head><meta property="og:title" content="The tide tables">
+		<meta name="citation_author" content="Ada Lovelace"></head></html>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(e.After), `"citation":"Ada Lovelace`) {
+		t.Fatalf("the event payload has no citation: %s", e.After)
+	}
+	rows, err := f.ListLinks(ctx, f.who["editor"], f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || !strings.HasPrefix(rows[0].Citation, "Ada Lovelace") {
+		t.Fatalf("the listed link has no citation: %+v", rows)
+	}
+}
+
 func TestFilenameIsSanitised(t *testing.T) {
 	for _, tc := range []struct {
 		name, in, want string
@@ -251,6 +275,11 @@ func TestFilenameIsSanitised(t *testing.T) {
 		{name: "an emoji survives", in: "tide 🌊.wav", want: "tide 🌊.wav"},
 		{name: "a quote cannot break a header", in: `a"b.txt`, want: "a-b.txt"},
 		{name: "nothing but spaces is refused", in: "   ", fails: true},
+		// The same name typed on two platforms: an e with a combining acute,
+		// and the single character for the same letter. One key, one file, and
+		// so one offer to replace it rather than two files that never meet.
+		{name: "two spellings of one name are one name",
+			in: "tidé.wav", want: "tidé.wav"},
 		{name: "a long name keeps its extension", in: strings.Repeat("a", 400) + ".wav",
 			want: strings.Repeat("a", maxName-4) + ".wav"},
 	} {

@@ -3,7 +3,9 @@ package files
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -105,12 +107,17 @@ func TestCompleteRefusesTheWrongSize(t *testing.T) {
 	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0); !errors.Is(err, ErrSize) {
 		t.Fatalf("Complete with a short object: %v, want ErrSize", err)
 	}
-	row, err := GetFile(ctx, f.db, up.File.ID)
-	if err != nil {
-		t.Fatal(err)
+	// There is nothing left to go on uploading to, so the row goes with the
+	// object rather than sitting at uploading until the sweep reaches it.
+	if _, err := GetFile(ctx, f.db, up.File.ID); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("the file row survived a size that could not be right: %v", err)
 	}
-	if row.State != stateUploading {
-		t.Fatalf("state %q; a refused completion leaves the file uploading", row.State)
+	if _, _, err := f.bucket.Head(ctx, up.File.ObjectKey); !errors.Is(err, blob.ErrNotFound) {
+		t.Fatalf("the object survived: %v", err)
+	}
+	// The same file can now be added again, which is the point of clearing it.
+	if _, err := f.Create(ctx, f.who["editor"], f.prop, "tides.pdf", "Documents", 100, 0); err != nil {
+		t.Fatalf("adding the file again: %v", err)
 	}
 }
 
@@ -391,6 +398,191 @@ func multipartOf(t *testing.T, f *fixture, file int64) string {
 	return id
 }
 
+// An archived proposition is exactly where an upload nobody finished is most
+// likely to be left, and the archived rule is about what a person may still do
+// to one. The sweep is not a person, so it gets through.
+func TestSweepClearsAnArchivedProposition(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	small, err := f.Create(ctx, f.who["editor"], f.prop, "tides.pdf", "Documents", 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	large, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, int64(blob.PartSize+8), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	multipart := multipartOf(t, f, large.File.ID)
+	put(t, large.Parts[0].URL, nil, bytes.Repeat([]byte("x"), blob.PartSize))
+	if _, err := f.board.ArchiveProposition(ctx, f.who["owner"], f.prop); err != nil {
+		t.Fatal(err)
+	}
+
+	f.Now = func() time.Time { return time.Now().Add(49 * time.Hour) }
+	if err := f.Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	for _, id := range []int64{small.File.ID, large.File.ID} {
+		if _, err := GetFile(ctx, f.db, id); !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("file %d survived the sweep: %v", id, err)
+		}
+	}
+	if _, err := f.second.ListParts(ctx, large.File.ObjectKey, multipart); err == nil {
+		t.Fatal("the multipart upload was not aborted")
+	}
+}
+
+// A completion sent before the last part arrived would assemble a short object
+// and take the parts with it. It is refused while there is still something to
+// upload to.
+func TestCompleteRefusesAnUploadThatIsNotFinished(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, int64(2*blob.PartSize+16), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.Parts[0].URL, nil, bytes.Repeat([]byte("x"), blob.PartSize))
+
+	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0); !errors.Is(err, ErrState) {
+		t.Fatalf("completing one part of three: %v, want ErrState", err)
+	}
+	row, err := GetFile(ctx, f.db, up.File.ID)
+	if err != nil {
+		t.Fatalf("the refusal took the file with it: %v", err)
+	}
+	if row.State != stateUploading {
+		t.Fatalf("state %q", row.State)
+	}
+	// The parts are still there, so the upload carries on from where it was.
+	again, err := f.Parts(ctx, f.who["editor"], up.File.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Done) != 1 {
+		t.Fatalf("the parts already uploaded are gone: %v", again.Done)
+	}
+	put(t, again.Parts[0].URL, nil, bytes.Repeat([]byte("x"), blob.PartSize))
+	put(t, again.Parts[1].URL, nil, bytes.Repeat([]byte("x"), 16))
+	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0); err != nil {
+		t.Fatalf("completing once every part is in: %v", err)
+	}
+}
+
+// after is a number off the wire.
+func TestPartsBoundsTheNumberAskedFrom(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, int64(blob.PartSize+8), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name  string
+		after int
+		want  error
+	}{
+		{"a negative number is the beginning", -5, nil},
+		{"the middle of the upload", 1, nil},
+		{"one past the last part", 2, ErrPart},
+		{"a number nothing could have", 1 << 40, ErrPart},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := f.Parts(ctx, f.who["editor"], up.File.ID, tc.after); !errors.Is(err, tc.want) {
+				t.Fatalf("Parts(after=%d): %v, want %v", tc.after, err, tc.want)
+			}
+		})
+	}
+}
+
+// A duration or a size is what the browser measured, which is a number a client
+// chose.
+func TestCompleteFloorsWhatTheClientMeasured(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	body := []byte("tide tables")
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "tides.pdf", "Documents", int64(len(body)), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.URL, up.Headers, body)
+	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, -1000, -4, -4); err != nil {
+		t.Fatal(err)
+	}
+	row, err := GetFile(ctx, f.db, up.File.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.DurationMS != nil || row.Width != nil || row.Height != nil {
+		t.Fatalf("a negative measurement was stored: %+v", row)
+	}
+}
+
+// A header can promise far more pixels than the file has bytes, so the size is
+// read before anything is decoded.
+func TestThumbnailRefusesAnImageTooLargeToDecode(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	row := f.upload(t, "bomb.png", "Art", hugePNG(100000, 100000))
+
+	if row.Width != nil || row.Height != nil {
+		t.Fatalf("the header was believed: %v x %v", row.Width, row.Height)
+	}
+	if _, _, err := f.bucket.Head(ctx, thumbKey(row.ObjectKey)); !errors.Is(err, blob.ErrNotFound) {
+		t.Fatalf("a thumbnail was rendered for it: %v", err)
+	}
+}
+
+// hugePNG is a PNG header that declares an enormous image and carries none of
+// it. DecodeConfig reads the header and stops, which is the point: the size is
+// known before a pixel is allocated.
+func hugePNG(width, height uint32) []byte {
+	var b bytes.Buffer
+	b.Write([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+	head := make([]byte, 13)
+	binary.BigEndian.PutUint32(head[0:], width)
+	binary.BigEndian.PutUint32(head[4:], height)
+	head[8], head[9] = 8, 6 // eight bits a channel, colour with alpha
+	chunk(&b, "IHDR", head)
+	chunk(&b, "IDAT", []byte{0})
+	chunk(&b, "IEND", nil)
+	return b.Bytes()
+}
+
+func chunk(b *bytes.Buffer, kind string, data []byte) {
+	binary.Write(b, binary.BigEndian, uint32(len(data)))
+	sum := crc32.NewIEEE()
+	b.WriteString(kind)
+	sum.Write([]byte(kind))
+	b.Write(data)
+	sum.Write(data)
+	binary.Write(b, binary.BigEndian, sum.Sum32())
+}
+
+// Rendering a thumbnail is best effort, so having dimensions is not having a
+// thumbnail: the drawer asks the bucket rather than signing a URL for an object
+// that may never have been written.
+func TestThumbURLRefusesAThumbnailThatIsNotThere(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	var body bytes.Buffer
+	if err := png.Encode(&body, image.NewRGBA(image.Rect(0, 0, 40, 30))); err != nil {
+		t.Fatal(err)
+	}
+	row := f.upload(t, "cover.png", "Art", body.Bytes())
+	if _, err := f.ThumbURL(ctx, f.who["editor"], row.ID); err != nil {
+		t.Fatalf("ThumbURL: %v", err)
+	}
+	// What a failed write to the bucket leaves behind: a row that says the
+	// image had dimensions and no object under the thumbnail's key.
+	if err := f.bucket.Delete(ctx, thumbKey(row.ObjectKey)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ThumbURL(ctx, f.who["editor"], row.ID); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("ThumbURL for a thumbnail that is not there: %v, want not found", err)
+	}
+}
+
 func TestVersionsKeepTheOldFile(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
@@ -515,6 +707,56 @@ func TestThumbnailIsRenderedForAnImage(t *testing.T) {
 	other := f.upload(t, "notes.md", "Documents", []byte("# notes"))
 	if _, err := f.ThumbURL(ctx, f.who["editor"], other.ID); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("ThumbURL for a markdown file: %v", err)
+	}
+}
+
+// Nothing a completion or a delete writes is on the list of columns undo may
+// put back, so neither of them offers to be taken back: the object in the
+// bucket is not something an activity row can restore.
+func TestUploadsAreNotUndoable(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	body := []byte("tide tables")
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "tides.pdf", "Documents", int64(len(body)), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.URL, up.Headers, body)
+	done, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], done.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undoing a completion: %v, want not undoable", err)
+	}
+
+	gone, err := f.Delete(ctx, f.who["editor"], up.File.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], gone.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undoing a delete: %v, want not undoable", err)
+	}
+}
+
+// A rename is the one thing about a file that can be taken back.
+func TestUndoPutsAFileNameBack(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	row := f.upload(t, "tides.pdf", "Documents", []byte("one page"))
+	edit, err := f.EditFile(ctx, f.who["editor"], row.ID, "wrong.pdf", "Reading")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], edit.Seq); err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	back, err := GetFile(ctx, f.db, row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Name != "tides.pdf" || back.Folder != "Documents" {
+		t.Fatalf("after undo: %+v", back)
 	}
 }
 

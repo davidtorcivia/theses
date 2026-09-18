@@ -71,6 +71,8 @@ var (
 	ErrNoBucket = errors.New("object storage is not set up yet; a workspace owner does that in settings")
 	// ErrCrossBucket is a move between folders that live in different buckets.
 	ErrCrossBucket = errors.New("that folder is in another bucket; download it and upload it again")
+	// ErrPart is a part number outside the ones this upload has.
+	ErrPart = errors.New("that part number is not in this upload")
 )
 
 // Kinds a link may be. The list is the one the drawer offers and the one
@@ -120,6 +122,11 @@ type Link struct {
 	AddedBy      *int64  `json:"added_by"`
 	CreatedAt    int64   `json:"created_at"`
 	FetchedAt    *int64  `json:"fetched_at"`
+	// Citation is built from the fields above rather than stored, and it is on
+	// the row rather than on a view of it so that every surface carries it: a
+	// tab replaces the link it holds with the payload of an event, and a shape
+	// that only the HTTP answer had would disappear the moment one arrived.
+	Citation string `json:"citation"`
 }
 
 // A File is one row of the files list. The object key is in it because the
@@ -165,6 +172,7 @@ func scanLink(row interface{ Scan(...any) error }) (Link, error) {
 	err := row.Scan(&l.ID, &l.Proposition, &l.URL, &l.CanonicalURL, &l.Title, &l.Author,
 		&l.Year, &l.Kind, &l.Note, &question, &by, &l.CreatedAt, &fetched)
 	l.Question, l.AddedBy, l.FetchedAt = text(question), number(by), number(fetched)
+	l.Citation = Citation(l)
 	return l, err
 }
 
@@ -364,7 +372,13 @@ func (s *Service) do(ctx context.Context, a core.Actor, proposition int64, need,
 		if err := visible(ctx, tx, a, proposition); err != nil {
 			return core.Change{}, err
 		}
-		if s.Allow != nil {
+		// The archived rule is about what a person may still do to a
+		// proposition that has been put away. The file actor is not a person
+		// and has nothing to put away: it is the sweep clearing up after an
+		// upload nobody finished, and an archived proposition is exactly where
+		// one is most likely to be left. Without this the sweep refused itself
+		// on the first such row and did so again every hour.
+		if s.Allow != nil && a.Kind != core.KindFile {
 			if err := s.Allow(ctx, tx, proposition, entity, action); err != nil {
 				return core.Change{}, err
 			}

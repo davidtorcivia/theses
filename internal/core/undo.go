@@ -43,11 +43,17 @@ var undoable = map[string]undoSpec{
 	"checklist_item": {table: "checklist_items", scope: "card_id", cols: []string{"text", "done", "position"}},
 	"document":       {table: "documents", scope: "proposition_id", cols: []string{"name", "slug", "position"}},
 	"block":          {table: "blocks", scope: "document_id", cols: []string{"position", "text", "deleted_at"}, versioned: true, tombstone: true},
-	// A link's fields are all a person's, so all of them go back. A file's are
-	// the two that do not describe the object in the bucket: putting back a
-	// size, a key or a state would say something about the bucket that is not
-	// true, and naming none of them is also what makes a completed upload not
-	// undoable, because nothing it changed is on this list.
+	// A link's fields are the ones a person reads and corrects. What a refetch
+	// also wrote, the canonical URL, the time of the fetch and the page's text
+	// for the search index, is not on the list and is left as the refetch left
+	// it: the event contract keeps the search text out of the payload, so undo
+	// has nothing to put back, and an undo of a refetch therefore restores the
+	// fields that are shown and not the ones that are not.
+	//
+	// A file's are the two that do not describe the object in the bucket:
+	// putting back a size, a key or a state would say something about the
+	// bucket that is not true, and naming none of the columns a completion
+	// writes is what makes a finished upload not undoable.
 	"link": {table: "links", cols: []string{"title", "author", "year", "kind", "note_md", "question"}},
 	"file": {table: "files", cols: []string{"name", "folder"}},
 }

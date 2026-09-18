@@ -96,7 +96,8 @@ func refuse(what string, err error, s *Server) error {
 	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrEmpty),
 		errors.Is(err, board.ErrTooLong), errors.Is(err, files.ErrKind),
 		errors.Is(err, files.ErrQuestion), errors.Is(err, files.ErrURL),
-		errors.Is(err, files.ErrState), errors.Is(err, files.ErrNoBucket):
+		errors.Is(err, files.ErrState), errors.Is(err, files.ErrNoBucket),
+		errors.Is(err, files.ErrPart):
 		return err
 	}
 	return s.failed(what, err)
@@ -114,14 +115,7 @@ type propositionArgs struct {
 }
 
 type linksOut struct {
-	Links []linkOut `json:"links"`
-}
-
-// A linkOut is a link as an agent reads it, with the citation built for it so
-// it need not assemble one from the fields.
-type linkOut struct {
-	files.Link
-	Citation string `json:"citation"`
+	Links []files.Link `json:"links"`
 }
 
 func (f *fileTools) listLinks(ctx context.Context, req *sdk.CallToolRequest, in propositionArgs) (*sdk.CallToolResult, linksOut, error) {
@@ -133,11 +127,10 @@ func (f *fileTools) listLinks(ctx context.Context, req *sdk.CallToolRequest, in 
 	if err != nil {
 		return nil, linksOut{}, refuse("list the links", err, f.Server)
 	}
-	out := linksOut{Links: make([]linkOut, 0, len(rows))}
-	for _, l := range rows {
-		out.Links = append(out.Links, linkOut{Link: l, Citation: files.Citation(l)})
+	if rows == nil {
+		rows = []files.Link{}
 	}
-	return nil, out, nil
+	return nil, linksOut{Links: rows}, nil
 }
 
 type addLinkArgs struct {
@@ -147,22 +140,22 @@ type addLinkArgs struct {
 	Question    string `json:"question,omitempty" jsonschema:"one of I, II, III or IV, or empty"`
 }
 
-func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in addLinkArgs) (*sdk.CallToolResult, linkOut, error) {
+func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in addLinkArgs) (*sdk.CallToolResult, files.Link, error) {
 	p, err := principal(ctx, auth.ScopeWrite)
 	if err != nil {
-		return nil, linkOut{}, err
+		return nil, files.Link{}, err
 	}
 	a := f.actorFor(req, p)
 	e, err := f.svc.AddLink(ctx, a, in.Proposition, in.URL)
 	if err != nil {
-		return nil, linkOut{}, refuse("add the link", err, f.Server)
+		return nil, files.Link{}, refuse("add the link", err, f.Server)
 	}
 	f.log.Info("mcp write", "tool", "add_link", "proposition", in.Proposition,
 		"user", p.User.ID, "via", a.Via, "protocol", req.ProtocolVersion())
 
 	link, err := f.svc.ReadLink(ctx, a, e.EntityID)
 	if err != nil {
-		return nil, linkOut{}, refuse("read the link back", err, f.Server)
+		return nil, files.Link{}, refuse("read the link back", err, f.Server)
 	}
 	// The note and the question are the agent's own words about the link, so
 	// they are a second command rather than part of the fetch.
@@ -171,13 +164,13 @@ func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in ad
 			Title: link.Title, Author: link.Author, Year: link.Year, Kind: link.Kind,
 			Note: in.Note, Question: in.Question,
 		}); err != nil {
-			return nil, linkOut{}, refuse("save the note", err, f.Server)
+			return nil, files.Link{}, refuse("save the note", err, f.Server)
 		}
 		if link, err = f.svc.ReadLink(ctx, a, link.ID); err != nil {
-			return nil, linkOut{}, refuse("read the link back", err, f.Server)
+			return nil, files.Link{}, refuse("read the link back", err, f.Server)
 		}
 	}
-	return nil, linkOut{Link: link, Citation: files.Citation(link)}, nil
+	return nil, link, nil
 }
 
 type filesOut struct {
