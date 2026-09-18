@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -218,6 +220,87 @@ func (c *Client) PresignGet(ctx context.Context, key, filename string, ttl time.
 		return "", fmt.Errorf("blob: presign get %q: %w", key, err)
 	}
 	return req.URL, nil
+}
+
+// Put writes the whole object from r. size has to be the exact length: SigV4
+// signs it, and neither B2 nor R2 takes the chunked signing the SDK would fall
+// back to without it. r should be seekable, an *os.File or a *bytes.Reader, so
+// the SDK can rewind it to retry.
+func (c *Client) Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) error {
+	if err := validKey(key); err != nil {
+		return err
+	}
+	if size < 0 || size > maxPutSize {
+		return fmt.Errorf("blob: size %d is outside 0 to %d", size, int64(maxPutSize))
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if _, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(c.bucket),
+		Key:           aws.String(key),
+		Body:          r,
+		ContentLength: aws.Int64(size),
+		ContentType:   aws.String(contentType),
+	}); err != nil {
+		return fmt.Errorf("blob: put %q: %w", key, err)
+	}
+	return nil
+}
+
+// Get opens the object for reading; the caller closes it. ErrNotFound is
+// wrapped when the object is not there.
+func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := validKey(key); err != nil {
+		return nil, err
+	}
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key)})
+	if err != nil {
+		var nk *types.NoSuchKey
+		if errors.As(err, &nk) {
+			return nil, fmt.Errorf("blob: get %q: %w", key, ErrNotFound)
+		}
+		return nil, fmt.Errorf("blob: get %q: %w", key, err)
+	}
+	return out.Body, nil
+}
+
+// Object is one listed object.
+type Object struct {
+	Key      string
+	Size     int64
+	Modified time.Time
+}
+
+// List returns every object under prefix in key order, following the bucket's
+// pagination. A listing is the only way to read a prefix a key may write to but
+// not delete from, which is what the backups prefix is.
+func (c *Client) List(ctx context.Context, prefix string) ([]Object, error) {
+	if prefix != "" {
+		if err := validKey(prefix); err != nil {
+			return nil, err
+		}
+	}
+	var out []Object
+	pages := s3.NewListObjectsV2Paginator(c.s3, &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(prefix),
+	})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("blob: list %q: %w", prefix, err)
+		}
+		for _, o := range page.Contents {
+			out = append(out, Object{
+				Key:      aws.ToString(o.Key),
+				Size:     aws.ToInt64(o.Size),
+				Modified: aws.ToTime(o.LastModified),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
 }
 
 // Head returns the stored size and ETag. The ETag is returned as the bucket

@@ -423,6 +423,8 @@ func TestEveryEntryPointRejectsAnUnsafeKey(t *testing.T) {
 			"PresignGet":        first(c.PresignGet(ctx, key, "", ttl)),
 			"Head":              third(c.Head(ctx, key)),
 			"Delete":            c.Delete(ctx, key),
+			"Put":               c.Put(ctx, key, strings.NewReader("x"), 1, "text/plain"),
+			"Get":               readerErr(c.Get(ctx, key)),
 			"Copy from":         c.Copy(ctx, key, "ok/x"),
 			"Copy to":           c.Copy(ctx, "ok/x", key),
 			"StartMultipart":    first(c.StartMultipart(ctx, key, "text/plain")),
@@ -437,6 +439,11 @@ func TestEveryEntryPointRejectsAnUnsafeKey(t *testing.T) {
 			}
 		}
 	}
+	// List takes an empty prefix, which means the whole bucket, so it is not in
+	// the table above; every other unsafe shape has to be refused there too.
+	if _, err := c.List(ctx, "1-slug/../backups/"); err == nil {
+		t.Error("List: a traversing prefix was accepted")
+	}
 	if methods, _ := log.seen(); len(methods) != 0 {
 		t.Errorf("an unsafe key reached the bucket: %v", methods)
 	}
@@ -449,6 +456,7 @@ func firstSlice(_ []string, err error) error                { return err }
 func second(_ string, _ map[string]string, err error) error { return err }
 func third(_ int64, _ string, err error) error              { return err }
 func partsErr(_ []Part, err error) error                    { return err }
+func readerErr(_ io.ReadCloser, err error) error            { return err }
 
 func TestPresignRejectsATTLOutsideTheSigV4Limit(t *testing.T) {
 	c := fake(t)
@@ -662,5 +670,43 @@ func TestProbeDeletesTheObjectWhenTheContextIsCancelled(t *testing.T) {
 	}
 	if del != put {
 		t.Errorf("probe object %q was not deleted after the context was cancelled, deletes saw %q", put, del)
+	}
+}
+
+func TestPutGetAndList(t *testing.T) {
+	c := fake(t)
+	ctx := context.Background()
+	for _, key := range []string{"backups/b.tar.gz.age", "backups/a.json", "files/x"} {
+		if err := c.Put(ctx, key, strings.NewReader(key), int64(len(key)), "application/octet-stream"); err != nil {
+			t.Fatalf("put %s: %v", key, err)
+		}
+	}
+
+	r, err := c.Get(ctx, "backups/a.json")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	body, err := io.ReadAll(r)
+	r.Close()
+	if err != nil || string(body) != "backups/a.json" {
+		t.Fatalf("get gave %q, %v", body, err)
+	}
+
+	objects, err := c.List(ctx, "backups/")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(objects) != 2 || objects[0].Key != "backups/a.json" || objects[1].Key != "backups/b.tar.gz.age" {
+		t.Fatalf("list gave %v", objects)
+	}
+	if objects[0].Size != int64(len("backups/a.json")) {
+		t.Errorf("listed size is %d", objects[0].Size)
+	}
+}
+
+func TestGetSaysWhenTheObjectIsNotThere(t *testing.T) {
+	c := fake(t)
+	if _, err := c.Get(context.Background(), "backups/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get of a missing object gave %v", err)
 	}
 }
