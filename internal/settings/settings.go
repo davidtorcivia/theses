@@ -132,13 +132,36 @@ func (s *Settings) Secret(ctx context.Context, key string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	blob, err := base64.StdEncoding.DecodeString(row.ValueJSON)
-	if err != nil || len(blob) < s.aead.NonceSize() {
-		return "", fmt.Errorf("settings: %s is not readable; re-enter it", key)
-	}
-	plain, err := s.aead.Open(nil, blob[:s.aead.NonceSize()], blob[s.aead.NonceSize():], []byte(key))
+	plain, err := s.Unseal(key, row.ValueJSON)
 	if err != nil {
-		return "", fmt.Errorf("settings: %s cannot be decrypted with this THESES_SECRET_KEY; re-enter it", key)
+		return "", fmt.Errorf("settings: %s %w", key, err)
+	}
+	return plain, nil
+}
+
+// Seal encrypts a value with the settings key, bound to name so a stored
+// secret cannot be moved from one place to another. It is how a row outside
+// the settings table keeps a secret at rest with the same key and no second
+// implementation of the same three lines.
+func (s *Settings) Seal(name, plain string) (string, error) {
+	nonce := make([]byte, s.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrStorage, err)
+	}
+	return base64.StdEncoding.EncodeToString(s.aead.Seal(nonce, nonce, []byte(plain), []byte(name))), nil
+}
+
+// Unseal reverses Seal. A value that will not open is one written under a
+// different THESES_SECRET_KEY, which is worth saying rather than treating as
+// an empty secret.
+func (s *Settings) Unseal(name, stored string) (string, error) {
+	blob, err := base64.StdEncoding.DecodeString(stored)
+	if err != nil || len(blob) < s.aead.NonceSize() {
+		return "", errors.New("is not readable; re-enter it")
+	}
+	plain, err := s.aead.Open(nil, blob[:s.aead.NonceSize()], blob[s.aead.NonceSize():], []byte(name))
+	if err != nil {
+		return "", errors.New("cannot be decrypted with this THESES_SECRET_KEY; re-enter it")
 	}
 	return string(plain), nil
 }
@@ -204,11 +227,9 @@ func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor
 		if secret == "" {
 			return fmt.Errorf("%s: cannot be blanked; leave the field empty to keep the stored value", def.Label)
 		}
-		nonce := make([]byte, s.aead.NonceSize())
-		if _, err := rand.Read(nonce); err != nil {
-			return fmt.Errorf("%w: %w", ErrStorage, err)
+		if stored, err = s.Seal(key, secret); err != nil {
+			return err
 		}
-		stored = base64.StdEncoding.EncodeToString(s.aead.Seal(nonce, nonce, []byte(secret), []byte(key)))
 		after = `{"set":true}`
 	} else {
 		b, err := json.Marshal(parsed)
