@@ -23,7 +23,6 @@ export const state = {
   boardFilter: 'all',
   openCard: null,
   connected: false,
-  busy: false,
 };
 
 export function boot(payload) {
@@ -168,15 +167,5 @@ export function apply(ev) {
       break;
     }
   }
-  emit();
-}
-
-// replace swaps the whole open board, which is what a reconnect that missed
-// events and a move to another proposition both need.
-export function replace(payload) {
-  state.props = payload.propositions || state.props;
-  sortProps();
-  state.open = payload.open || state.open;
-  loadBoard(payload.board);
   emit();
 }

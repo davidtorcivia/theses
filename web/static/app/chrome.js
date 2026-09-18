@@ -3,7 +3,7 @@
 // and the per proposition settings page both start from here and add their own.
 
 import { $, el, clear, initials, offlineLine } from './dom.js';
-import { state, boot, subscribe, emit, user } from './state.js';
+import { state, boot, subscribe, user } from './state.js';
 import { connect } from './net.js';
 import { renderRail } from './rail.js';
 import { openPalette, closePalette } from './palette.js';
@@ -46,8 +46,6 @@ export function start(renderRest) {
   addEventListener('online', network);
   addEventListener('offline', network);
   network();
-
-  return emit;
 }
 
 // The initials in the top bar are who else is on this proposition right now.

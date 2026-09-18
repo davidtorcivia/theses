@@ -187,10 +187,10 @@ func authorise(ctx context.Context, tx *sql.Tx, a Actor, proposition int64, need
 	return err
 }
 
-// resolve turns an actor into the role its permissions come from. A token or
-// an MCP client carries the role of the person who owns it, because that is
-// who the actor is. The document watcher acts as an editor on any proposition,
-// because a file on disk has no membership to check.
+// resolve turns an actor into the role its permissions come from and the user
+// whose membership counts, which for an API token or an MCP client is the
+// person who owns it. The document watcher acts as an editor on any
+// proposition, because a file on disk has no membership to check.
 func resolve(ctx context.Context, tx *sql.Tx, a Actor) (role string, userID int64, err error) {
 	if a.Kind == KindFile {
 		return auth.RoleEditor, 0, nil
