@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -82,7 +83,7 @@ func TestMCPSpeaksToATokenAndRefusesWithout(t *testing.T) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "research agent", Version: "test"}, nil)
 	cs, err := client.Connect(ctx, &sdk.StreamableClientTransport{
 		Endpoint:   h.http.URL + "/mcp",
-		HTTPClient: &http.Client{Transport: bearer{token: token}},
+		HTTPClient: &http.Client{Transport: &bearer{token: token}},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -102,13 +103,77 @@ func TestMCPSpeaksToATokenAndRefusesWithout(t *testing.T) {
 }
 
 // bearer is the round tripper that puts the token on every MCP request, the way
-// a client configured with one would.
-type bearer struct{ token string }
+// a client configured with one would, and keeps the protocol version the client
+// asked for on each of them.
+type bearer struct {
+	token string
 
-func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
+	mu       sync.Mutex
+	versions []string
+}
+
+func (b *bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
+	b.mu.Lock()
+	b.versions = append(b.versions, r.Header.Get("Mcp-Protocol-Version"))
+	b.mu.Unlock()
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+func (b *bearer) lastVersion() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.versions) == 0 {
+		return ""
+	}
+	return b.versions[len(b.versions)-1]
+}
+
+// TheProtocolRevision is the newest revision the SDK implements, which is what
+// the server and a current client settle on.
+const theProtocolRevision = "2026-07-28"
+
+// The revision is worth pinning in a test: it decides whether a stateless
+// session is told who the client is on every call, which is what a write is
+// attributed to.
+func TestMCPNegotiatesTheNewestRevision(t *testing.T) {
+	h := newHarness(t)
+	transport := &bearer{token: h.apiToken(auth.ScopeAdmin)}
+
+	ctx := context.Background()
+	client := sdk.NewClient(&sdk.Implementation{Name: "research agent", Version: "test"}, nil)
+	cs, err := client.Connect(ctx, &sdk.StreamableClientTransport{
+		Endpoint:   h.http.URL + "/mcp",
+		HTTPClient: &http.Client{Transport: transport},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{
+		Name:      "set_setting",
+		Arguments: map[string]any{"key": "workspace.name", "value": "Debt Machine"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("set_setting: %+v", res.Content)
+	}
+	if got := transport.lastVersion(); got != theProtocolRevision {
+		t.Errorf("the call was made at revision %q, want %q", got, theProtocolRevision)
+	}
+	if got := sdk.SupportedProtocolVersions()[0]; got != theProtocolRevision {
+		t.Errorf("the SDK's newest revision is %q, want %q", got, theProtocolRevision)
+	}
+
+	// At this revision the client names itself on every call, so the write is
+	// recorded as reached through that client and not through the token.
+	if logged := h.log.String(); !strings.Contains(logged, `via="mcp:research agent"`) {
+		t.Errorf("the client did not name itself: %s", logged)
+	}
 }
 
 // initialize is the first message of an MCP session, sent by hand so the test

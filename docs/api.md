@@ -163,8 +163,18 @@ one endpoint serves every tool.
 | `get_settings` | `admin` | Lists the workspace settings, with secrets reported as set rather than returned. |
 | `set_setting` | `admin` | Changes one workspace setting. |
 
+Every tool returns structured output against a schema the tool list carries, and
+is annotated with whether it only reads: the four read tools are read only and
+`set_setting` is marked destructive and idempotent, since it replaces a value
+that was there.
+
 Resource `theses://workspace` describes the workspace: its name, time zone, how
 many people and propositions it holds, and what this endpoint can do.
+
+The server speaks protocol revisions `2026-07-28` back to `2024-11-05` and
+settles on the newest the client offers. At `2026-07-28` a client names itself on
+every call, so a write is attributed to that client; an older client does not,
+and the token's name is used instead.
 
 A write through MCP is recorded in the activity log as the person the token
 belongs to.

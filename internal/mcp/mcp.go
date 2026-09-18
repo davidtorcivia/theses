@@ -44,22 +44,27 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "whoami",
 		Description: "Reports the API token this connection is using and the person it belongs to.",
+		Annotations: reads("Who am I"),
 	}, s.whoami)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "search",
 		Description: "Searches cards, document blocks, links, files, comments, propositions and people for a phrase.",
+		Annotations: reads("Search the workspace"),
 	}, s.search)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "list_users",
 		Description: "Lists everyone in the workspace with their handle, role and colour.",
+		Annotations: reads("List the people"),
 	}, s.listUsers)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "get_settings",
 		Description: "Lists the workspace settings and their values, with stored secrets reported as set rather than returned.",
+		Annotations: reads("Read the settings"),
 	}, s.getSettings)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "set_setting",
 		Description: "Changes one workspace setting, taking one line per entry for a setting that holds a list.",
+		Annotations: overwrites("Change a setting"),
 	}, s.setSetting)
 
 	s.srv.AddResource(&sdk.Resource{
@@ -76,6 +81,25 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 // MaxBodyBytes is what a POST to /mcp may be, the same as the REST API allows,
 // since a tool call is a few hundred bytes of JSON.
 const MaxBodyBytes = 64 << 10
+
+// reads and overwrites are the hints a client shows before it runs a tool. Four
+// of these tools only look; the fifth replaces a value that was there, which is
+// destructive in the sense the annotation means, and repeating it with the same
+// arguments changes nothing further.
+func reads(title string) *sdk.ToolAnnotations {
+	no := false
+	return &sdk.ToolAnnotations{Title: title, ReadOnlyHint: true, OpenWorldHint: &no}
+}
+
+func overwrites(title string) *sdk.ToolAnnotations {
+	yes, no := true, false
+	return &sdk.ToolAnnotations{
+		Title:           title,
+		DestructiveHint: &yes,
+		IdempotentHint:  true,
+		OpenWorldHint:   &no,
+	}
+}
 
 // Handler is /mcp, behind the same bearer tokens as the REST API. The server is
 // stateless: every POST carries its own Authorization header and is
@@ -216,7 +240,12 @@ func (s *Server) setSetting(ctx context.Context, req *sdk.CallToolRequest, in se
 	if !ok {
 		return nil, api.SettingView{}, fmt.Errorf("there is no setting called %q", in.Key)
 	}
-	if err := s.set.SetAs(ctx, def.Key, []string{in.Value}, actor(req, p)); err != nil {
+	who := actor(req, p)
+	// Until the activity table records it, the via is written here, so that an
+	// owner reading the log can find which client made a change.
+	s.log.Info("mcp write", "tool", "set_setting", "key", def.Key,
+		"user", p.User.ID, "via", who.Via)
+	if err := s.set.SetAs(ctx, def.Key, []string{in.Value}, who); err != nil {
 		if errors.Is(err, settings.ErrStorage) {
 			return nil, api.SettingView{}, s.failed("save the setting", err)
 		}

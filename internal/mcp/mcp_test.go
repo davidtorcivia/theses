@@ -312,3 +312,35 @@ func TestAToolCannotOutrankTheTokenOwner(t *testing.T) {
 		t.Errorf("users = %+v", out.Users)
 	}
 }
+
+// A client shows these hints before it runs a tool, so the four that only look
+// must say so and the one that replaces a value must not.
+func TestToolsCarryTheirHints(t *testing.T) {
+	h := newHarness(t)
+	res, err := h.connect(auth.ScopeRead).ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		a := tool.Annotations
+		if a == nil || a.Title == "" {
+			t.Errorf("%s has no annotations", tool.Name)
+			continue
+		}
+		if a.OpenWorldHint == nil || *a.OpenWorldHint {
+			t.Errorf("%s reaches outside the workspace", tool.Name)
+		}
+		if tool.Name == "set_setting" {
+			if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint || !a.IdempotentHint {
+				t.Errorf("set_setting = %+v", a)
+			}
+			continue
+		}
+		if !a.ReadOnlyHint {
+			t.Errorf("%s is not marked read only", tool.Name)
+		}
+		if tool.OutputSchema == nil {
+			t.Errorf("%s has no output schema", tool.Name)
+		}
+	}
+}
