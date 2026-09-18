@@ -559,3 +559,32 @@ func TestAFailureAfterTheSwapIsReportedAsAPartialRestore(t *testing.T) {
 		t.Errorf("the mirror was moved after all: %q", got)
 	}
 }
+
+func TestStopWaitsForARestore(t *testing.T) {
+	ctx := context.Background()
+	f := newFake(t)
+	f.save("workspace.name", "before")
+	m, err := f.b.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.save("workspace.name", "after")
+
+	if err := f.b.RestoreNow(ctx, m.Name, 0); err != nil {
+		t.Fatal(err)
+	}
+	f.b.Stop()
+
+	// Everything the goroutine does is done: the message it ends with is there,
+	// nothing is still running, and the database is the restored one. A
+	// shutdown at this point closes a database that is whole.
+	if msg := f.b.LastRestore(); !strings.Contains(msg, "Restored") {
+		t.Fatalf("Stop returned before the restore finished: %q", msg)
+	}
+	if f.b.Running() {
+		t.Error("Stop returned with a restore still running")
+	}
+	if got := f.workspaceName(); got != `"before"` {
+		t.Errorf("the database is %s", got)
+	}
+}

@@ -103,6 +103,10 @@ type Backup struct {
 	// restored is what the last restore said, for the settings page to print.
 	restored atomic.Pointer[string]
 
+	// wg holds the goroutines Now and RestoreNow start, so a shutdown can wait
+	// for them rather than closing the database out from under one.
+	wg sync.WaitGroup
+
 	mu       sync.Mutex
 	storeAt  time.Time // when the object store was last asked
 	storeErr error     // and what it said
@@ -150,7 +154,9 @@ func (b *Backup) Now(ctx context.Context) error {
 		return ErrBusy
 	}
 	run, cancel := context.WithTimeout(context.WithoutCancel(ctx), runTimeout)
+	b.wg.Add(1)
 	go func() {
+		defer b.wg.Done()
 		defer cancel()
 		if _, err := b.Run(run); err != nil {
 			b.log.Error("backup", "err", err)
@@ -158,6 +164,12 @@ func (b *Backup) Now(ctx context.Context) error {
 	}()
 	return nil
 }
+
+// Stop waits for a backup or a restore that is running in the background. A
+// restore is what it is for: a shutdown between the swap and the rest of it
+// would leave the restored database beside the old markdown mirror with nothing
+// written down about what happened.
+func (b *Backup) Stop() { b.wg.Wait() }
 
 // Running reports whether an archive or a restore is in progress.
 func (b *Backup) Running() bool { return b.busy.Load() }
@@ -178,7 +190,9 @@ func (b *Backup) RestoreNow(ctx context.Context, key string, actorID int64) erro
 		return ErrBusy
 	}
 	run, cancel := context.WithTimeout(context.WithoutCancel(ctx), runTimeout)
+	b.wg.Add(1)
 	go func() {
+		defer b.wg.Done()
 		defer cancel()
 		msg := "Restored " + path.Base(key) + "."
 		if err := b.Restore(run, key, actorID); err != nil {

@@ -58,6 +58,11 @@ func run() error {
 		return err
 	}
 
+	// Registered after the database is opened, so it runs before the database
+	// closes: a restore started from the settings page outlives the request and
+	// must not have the file pulled out from under it half way.
+	defer srv.Backups().Stop()
+
 	// The outbox worker stops with ctx. A send caught by the cancellation
 	// leaves its row untouched and goes out again on the next start; the
 	// shutdown path waits here so the goroutine is gone before the process is.
