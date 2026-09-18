@@ -1,6 +1,11 @@
 package merge
 
-import "testing"
+import (
+	"fmt"
+	"runtime"
+	"strings"
+	"testing"
+)
 
 func TestMerge(t *testing.T) {
 	tests := []struct {
@@ -148,5 +153,34 @@ func TestWords(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// A block that is one enormous line must not put a quadratic table in front of
+// a request handler. It conflicts instead, and the caller offers keep mine or
+// take theirs.
+func TestMergeRefusesAnEnormousLine(t *testing.T) {
+	parts := make([]string, 5000)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("word%d", i)
+	}
+	base := strings.Join(parts, " ")
+	ours := strings.Replace(base, "word10 ", "ours ", 1)
+	theirs := strings.Replace(base, "word20 ", "theirs ", 1)
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	got, conflict := Merge(base, ours, theirs)
+	runtime.ReadMemStats(&after)
+
+	if !conflict {
+		t.Error("Merge conflict = false, want true")
+	}
+	if got != ours {
+		t.Error("Merge did not return ours unchanged")
+	}
+	if used := after.TotalAlloc - before.TotalAlloc; used > 8<<20 {
+		t.Errorf("merging a 5000 word line allocated %d bytes, want under 8 MB", used)
 	}
 }

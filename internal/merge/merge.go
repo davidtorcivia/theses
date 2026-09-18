@@ -38,11 +38,23 @@ func lf(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
 }
 
+// maxCells caps the LCS table, the one thing here that grows with the product
+// of the input sizes. Past it merge3 reports a conflict, which costs the
+// person one keep mine or take theirs on a block of about a thousand words on
+// a single line, and costs the server nothing.
+//
+// ponytail: a linear space LCS would merge those blocks too, at maybe eighty
+// more lines; worth it only if long single line blocks turn out to be common.
+const maxCells = 1 << 20
+
 // merge3 walks base, ours and theirs together. Runs that all three agree on
 // pass through; everything between them is a chunk that at least one side
 // changed, settled by whichever side left it alone or, when both changed it,
 // by refine.
 func merge3(base, ours, theirs []string, refine func(base, ours, theirs []string) ([]string, bool)) ([]string, bool) {
+	if len(base)*len(ours) > maxCells || len(base)*len(theirs) > maxCells {
+		return nil, false
+	}
 	mo := match(base, ours)
 	mt := match(base, theirs)
 	var out []string
@@ -146,10 +158,8 @@ func words(s string) []string {
 }
 
 // match pairs each element of a with the element of b it keeps in a longest
-// common subsequence, or -1 if b no longer has it.
-//
-// ponytail: the O(len(a)*len(b)) table is fine for one block; a whole document
-// through here would want Myers.
+// common subsequence, or -1 if b no longer has it. Callers keep the table
+// within maxCells.
 func match(a, b []string) []int {
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
