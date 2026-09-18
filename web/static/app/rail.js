@@ -129,6 +129,12 @@ function droppable(list) {
 }
 
 export function renderRail() {
+  // The rail is built again from nothing on every render, so a row holding the
+  // keyboard goes with it. Its number is taken now and the focus put back at
+  // the end, the same way the work area keeps the card somebody had reached.
+  const focused = document.activeElement;
+  const had = focused && focused.classList && focused.classList.contains('ws')
+    ? focused.dataset.n : '';
   const rail = clear($('#rail'));
 
   const filter = el('div', { id: 'tagfilter' });
@@ -166,6 +172,10 @@ export function renderRail() {
   }
 
   if (state.can.edit) rail.append(foot());
+  if (had) {
+    const row = $(`.ws[data-n="${had}"]`, rail);
+    if (row) row.focus();
+  }
 }
 
 function foot() {

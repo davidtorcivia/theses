@@ -12,11 +12,12 @@ import { renderPanel, closePanel } from './activity.js';
 import { activate } from './keys.js';
 import * as api from './api.js';
 
-// takeFocus and returnTo carry the keyboard across a render. Opening a card
+// takeFocus and returnTo carry the keyboard across one render. Opening a card
 // puts the focus in the drawer and closing it puts the focus back on the card
-// that was open, neither of which can be done here: the board and the drawer
-// are both built again after this runs, and the nodes to focus do not exist
-// until they are.
+// that was open, neither of which can be done where they are decided: the board
+// and the drawer are both built again afterwards, and the nodes to focus do not
+// exist until they are. Each is spent by the render that acts on it; holding
+// one open would take the keyboard back off whoever had moved it since.
 let takeFocus = 0;
 let returnTo = 0;
 
@@ -55,6 +56,7 @@ function linked(card) {
         text: link.title || host(link.url) }),
       el('span', { class: 'mono dim', text: ' ' + (link.kind || 'link') + ' · ' }),
       canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
+        'data-k': 'detachl' + link.id,
         onclick: () => detach('links', card.id, link.id) }) : null));
   }
   for (const file of attachedFiles(card.id)) {
@@ -62,6 +64,7 @@ function linked(card) {
       el('span', { text: file.name }),
       el('span', { class: 'mono dim', text: ' ' + bytes(file.size) + ' · ' }),
       canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
+        'data-k': 'detachf' + file.id,
         onclick: () => detach('files', card.id, file.id) }) : null));
   }
   if (!list.childElementCount) {
@@ -69,7 +72,7 @@ function linked(card) {
   }
   if (canEdit()) {
     list.append(el('li', {}, el('button', {
-      class: 'lnk', type: 'button', text: '+ attach a link or a file',
+      class: 'lnk', type: 'button', text: '+ attach a link or a file', 'data-k': 'attach',
       onclick: (e) => { e.stopPropagation(); attachDialog(card); },
     })));
   }
@@ -135,24 +138,31 @@ function attachDialog(card) {
 const rendered = (text) => inline(text, byHandle);
 
 // restoreFocus puts the keyboard back on the card the drawer was showing, now
-// that the board has been drawn again and that card is a node once more. It
-// keeps doing so across the renders that follow, because each one builds the
-// board again and drops the focus, and it stops the moment the keyboard is
-// somewhere the person put it.
+// that the board has been drawn again and that card is a node once more. Once,
+// whether or not the card is still there: a card that has just been deleted has
+// nothing to give the keyboard to, and the renders after this one keep it where
+// it is by themselves.
 function restoreFocus() {
   if (!returnTo) return;
-  const active = document.activeElement;
-  // Nothing has the focus, or the drawer that is going still does, or the card
-  // this already put it on. Anything else is where the person has since moved
-  // it and is not to be taken away from them.
-  const ours = !active || active === document.body
-    || $('#drawer').contains(active) || active.dataset.id === String(returnTo);
-  if (!ours) {
-    returnTo = 0;
-    return;
-  }
   const card = $(`#board .card[data-id="${returnTo}"]`);
+  returnTo = 0;
   if (card) card.focus();
+}
+
+// The drawer is built again from nothing on every render, so whatever had the
+// keyboard goes with it. Every control it draws carries a key, and the rebuild
+// puts the focus back on the one with the same key: the same thing docs.js does
+// for the block somebody is typing in. A control with no key, and a focus
+// outside the drawer, are both left alone.
+function focusKey(drawer) {
+  const active = document.activeElement;
+  return active && drawer.contains(active) ? active.dataset.k || '' : '';
+}
+
+function refocus(drawer, key) {
+  if (!key) return;
+  const node = drawer.querySelector(`[data-k="${key}"]`);
+  if (node) node.focus();
 }
 
 // DAY is the shape the board this came from wrote, a day and a month with the
@@ -193,11 +203,14 @@ export function renderDrawer() {
   }
   const top = drawer.scrollTop;
   // Read before the rebuild, because clearing the drawer drops the keyboard on
-  // the body and the two would then be indistinguishable. Nothing focused, or
-  // something in the drawer that is about to be replaced, both want the focus
-  // put back; a control outside the drawer is where the person put it.
+  // the body and there would be nothing left to read it from.
+  const key = focusKey(drawer);
+  // Nothing holds the keyboard, or the card this drawer is for still does,
+  // which is where the click or the Enter that opened it left it. Anything else
+  // is somewhere a person has put it since and is not ours to take.
   const active = document.activeElement;
-  const ours = !active || active === document.body || drawer.contains(active);
+  const loose = !active || active === document.body
+    || (active.dataset && active.dataset.id === String(state.openCard));
   clear(drawer);
   drawer.hidden = false;
   document.body.classList.add('has-drawer');
@@ -226,12 +239,12 @@ export function renderDrawer() {
   }
 
   const column = state.columns.find((c) => c.id === card.column_id);
-  const close = el('button', { class: 'x', type: 'button', text: 'Close', onclick: closeDrawer });
+  const close = el('button', { class: 'x', type: 'button', text: 'Close', 'data-k': 'close', onclick: closeDrawer });
   drawer.append(el('div', { class: 'dh' },
     el('span', { class: 'mono', text: (column ? column.name : '') + ' · ' + (card.done_at ? 'done' : 'open') }),
     close));
 
-  const heading = el('h2', { text: card.title, spellcheck: 'false' });
+  const heading = el('h2', { text: card.title, spellcheck: 'false', 'data-k': 'title' });
   if (canEdit()) {
     const edit = () => {
       if (heading.isContentEditable) return;
@@ -264,14 +277,14 @@ export function renderDrawer() {
   if (canEdit()) drawer.append(noteForm(card));
   if (canEdit() && state.can.delete) drawer.append(deleteCard(card));
   drawer.scrollTop = top;
-  // Opened by a click or by Enter on the card, the keyboard comes with it. The
-  // heading is the landing place where it does something, the close button
-  // where it does not. As with the board, this acts only while the focus is on
-  // nothing, so the render that follows the presence echo puts it back rather
-  // than leaving it on the body, and a person who has since moved it keeps it.
+  // Opened by a click or by Enter on the card, the keyboard comes with it, once.
+  // The heading is the landing place where it does something, the close button
+  // where it does not. Any other render puts the focus back where it was.
   if (takeFocus === card.id) {
-    if (ours) (canEdit() ? heading : close).focus();
-    else takeFocus = 0;
+    takeFocus = 0;
+    if (loose) (canEdit() ? heading : close).focus();
+  } else {
+    refocus(drawer, key);
   }
 }
 
@@ -280,13 +293,13 @@ function props(card) {
   for (const id of card.assignees || []) {
     const person = user(id);
     who.append(el('button', {
-      class: 'rm', type: 'button', title: 'Unassign ' + person.name,
+      class: 'rm', type: 'button', title: 'Unassign ' + person.name, 'data-k': 'rm' + id,
       onclick: () => send('card.unassign', { card: card.id, user: id }).catch((e) => say(e.message)),
     }, initials(person)));
   }
   if (canEdit()) {
     who.append(el('button', {
-      class: 'lnk', type: 'button', text: '+ assign',
+      class: 'lnk', type: 'button', text: '+ assign', 'data-k': 'assign',
       onclick: (e) => {
         e.stopPropagation();
         openPicker(e.currentTarget, card.assignees || [], (person, on) =>
@@ -296,7 +309,7 @@ function props(card) {
     }));
   }
 
-  const due = el('button', { class: 'lnk plain', type: 'button' },
+  const due = el('button', { class: 'lnk plain', type: 'button', 'data-k': 'due' },
     card.due_date ? document.createTextNode(card.due_date) : el('span', { class: 'dim', text: 'set a date' }));
   due.addEventListener('click', () => {
     if (!canEdit()) return;
@@ -320,7 +333,7 @@ function props(card) {
   });
 
   const question = el('select', {
-    disabled: !canEdit(),
+    disabled: !canEdit(), 'data-k': 'question',
     onchange: (e) => send('card.question', { card: card.id, question: e.target.value }).catch((x) => say(x.message)),
   }, el('option', { value: '', text: 'none', selected: !card.question }));
   state.questions.forEach((q, i) => {
@@ -331,7 +344,7 @@ function props(card) {
   });
 
   const columns = el('select', {
-    disabled: !canEdit(),
+    disabled: !canEdit(), 'data-k': 'column',
     onchange: (e) => send('card.move', { card: card.id, column: Number(e.target.value), after: 0 })
       .catch((x) => say(x.message)),
   });
@@ -346,7 +359,8 @@ function props(card) {
     el('dt', { text: 'Column' }), el('dd', {}, columns),
     el('dt', { text: 'State' }), el('dd', {}, canEdit()
       ? el('button', {
-        class: 'lnk plain', type: 'button', text: card.done_at ? 'Done · reopen' : 'Open · mark done',
+        class: 'lnk plain', type: 'button', 'data-k': 'state',
+        text: card.done_at ? 'Done · reopen' : 'Open · mark done',
         onclick: () => send('card.done', { card: card.id, done: !card.done_at }).catch((e) => say(e.message)),
       })
       : el('span', { text: card.done_at ? 'Done' : 'Open' })));
@@ -354,7 +368,7 @@ function props(card) {
 
 function description(card) {
   const node = el('p', {
-    class: 'desc', 'data-ph': 'Add a description. @ mentions notify people.',
+    class: 'desc', 'data-ph': 'Add a description. @ mentions notify people.', 'data-k': 'desc',
     contenteditable: canEdit() ? 'true' : null, spellcheck: 'false',
   });
   add(node, [rendered(card.description_md || '')]);
@@ -400,7 +414,7 @@ function conflictBar(card, field) {
     'Somebody changed this while you were editing it. Theirs reads ',
     el('span', { class: 'mono', text: card[field] || '(nothing)' }), '. ');
   bar.append(el('button', {
-    class: 'lnk', type: 'button', text: 'Keep mine',
+    class: 'lnk', type: 'button', text: 'Keep mine', 'data-k': 'keep' + field,
     onclick: () => {
       // Sent again against the row as it stands now rather than against the
       // version the first refusal named. A row that has moved on once more
@@ -412,7 +426,7 @@ function conflictBar(card, field) {
       if (live) versioned(held.cmd, live, held.args);
     },
   }), ' ', el('button', {
-    class: 'lnk plain', type: 'button', text: 'Take theirs', onclick: drop,
+    class: 'lnk plain', type: 'button', text: 'Take theirs', 'data-k': 'theirs' + field, onclick: drop,
   }));
   return bar;
 }
@@ -421,7 +435,7 @@ function conflictBar(card, field) {
 // could. A researcher may not delete, so they are not offered it.
 function deleteCard(card) {
   return el('div', { class: 'cf danger' }, el('button', {
-    class: 'lnk del', type: 'button', text: 'Delete this card',
+    class: 'lnk del', type: 'button', text: 'Delete this card', 'data-k': 'delete',
     onclick: () => ask(`Delete ${card.title}?`,
       'Its checklist, its notes and what is attached to it go with it. The record of the deletion stays in activity.',
       'Delete permanently').then((yes) => {
@@ -439,18 +453,18 @@ function checklist(card) {
     list.append(el('li', { class: item.done ? 'd' : '' },
       el('label', {},
         el('input', {
-          type: 'checkbox', checked: item.done, disabled: !canEdit(),
+          type: 'checkbox', checked: item.done, disabled: !canEdit(), 'data-k': 'chk' + item.id,
           onchange: (e) => send('checklist.toggle', { item: item.id, done: e.target.checked })
             .catch((x) => say(x.message)),
         }),
         ' ' + item.text),
       canEdit() && el('button', {
-        class: 'lnk del quiet', type: 'button', text: 'remove',
+        class: 'lnk del quiet', type: 'button', text: 'remove', 'data-k': 'chkx' + item.id,
         onclick: () => send('checklist.remove', { item: item.id }).catch((e) => say(e.message)),
       })));
   }
   if (canEdit()) {
-    const field = el('input', { class: 'newitem', placeholder: '+ item' });
+    const field = el('input', { class: 'newitem', placeholder: '+ item', 'data-k': 'newitem' });
     field.addEventListener('focus', () => hold(true));
     field.addEventListener('blur', () => hold(false));
     field.addEventListener('keydown', (e) => {
@@ -479,7 +493,7 @@ function activity(card) {
       el('span', { class: 'mono when', text: when(note.created_at) }));
     if (note.user_id === state.me && canEdit()) {
       line.append(' ', el('button', {
-        class: 'lnk del quiet', type: 'button', text: 'delete',
+        class: 'lnk del quiet', type: 'button', text: 'delete', 'data-k': 'notex' + note.id,
         onclick: () => send('comment.delete', { comment: note.id }).catch((e) => say(e.message)),
       }));
     }
@@ -497,7 +511,8 @@ function when(unix) {
 }
 
 function noteForm(card) {
-  const field = el('textarea', { rows: '1', placeholder: 'Write a note. @ to mention someone. ⌘↵ posts.' });
+  const field = el('textarea', { rows: '1', 'data-k': 'note',
+    placeholder: 'Write a note. @ to mention someone. ⌘↵ posts.' });
   mentionable(field);
   field.addEventListener('focus', () => hold(true));
   field.addEventListener('blur', () => hold(false));
@@ -513,5 +528,5 @@ function noteForm(card) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); post(); }
   });
   return el('div', { class: 'cf' }, field,
-    el('button', { class: 'lnk', type: 'button', text: 'Post', onclick: post }));
+    el('button', { class: 'lnk', type: 'button', text: 'Post', 'data-k': 'post', onclick: post }));
 }

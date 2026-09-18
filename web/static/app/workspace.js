@@ -18,6 +18,14 @@ if (location.hash === '#activity') openPanel();
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
 export function renderWork() {
+  // The whole work area is built again from nothing, so a card holding the
+  // keyboard is thrown away with the rest of it. Its id is taken now and the
+  // focus put back on the new node at the end, or somebody who had just reached
+  // a card would find the keyboard on the body the moment anybody else touched
+  // this proposition.
+  const focused = document.activeElement;
+  const had = focused && focused.classList && focused.classList.contains('card')
+    ? focused.dataset.id : '';
   const work = clear($('#work'));
   const p = open();
   if (!p) {
@@ -27,6 +35,10 @@ export function renderWork() {
   document.title = `${num(p.number)} ${p.title} · THESES`;
   work.append(head(p));
   work.append(pane(p));
+  if (had) {
+    const card = $(`#board .card[data-id="${had}"]`);
+    if (card) card.focus();
+  }
 }
 
 // nothing is the line an empty work area carries. A proposition is per

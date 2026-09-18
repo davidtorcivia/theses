@@ -817,6 +817,10 @@ now, and nothing of that body lands.
 `question` is one of `I`, `II`, `III` or `IV`, or empty for none; anything
 else is `422`.
 
+`due_date` is a calendar day written `YYYY-MM-DD`, or empty to clear it. The
+board asks of it only whether that day has gone, so anything else, a month
+name, a day the month does not have, a phrase, is `422`.
+
 ```
 PATCH /api/v1/cards/7
 {"base_version": 1, "title": "Call the harbor engineer"}
