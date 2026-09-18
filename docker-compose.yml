@@ -7,7 +7,7 @@ services:
     image: theses:${THESES_VERSION:-dev}
     container_name: theses
     restart: unless-stopped
-    # Published on loopback by default; the Caddy already on the host fronts it.
+    # Published on loopback by default; a reverse proxy on the same host fronts it.
     ports:
       - "${THESES_BIND_HOST:-127.0.0.1}:${THESES_PORT:-8080}:8080"
     environment:

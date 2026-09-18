@@ -103,7 +103,7 @@ with the last id you were given.
 {"activity": [
   {"id": 12, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
    "entity": "setting", "entity_id": "workspace.name", "action": "set",
-   "before": "\"We All Fall Down\"", "after": "\"Debt Machine\"",
+   "before": "\"Workspace\"", "after": "\"Renamed workspace\"",
    "created_at": 1758067200}
 ]}
 ```
@@ -115,6 +115,28 @@ MCP client that carried it will be added to these rows. `before` and `after` are
 the JSON of the entity before and after the change, and are absent when there
 was none.
 
+## `GET /api/v1/propositions/{id}/events?since=&wait=`
+
+Scope `read`. The websocket stream as a long poll, for anything that cannot
+hold a socket. It answers with the commands applied to that proposition after
+`since`, which is the sequence number of the last event you were given, `0` or
+absent from the beginning. With events already waiting it answers at once.
+With none it holds the request open until one arrives or a bound passes,
+whichever comes first, and then answers, empty if nothing came. `wait=0`
+answers immediately either way.
+
+```json
+{"events": [
+  {"seq": 481, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
+   "command": "card.move", "entity": "card", "entity_id": "77",
+   "after": {"column_id": 3, "position": "a0m"}, "created_at": 1758067200}
+]}
+```
+
+Ask again with the highest `seq` you were given. The same events reach the
+websocket, in the same order, so a client can move between the two without
+missing one.
+
 ## `GET /api/v1/settings`
 
 Scope `admin`. Every known setting, its definition and its current value.
@@ -122,7 +144,7 @@ Scope `admin`. Every known setting, its definition and its current value.
 ```json
 {"settings": [
   {"key": "workspace.name", "kind": "string", "label": "Name", "set": true,
-   "value": "Debt Machine"},
+   "value": "Renamed workspace"},
   {"key": "workspace.release_day", "kind": "choice", "label": "Release day",
    "choices": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
                "Saturday", "Sunday"], "set": false, "value": "Monday"},

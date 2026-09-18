@@ -154,7 +154,7 @@ func TestMCPNegotiatesTheNewestRevision(t *testing.T) {
 
 	res, err := cs.CallTool(ctx, &sdk.CallToolParams{
 		Name:      "set_setting",
-		Arguments: map[string]any{"key": "workspace.name", "value": "Debt Machine"},
+		Arguments: map[string]any{"key": "workspace.name", "value": "Renamed workspace"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func (h *harness) postMCP(token, host, body string) *http.Response {
 	return res
 }
 
-// Caddy runs on the same machine and proxies to loopback, so every real request
+// A reverse proxy on the same host proxies to loopback, so every real request
 // arrives over loopback carrying the public host name.
 func TestMCPAnswersLoopbackWithAPublicHost(t *testing.T) {
 	h := newHarness(t)

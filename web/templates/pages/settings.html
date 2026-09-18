@@ -11,7 +11,7 @@
     <form class="form" method="post" action="/settings" id="workspace">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <section class="fs">
-        <div class="fsh"><h3>Workspace</h3><p>The show these propositions belong to, and when an episode is due.</p></div>
+        <div class="fsh"><h3>Workspace</h3><p>The workspace these propositions belong to, and when an episode is due.</p></div>
         <div class="fsb">
           <div class="row3">
             <label class="f"><span class="l">Name</span><input name="workspace.name" value="{{index .S "workspace.name"}}"></label>

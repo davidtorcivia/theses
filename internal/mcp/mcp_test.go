@@ -181,21 +181,21 @@ func TestSetSettingNeedsAdminAndIsRecordedAsTheClient(t *testing.T) {
 	h := newHarness(t)
 
 	res := h.call(h.connect(auth.ScopeRead, auth.ScopeWrite), "set_setting",
-		setSettingArgs{Key: "workspace.name", Value: "Debt Machine"}, nil)
+		setSettingArgs{Key: "workspace.name", Value: "Renamed workspace"}, nil)
 	if !res.IsError {
 		t.Fatal("a write token changed a setting")
 	}
-	if got := settings.Get[string](h.set, "workspace.name"); got != "We All Fall Down" {
+	if got := settings.Get[string](h.set, "workspace.name"); got != "Workspace" {
 		t.Errorf("the setting changed anyway: %q", got)
 	}
 
 	var view api.SettingView
 	h.call(h.connect(auth.ScopeAdmin), "set_setting",
-		setSettingArgs{Key: "workspace.name", Value: "Debt Machine"}, &view)
-	if view.Value != "Debt Machine" {
+		setSettingArgs{Key: "workspace.name", Value: "Renamed workspace"}, &view)
+	if view.Value != "Renamed workspace" {
 		t.Errorf("view = %+v", view)
 	}
-	if got := settings.Get[string](h.set, "workspace.name"); got != "Debt Machine" {
+	if got := settings.Get[string](h.set, "workspace.name"); got != "Renamed workspace" {
 		t.Errorf("stored workspace.name = %q", got)
 	}
 
@@ -278,7 +278,7 @@ func TestWorkspaceResourceDescribesTheWorkspace(t *testing.T) {
 		t.Fatalf("contents = %+v", res.Contents)
 	}
 	text := res.Contents[0].Text
-	if !strings.Contains(text, "We All Fall Down") || !strings.Contains(text, "1 person") {
+	if !strings.Contains(text, "Workspace") || !strings.Contains(text, "1 person") {
 		t.Errorf("resource text = %q", text)
 	}
 
@@ -299,10 +299,10 @@ func TestAToolCannotOutrankTheTokenOwner(t *testing.T) {
 	}
 	cs := h.connect(auth.ScopeAdmin)
 	if res := h.call(cs, "set_setting",
-		setSettingArgs{Key: "workspace.name", Value: "Debt Machine"}, nil); !res.IsError {
+		setSettingArgs{Key: "workspace.name", Value: "Renamed workspace"}, nil); !res.IsError {
 		t.Error("a demoted owner's token changed a setting")
 	}
-	if got := settings.Get[string](h.set, "workspace.name"); got != "We All Fall Down" {
+	if got := settings.Get[string](h.set, "workspace.name"); got != "Workspace" {
 		t.Errorf("workspace.name = %q", got)
 	}
 	// A guest may still read, so the read tools keep working.

@@ -108,7 +108,7 @@ func overwrites(title string) *sdk.ToolAnnotations {
 //
 // The SDK's rebinding protection is off because it refuses a request that
 // arrives over loopback with a public Host header, which is every request in
-// this deployment: Caddy runs on the same machine and proxies to 127.0.0.1. The
+// this deployment: a reverse proxy on the same host proxies to 127.0.0.1. The
 // protection it offers is against a browser reaching a local server that
 // answers whoever asks, and this one answers a bearer token it checks per
 // request.

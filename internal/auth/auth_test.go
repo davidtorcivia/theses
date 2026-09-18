@@ -69,7 +69,7 @@ func code(t *testing.T, secret string, at time.Time) string {
 }
 
 func TestNormaliseHandle(t *testing.T) {
-	ok := map[string]string{"DT": "dt", " Mara ": "mara", "a-b-9": "a-b-9",
+	ok := map[string]string{"AL": "al", " Mara ": "mara", "a-b-9": "a-b-9",
 		strings.Repeat("x", 32): strings.Repeat("x", 32)}
 	for in, want := range ok {
 		got, err := NormaliseHandle(in)
@@ -77,7 +77,7 @@ func TestNormaliseHandle(t *testing.T) {
 			t.Errorf("NormaliseHandle(%q) = %q, %v", in, got, err)
 		}
 	}
-	for _, in := range []string{"", "d", "-dt", "dt-", "d t", "dt!", "David_T", strings.Repeat("x", 33)} {
+	for _, in := range []string{"", "d", "-ada", "ada-", "a da", "ada!", "Ada_L", strings.Repeat("x", 33)} {
 		if got, err := NormaliseHandle(in); err == nil {
 			t.Errorf("NormaliseHandle(%q) accepted as %q", in, got)
 		}
@@ -123,18 +123,18 @@ func TestRoles(t *testing.T) {
 func TestTOTPEnrolAndReplay(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	e, err := Enrol("dt")
+	e, err := Enrol("ada")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(e.QR, "data:image/png;base64,") || len(e.QR) < 500 {
 		t.Errorf("QR is not a png data URI: %.40q", e.QR)
 	}
-	if !strings.HasPrefix(e.URL, "otpauth://totp/THESES:dt") {
+	if !strings.HasPrefix(e.URL, "otpauth://totp/THESES:ada") {
 		t.Errorf("URL = %q", e.URL)
 	}
 
-	u := f.user(t, "dt", "a long enough password", e.Secret)
+	u := f.user(t, "ada", "a long enough password", e.Secret)
 	c := code(t, e.Secret, f.now)
 	if err := f.CheckTOTP(ctx, u, c); err != nil {
 		t.Fatalf("valid code refused: %v", err)
@@ -162,16 +162,16 @@ func TestTOTPEnrolAndReplay(t *testing.T) {
 func TestAuthenticate(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	e, _ := Enrol("dt")
-	f.user(t, "dt", "a long enough password", e.Secret)
+	e, _ := Enrol("ada")
+	f.user(t, "ada", "a long enough password", e.Secret)
 
-	if _, err := f.Authenticate(ctx, "dt", "a long enough password", code(t, e.Secret, f.now)); err != nil {
+	if _, err := f.Authenticate(ctx, "ada", "a long enough password", code(t, e.Secret, f.now)); err != nil {
 		t.Fatalf("correct credentials refused: %v", err)
 	}
 	f.now = f.now.Add(time.Minute)
 	for _, c := range []struct{ name, handle, password, code string }{
-		{"wrong password", "dt", "a long enough passwore", code(t, e.Secret, f.now)},
-		{"wrong code", "dt", "a long enough password", "000000"},
+		{"wrong password", "ada", "a long enough passwore", code(t, e.Secret, f.now)},
+		{"wrong code", "ada", "a long enough password", "000000"},
 		{"unknown account", "nobody", "a long enough password", code(t, e.Secret, f.now)},
 	} {
 		if _, err := f.Authenticate(ctx, c.handle, c.password, c.code); !errors.Is(err, ErrBadCredentials) {
@@ -183,7 +183,7 @@ func TestAuthenticate(t *testing.T) {
 func TestSessionCookieLifecycle(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	u := f.user(t, "dt", "a long enough password", "")
+	u := f.user(t, "ada", "a long enough password", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/login", nil)
@@ -233,7 +233,7 @@ func TestSessionCookieLifecycle(t *testing.T) {
 func TestEndSession(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	u := f.user(t, "dt", "a long enough password", "")
+	u := f.user(t, "ada", "a long enough password", "")
 
 	w := httptest.NewRecorder()
 	if err := f.StartSession(ctx, w, httptest.NewRequest("POST", "/login", nil), u, 30); err != nil {
@@ -271,9 +271,9 @@ func TestCSRFTokenIsBoundToSeed(t *testing.T) {
 func TestInvitationLifecycle(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	owner := f.user(t, "dt", "a long enough password", "")
+	owner := f.user(t, "ada", "a long enough password", "")
 
-	_, token, err := f.CreateInvitation(ctx, "mara@example.fm", RoleEditor, owner.ID)
+	_, token, err := f.CreateInvitation(ctx, "mara@example.com", RoleEditor, owner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestInvitationLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inv.Email != "mara@example.fm" || inv.Role != RoleEditor || inv.InviterName != "dt" {
+	if inv.Email != "mara@example.com" || inv.Role != RoleEditor || inv.InviterName != "ada" {
 		t.Errorf("invitation = %+v", inv)
 	}
 	if _, err := f.Invitation(ctx, "not-a-token"); !errors.Is(err, ErrTokenInvalid) {
@@ -299,7 +299,7 @@ func TestInvitationLifecycle(t *testing.T) {
 	}
 
 	// Resending replaces the token, and the week runs out.
-	_, again, err := f.CreateInvitation(ctx, "mara@example.fm", RoleEditor, owner.ID)
+	_, again, err := f.CreateInvitation(ctx, "mara@example.com", RoleEditor, owner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestInvitationLifecycle(t *testing.T) {
 		t.Errorf("an eight day old invitation returned %v", err)
 	}
 
-	if _, _, err := f.CreateInvitation(ctx, "mara@example.fm", "admiral", owner.ID); err == nil {
+	if _, _, err := f.CreateInvitation(ctx, "mara@example.com", "admiral", owner.ID); err == nil {
 		t.Error("an unknown role was accepted")
 	}
 	if _, _, err := f.CreateInvitation(ctx, "not-an-address", RoleEditor, owner.ID); err == nil {
@@ -327,7 +327,7 @@ func TestInvitationLifecycle(t *testing.T) {
 func TestPasswordResetLifecycle(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	u := f.user(t, "dt", "a long enough password", "")
+	u := f.user(t, "ada", "a long enough password", "")
 
 	token, err := f.CreatePasswordReset(ctx, u.ID)
 	if err != nil {
@@ -351,7 +351,7 @@ func TestPasswordResetLifecycle(t *testing.T) {
 func TestAPITokens(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
-	u := f.user(t, "dt", "a long enough password", "")
+	u := f.user(t, "ada", "a long enough password", "")
 
 	clear, err := f.CreateAPIToken(ctx, u.ID, "research agent", []string{ScopeRead, ScopeWrite})
 	if err != nil {
@@ -401,15 +401,15 @@ func TestRateLimits(t *testing.T) {
 	f := newFixture(t)
 	n := limitsByBucket[BucketLogin].n
 	for i := 0; i < n; i++ {
-		if !f.Allow(BucketLogin, "10.0.0.1", "dt") {
+		if !f.Allow(BucketLogin, "10.0.0.1", "ada") {
 			t.Fatalf("attempt %d was refused before the limit", i+1)
 		}
 	}
-	if f.Allow(BucketLogin, "10.0.0.1", "dt") {
+	if f.Allow(BucketLogin, "10.0.0.1", "ada") {
 		t.Error("the limit did not hold")
 	}
 	// Another address for the same account is still held back by the handle key.
-	if f.Allow(BucketLogin, "10.0.0.2", "dt") {
+	if f.Allow(BucketLogin, "10.0.0.2", "ada") {
 		t.Error("the handle key did not hold across addresses")
 	}
 	// A different account from a fresh address is unaffected.
@@ -418,19 +418,19 @@ func TestRateLimits(t *testing.T) {
 	}
 	// The window passes.
 	f.now = f.now.Add(limitsByBucket[BucketLogin].window + time.Minute)
-	if !f.Allow(BucketLogin, "10.0.0.1", "dt") {
+	if !f.Allow(BucketLogin, "10.0.0.1", "ada") {
 		t.Error("the window did not expire")
 	}
 
-	f.ResetLimits(BucketReset, "dt")
+	f.ResetLimits(BucketReset, "ada")
 	for i := 0; i < limitsByBucket[BucketReset].n; i++ {
-		f.Allow(BucketReset, "dt")
+		f.Allow(BucketReset, "ada")
 	}
-	if f.Allow(BucketReset, "dt") {
+	if f.Allow(BucketReset, "ada") {
 		t.Error("the reset bucket did not hold")
 	}
-	f.ResetLimits(BucketReset, "dt")
-	if !f.Allow(BucketReset, "dt") {
+	f.ResetLimits(BucketReset, "ada")
+	if !f.Allow(BucketReset, "ada") {
 		t.Error("ResetLimits did not clear the counter")
 	}
 }
@@ -471,7 +471,7 @@ func TestUnknownHandleTakesAsLongAsAWrongPassword(t *testing.T) {
 	defer func() { BcryptCost = was }()
 
 	f := newFixture(t)
-	f.user(t, "dt", "a long enough password", "")
+	f.user(t, "ada", "a long enough password", "")
 	long := strings.Repeat("x", 100)
 
 	median := func(handle string) time.Duration {
@@ -486,7 +486,7 @@ func TestUnknownHandleTakesAsLongAsAWrongPassword(t *testing.T) {
 		sort.Slice(runs, func(i, j int) bool { return runs[i] < runs[j] })
 		return runs[1]
 	}
-	known := median("dt")
+	known := median("ada")
 	unknown := median("nobody")
 	if unknown*2 < known {
 		t.Errorf("an unknown account answered in %v against %v for a known one, which says which is which", unknown, known)

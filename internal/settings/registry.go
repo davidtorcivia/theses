@@ -34,7 +34,7 @@ var providers = []string{"backblaze", "r2", "s3"}
 
 // Registry is every setting the app knows. A key not here cannot be written.
 var Registry = []Def{
-	{Key: "workspace.name", Kind: KindString, Default: "We All Fall Down", Label: "Name"},
+	{Key: "workspace.name", Kind: KindString, Default: "Workspace", Label: "Name"},
 	{Key: "workspace.episode_start", Kind: KindInt, Default: 1, Min: 0, Max: 10000, Label: "Episode numbering starts at"},
 	{Key: "workspace.release_day", Kind: KindChoice, Default: "Monday", Choices: days, Label: "Release day"},
 	{Key: "workspace.release_time", Kind: KindString, Default: "06:00", Label: "Release time", Hint: "24 hour, in the workspace time zone."},
@@ -42,8 +42,8 @@ var Registry = []Def{
 
 	{Key: "defaults.columns", Kind: KindList, Default: []string{"Research", "Outline", "Script", "Record", "Edit", "Publication"}, Label: "Board columns", Hint: "What a new proposition starts with. Existing boards keep their own."},
 	{Key: "defaults.statuses", Kind: KindList, Default: []string{"idea", "researching", "recording", "editing", "released"}, Label: "Statuses", Hint: "In the order a proposition moves through them."},
-	{Key: "defaults.question_labels", Kind: KindList, Default: []string{"Is it true?", "Who gets fucked?", "What breaks?", "Then what do we want?"}, Label: "Question labels", Hint: "The four questions cards are tagged with, in order."},
-	{Key: "defaults.document_template", Kind: KindText, Default: "# {statement}\n\n## I. Is it true?\n## II. Who gets fucked?\n## III. What breaks?\n## IV. Then what do we want?\n## Five consequential facts\n## Historical analogy\n## Street question\n## Expert brief", Label: "Document template", Hint: "Headings every new proposition starts with."},
+	{Key: "defaults.question_labels", Kind: KindList, Default: []string{"Is it true?", "Who pays?", "What breaks?", "What do we want?"}, Label: "Question labels", Hint: "The four questions cards are tagged with, in order."},
+	{Key: "defaults.document_template", Kind: KindText, Default: "# {statement}\n\n## I. Is it true?\n## II. Who pays?\n## III. What breaks?\n## IV. What do we want?\n## Five consequential facts\n## Historical analogy\n## Street question\n## Expert brief", Label: "Document template", Hint: "Headings every new proposition starts with."},
 
 	{Key: "storage.primary.provider", Kind: KindChoice, Default: "backblaze", Choices: providers, Label: "Provider"},
 	{Key: "storage.primary.endpoint", Kind: KindString, Default: "", Label: "Endpoint", Hint: "B2 is s3.<region>.backblazeb2.com; R2 is <account>.r2.cloudflarestorage.com."},

@@ -140,8 +140,8 @@ func (h *harness) setupOwner() (password, secret string) {
 	password = "a long enough password"
 
 	res, _ := h.post("/setup", url.Values{
-		"csrf": {h.csrf("/setup")}, "handle": {"dt"}, "name": {"David Torcivia"},
-		"initials": {"DT"}, "colour": {Palette[1]}, "email": {"dt@example.fm"},
+		"csrf": {h.csrf("/setup")}, "handle": {"ada"}, "name": {"Ada Lovelace"},
+		"initials": {"AL"}, "colour": {Palette[1]}, "email": {"ada@example.com"},
 		"password": {password},
 	})
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/setup/authenticator" {
@@ -203,14 +203,14 @@ func TestSetupCreatesTheOwnerAndEnrolsTOTP(t *testing.T) {
 	h := newHarness(t)
 	_, secret := h.setupOwner()
 
-	u, err := store.UserByHandle(context.Background(), h.db, "dt")
+	u, err := store.UserByHandle(context.Background(), h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u.Role != auth.RoleOwner {
 		t.Errorf("role = %q", u.Role)
 	}
-	if u.Name != "David Torcivia" || u.Initials != "DT" || u.Colour != Palette[1] || u.Email != "dt@example.fm" {
+	if u.Name != "Ada Lovelace" || u.Initials != "AL" || u.Colour != Palette[1] || u.Email != "ada@example.com" {
 		t.Errorf("owner = %+v", u)
 	}
 	if u.TOTPSecret != secret {
@@ -241,7 +241,7 @@ func TestLoginSucceedsAndSetsTheCookie(t *testing.T) {
 
 	code, _ := totp.GenerateCode(secret, time.Now())
 	res, _ := h.post("/login", url.Values{
-		"csrf": {h.csrf("/login")}, "handle": {"dt"}, "password": {password}, "code": {code},
+		"csrf": {h.csrf("/login")}, "handle": {"ada"}, "password": {password}, "code": {code},
 	})
 	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/" {
 		t.Fatalf("login gave %d %s", res.StatusCode, res.Header.Get("Location"))
@@ -274,7 +274,7 @@ func TestLoginWithAWrongCodeFailsThenIsRateLimited(t *testing.T) {
 	token := h.csrf("/login")
 	attempt := func() int {
 		res, _ := h.post("/login", url.Values{
-			"csrf": {token}, "handle": {"dt"}, "password": {password}, "code": {"000000"},
+			"csrf": {token}, "handle": {"ada"}, "password": {password}, "code": {"000000"},
 		})
 		return res.StatusCode
 	}
@@ -354,18 +354,18 @@ func TestInvitationAcceptCreatesAUser(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	owner, err := store.UserByHandle(ctx, h.db, "dt")
+	owner, err := store.UserByHandle(ctx, h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, token, err := h.srv.auth.CreateInvitation(ctx, "mara@example.fm", auth.RoleEditor, owner.ID)
+	_, token, err := h.srv.auth.CreateInvitation(ctx, "mara@example.com", auth.RoleEditor, owner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.signOut()
 
 	_, body := h.get("/invite/" + token)
-	if !strings.Contains(body, "David Torcivia invited you as editor") {
+	if !strings.Contains(body, "Ada Lovelace invited you as editor") {
 		t.Errorf("the accept page does not name the inviter and role:\n%s", body)
 	}
 	res, _ := h.post("/invite/"+token, url.Values{
@@ -390,7 +390,7 @@ func TestInvitationAcceptCreatesAUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Role != auth.RoleEditor || u.Email != "mara@example.fm" || u.Initials != "MO" {
+	if u.Role != auth.RoleEditor || u.Email != "mara@example.com" || u.Initials != "MO" {
 		t.Errorf("invited user = %+v", u)
 	}
 	// The invitation is spent.
@@ -408,7 +408,7 @@ func TestSettingsSaveRoundTrips(t *testing.T) {
 
 	res, _ := h.post("/settings", url.Values{
 		"csrf":                    {h.csrf("/settings")},
-		"workspace.name":          {"Debt Machine"},
+		"workspace.name":          {"Renamed workspace"},
 		"workspace.episode_start": {"7"},
 		"workspace.release_day":   {"Thursday"},
 		"workspace.release_time":  {"06:00"},
@@ -417,14 +417,14 @@ func TestSettingsSaveRoundTrips(t *testing.T) {
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("save gave %d", res.StatusCode)
 	}
-	if got := settings.Get[string](h.srv.settings, "workspace.name"); got != "Debt Machine" {
+	if got := settings.Get[string](h.srv.settings, "workspace.name"); got != "Renamed workspace" {
 		t.Errorf("workspace.name = %q", got)
 	}
 	if got := settings.Get[int](h.srv.settings, "workspace.episode_start"); got != 7 {
 		t.Errorf("workspace.episode_start = %d", got)
 	}
 	_, body := h.get("/settings")
-	if !strings.Contains(body, `value="Debt Machine"`) {
+	if !strings.Contains(body, `value="Renamed workspace"`) {
 		t.Error("the saved name is not on the page")
 	}
 
@@ -524,13 +524,13 @@ func TestProfileChangesAndSignOutEverywhere(t *testing.T) {
 	h.setupOwner()
 
 	res, _ := h.post("/profile", url.Values{
-		"csrf": {h.csrf("/profile")}, "handle": {"dtorcivia"}, "name": {"David Torcivia"},
-		"initials": {"DT"}, "colour": {Palette[4]}, "email": {"dt@example.fm"},
+		"csrf": {h.csrf("/profile")}, "handle": {"lovelace"}, "name": {"Ada Lovelace"},
+		"initials": {"AL"}, "colour": {Palette[4]}, "email": {"ada@example.com"},
 	})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("profile save gave %d", res.StatusCode)
 	}
-	u, err := store.UserByHandle(ctx, h.db, "dtorcivia")
+	u, err := store.UserByHandle(ctx, h.db, "lovelace")
 	if err != nil || u.Colour != Palette[4] {
 		t.Fatalf("profile did not save: %v %+v", err, u)
 	}
@@ -551,7 +551,7 @@ func TestPasswordResetWritesATokenAndSaysNothing(t *testing.T) {
 	h.signOut()
 
 	const said = "If that account exists, mail is on its way."
-	for _, who := range []string{"dt", "nobody"} {
+	for _, who := range []string{"ada", "nobody"} {
 		res, body := h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {who}})
 		if res.StatusCode != http.StatusOK || !strings.Contains(body, said) {
 			t.Errorf("reset for %q gave %d without the standard line", who, res.StatusCode)
@@ -619,7 +619,7 @@ func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
 
 	// Someone else is now signed in on this browser, with the first person's
 	// enrolment cookie still there.
-	other := &store.User{Handle: "mara", Email: "mara@example.fm", Name: "Mara Okafor",
+	other := &store.User{Handle: "mara", Email: "mara@example.com", Name: "Mara Okafor",
 		Initials: "MO", Colour: Palette[2], Role: auth.RoleEditor, PasswordHash: "x"}
 	id, err := store.CreateUser(context.Background(), h.db, other)
 	if err != nil {
@@ -638,7 +638,7 @@ func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
 	if res.StatusCode != http.StatusForbidden {
 		t.Errorf("a stale enrolment cookie gave %d, want 403", res.StatusCode)
 	}
-	owner, err := store.UserByHandle(context.Background(), h.db, "dt")
+	owner, err := store.UserByHandle(context.Background(), h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +653,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 	h.setupOwner()
 
 	res, _ := h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
 	})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("invite gave %d", res.StatusCode)
@@ -663,7 +663,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 		t.Fatalf("pending invitations = %v, %v", pending, err)
 	}
 	_, body := h.get("/settings")
-	if !strings.Contains(body, "mara@example.fm") {
+	if !strings.Contains(body, "mara@example.com") {
 		t.Error("the invitation is not listed on the page")
 	}
 
@@ -726,7 +726,7 @@ func TestRoleChangesAreGuarded(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	h.setupOwner()
-	owner, err := store.UserByHandle(ctx, h.db, "dt")
+	owner, err := store.UserByHandle(ctx, h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +738,7 @@ func TestRoleChangesAreGuarded(t *testing.T) {
 		t.Errorf("changing your own role gave %d", res.StatusCode)
 	}
 
-	id, err := store.CreateUser(ctx, h.db, &store.User{Handle: "mara", Email: "mara@example.fm",
+	id, err := store.CreateUser(ctx, h.db, &store.User{Handle: "mara", Email: "mara@example.com",
 		Name: "Mara Okafor", Initials: "MO", Colour: Palette[2], Role: auth.RoleGuest, PasswordHash: "x"})
 	if err != nil {
 		t.Fatal(err)
@@ -787,7 +787,7 @@ func TestPasswordChangeAndResetLink(t *testing.T) {
 	}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the password change gave %d", res.StatusCode)
 	}
-	u, _ := store.UserByHandle(ctx, h.db, "dt")
+	u, _ := store.UserByHandle(ctx, h.db, "ada")
 	if !auth.CheckPassword(u.PasswordHash, "a brand new password") {
 		t.Error("the new password does not verify")
 	}
@@ -802,7 +802,7 @@ func TestPasswordChangeAndResetLink(t *testing.T) {
 	}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the reset gave %d", res.StatusCode)
 	}
-	u, _ = store.UserByHandle(ctx, h.db, "dt")
+	u, _ = store.UserByHandle(ctx, h.db, "ada")
 	if !auth.CheckPassword(u.PasswordHash, "a third long password") {
 		t.Error("the reset password does not verify")
 	}
@@ -829,14 +829,14 @@ func TestDeleteAccountRefusesTheLastOwner(t *testing.T) {
 		t.Fatal("the owner was deleted anyway")
 	}
 
-	if _, err := store.CreateUser(ctx, h.db, &store.User{Handle: "mara", Email: "mara@example.fm",
+	if _, err := store.CreateUser(ctx, h.db, &store.User{Handle: "mara", Email: "mara@example.com",
 		Name: "Mara Okafor", Initials: "MO", Colour: Palette[2], Role: auth.RoleOwner, PasswordHash: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	if res, _ := h.post("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("deleting a second owner gave %d", res.StatusCode)
 	}
-	if _, err := store.UserByHandle(ctx, h.db, "dt"); err == nil {
+	if _, err := store.UserByHandle(ctx, h.db, "ada"); err == nil {
 		t.Error("the account was not deleted")
 	}
 }
@@ -891,7 +891,7 @@ func TestAnOutOfRangeSessionLengthStillSignsYouIn(t *testing.T) {
 	}
 
 	res, _ := h.post("/login", url.Values{
-		"csrf": {h.csrf("/login")}, "handle": {"dt"}, "password": {password},
+		"csrf": {h.csrf("/login")}, "handle": {"ada"}, "password": {password},
 		"code": {code(t, secret)},
 	})
 	if res.StatusCode != http.StatusSeeOther {
@@ -912,11 +912,11 @@ func TestAnOutOfRangeSessionLengthStillSignsYouIn(t *testing.T) {
 func (h *harness) invited(role string) (token, secret, csrf string, id int64) {
 	h.Helper()
 	ctx := context.Background()
-	owner, err := store.UserByHandle(ctx, h.db, "dt")
+	owner, err := store.UserByHandle(ctx, h.db, "ada")
 	if err != nil {
 		h.Fatal(err)
 	}
-	_, token, err = h.srv.auth.CreateInvitation(ctx, "mara@example.fm", role, owner.ID)
+	_, token, err = h.srv.auth.CreateInvitation(ctx, "mara@example.com", role, owner.ID)
 	if err != nil {
 		h.Fatal(err)
 	}
@@ -1040,7 +1040,7 @@ func (h *harness) replayPending(t *testing.T, handle, secret, role string, invit
 	w := httptest.NewRecorder()
 	if err := h.srv.pending.put(w, false, &pending{
 		Kind: "invite", InvitationID: invitation, Handle: handle, Name: "Mara Okafor",
-		Initials: "MO", Colour: Palette[2], Email: "mara@example.fm", PasswordHash: hash,
+		Initials: "MO", Colour: Palette[2], Email: "mara@example.com", PasswordHash: hash,
 		Role: role, Secret: secret, OTPURL: "otpauth://totp/THESES:" + handle + "?secret=" + secret + "&issuer=THESES",
 	}); err != nil {
 		t.Fatal(err)
@@ -1056,13 +1056,13 @@ func TestNoResetOrInviteLinkReachesTheLog(t *testing.T) {
 	h.setupOwner()
 
 	if res, _ := h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
 	}); res.StatusCode != http.StatusOK {
 		t.Fatalf("invite gave %d", res.StatusCode)
 	}
 	h.signOut()
 	if res, _ := h.post("/reset", url.Values{
-		"csrf": {h.csrf("/reset")}, "who": {"dt"},
+		"csrf": {h.csrf("/reset")}, "who": {"ada"},
 	}); res.StatusCode != http.StatusOK {
 		t.Fatalf("reset gave %d", res.StatusCode)
 	}
@@ -1096,7 +1096,7 @@ func TestAWrongResetTokenDoesNoHashing(t *testing.T) {
 
 	h := newHarness(t)
 	h.setupOwner()
-	u, err := store.UserByHandle(context.Background(), h.db, "dt")
+	u, err := store.UserByHandle(context.Background(), h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1177,7 +1177,7 @@ func TestAnOversizedFormIsRefused(t *testing.T) {
 
 	// A form of the size the app actually sends still goes through.
 	if res, _ := h.post("/settings", url.Values{
-		"csrf": {h.csrf("/settings")}, "workspace.name": {"Debt Machine"},
+		"csrf": {h.csrf("/settings")}, "workspace.name": {"Renamed workspace"},
 	}); res.StatusCode != http.StatusSeeOther {
 		t.Errorf("an ordinary form gave %d", res.StatusCode)
 	}
@@ -1211,7 +1211,7 @@ func TestARefusedDeleteLeavesNoActivityRow(t *testing.T) {
 func TestARefusedWriteCommitsNoActivityRow(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
-	owner, err := store.UserByHandle(context.Background(), h.db, "dt")
+	owner, err := store.UserByHandle(context.Background(), h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,7 +1257,7 @@ func TestANewInvitationShowsItsLinkOnce(t *testing.T) {
 	h.setupOwner()
 
 	res, body := h.post("/settings/team/invite", url.Values{
-		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
 	})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("invite gave %d", res.StatusCode)
