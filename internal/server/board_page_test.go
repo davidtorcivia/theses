@@ -680,14 +680,24 @@ func TestTheEventStreamNamesWhatCarriedTheChange(t *testing.T) {
 // passed is a question about the show's calendar day and not about the one on
 // the laptop reading the board.
 func TestShellCarriesTheWorkspaceTimezone(t *testing.T) {
-	h := newHarness(t)
-	h.setupOwner()
-	if err := h.srv.settings.Set(context.Background(), "workspace.timezone",
-		[]string{"Europe/Berlin"}, h.owner().ID); err != nil {
-		t.Fatal(err)
-	}
-	if got := h.payload("/").Timezone; got != "Europe/Berlin" {
-		t.Fatalf("the payload carries the time zone %q", got)
+	for _, tc := range []struct{ set, want string }{
+		{set: "", want: "America/New_York"},
+		{set: "Europe/Berlin", want: "Europe/Berlin"},
+		{set: "UTC", want: "UTC"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			h := newHarness(t)
+			h.setupOwner()
+			if tc.set != "" {
+				if err := h.srv.settings.Set(context.Background(), "workspace.timezone",
+					[]string{tc.set}, h.owner().ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := h.payload("/").Timezone; got != tc.want {
+				t.Fatalf("the payload carries the time zone %q", got)
+			}
+		})
 	}
 }
 

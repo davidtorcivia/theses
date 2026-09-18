@@ -824,12 +824,28 @@ func TestCreatePropositionRunsTheSeedInTheSameTransaction(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name string
+		who  string
 		seed func(*fixture) func(context.Context, core.Actor, int64) error
 		kept bool
 	}{
 		{name: "no seed", seed: func(*fixture) func(context.Context, core.Actor, int64) error { return nil }, kept: true},
 		{
 			name: "a seed that writes",
+			seed: func(f *fixture) func(context.Context, core.Actor, int64) error {
+				return func(ctx context.Context, a core.Actor, id int64) error {
+					_, err := f.CreateColumn(ctx, a, id, "Seeded")
+					return err
+				}
+			},
+			kept: true,
+		},
+		{
+			// The creator's membership is written in the same transaction, so
+			// a seed command authorized against the new proposition finds it.
+			// An owner would pass that test whatever happened, so this row is
+			// an editor, who would not.
+			name: "an editor's seed that writes",
+			who:  "editor",
 			seed: func(f *fixture) func(context.Context, core.Actor, int64) error {
 				return func(ctx context.Context, a core.Actor, id int64) error {
 					_, err := f.CreateColumn(ctx, a, id, "Seeded")
@@ -849,7 +865,11 @@ func TestCreatePropositionRunsTheSeedInTheSameTransaction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t)
 			f.Seed = tc.seed(f)
-			e, err := f.CreateProposition(ctx, f.who["owner"], "Wind")
+			who := tc.who
+			if who == "" {
+				who = "owner"
+			}
+			e, err := f.CreateProposition(ctx, f.who[who], "Wind")
 			if (err == nil) != tc.kept {
 				t.Fatalf("create gave %v", err)
 			}
@@ -868,7 +888,7 @@ func TestCreatePropositionRunsTheSeedInTheSameTransaction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if seeded := len(cols) == 4; seeded != (tc.name == "a seed that writes") {
+			if seeded := len(cols) == 4; seeded != strings.Contains(tc.name, "seed that writes") {
 				t.Fatalf("the columns are %+v", cols)
 			}
 		})
