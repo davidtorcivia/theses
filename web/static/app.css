@@ -1,4 +1,4 @@
-/* The workspace. BASE and SKIN_B from docs/mockup/_build/gen.js as they stand,
+/* The workspace. BASE and SKIN_B from docs/internal/mockup/_build/gen.js as they stand,
    with self-hosted faces, the mockup's style attributes as classes, and the
    few rules the server-rendered settings and profile pages need. */
 /* Self-hosted, because the CSP names no third party. Archivo is the variable

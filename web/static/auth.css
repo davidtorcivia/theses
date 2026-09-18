@@ -1,5 +1,5 @@
 /* Sign-in, invitation, enrolment and error pages. AUTH_CSS from
-   docs/mockup/_build/gen.js, with the Google Fonts link replaced by
+   docs/internal/mockup/_build/gen.js, with the Google Fonts link replaced by
    self-hosted faces and the mockup's style attributes turned into classes. */
 /* Self-hosted, because the CSP names no third party. Archivo is the variable
    face with both the wdth and wght axes the mockup uses; DM Mono is the 400. */
