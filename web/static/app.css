@@ -516,14 +516,17 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
 #palette li a.on{background:var(--y);color:var(--k)}
 #palette li a.on .k,#palette li a.on .dim,#palette li a:hover .dim{color:rgba(0,0,0,.6)}
 
-/* Findings 22, 23 and 25: the drawer's touch targets, the tab row at 390, and
-   the Publish section with nothing connected behind it. */
+/* The board branch: the tab row and the drawer's hit targets at the small
+   breakpoint, the Publish section drawn with nothing connected behind it, the
+   invite row in Members, and the anchor that section is linked to. */
 
 /* The section is drawn whether or not Transistor is connected, so its controls
    have to look as refused as they are. */
 #publish button[disabled],#publish select[disabled]{opacity:.45;cursor:default}
 
-/* Findings 22 and 23: the drawer's touch targets and the tab row at 390. */
+/* A link to the Members section lands under the fixed top bar without this. */
+#members{scroll-margin-top:calc(var(--toph) + 1rem)}
+
 @media (max-width:640px){
   /* Five tabs where the mockup had four, so the row was wrapping to a second
      line and the rule under it stopped halfway across. Tighter tracking and
@@ -534,10 +537,13 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   .tabs .tab.on{padding-left:.5rem}
 
   /* A finger is not a pointer. Everything in the drawer that does something is
-     at least forty pixels tall here, and untouched at 1440. */
+     at least forty pixels tall here, and untouched at 1440. The invite row in
+     Members is held to the same floor. */
   #drawer .props dd,#drawer .check li,#drawer .linked li,#drawer .comments li,
-  #drawer .props select,#drawer .props input.inline,#drawer .newitem{min-height:40px}
+  #drawer .props select,#drawer .props input.inline,#drawer .newitem,
+  #members .invite input,#members .invite select{min-height:40px}
   #drawer .x,#drawer .props .lnk,#drawer .props .rm,#drawer .linked .lnk,#drawer .linked a,
-  #drawer .comments .lnk,#drawer .check .lnk,#drawer .cf .lnk,#drawer .cf select{
+  #drawer .comments .lnk,#drawer .check .lnk,#drawer .cf .lnk,#drawer .cf select,
+  #members .invite button{
     display:inline-flex;align-items:center;min-height:40px}
 }

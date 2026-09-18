@@ -12,9 +12,19 @@ import { renderPanel, closePanel } from './activity.js';
 import { activate } from './keys.js';
 import * as api from './api.js';
 
+// takeFocus and returnTo carry the keyboard across a render. Opening a card
+// puts the focus in the drawer and closing it puts the focus back on the card
+// that was open, neither of which can be done here: the board and the drawer
+// are both built again after this runs, and the nodes to focus do not exist
+// until they are.
+let takeFocus = 0;
+let returnTo = 0;
+
 export function closeDrawer() {
   closePanel();
-  state.openCard = state.openLink = state.openFile = state.conflict = null;
+  returnTo = state.openCard;
+  state.openCard = state.openLink = state.openFile = null;
+  state.conflict = {};
   $('#drawer').hidden = true;
   document.body.classList.remove('has-drawer');
   where('');
@@ -24,7 +34,8 @@ export function closeDrawer() {
 export function openCard(id) {
   if (state.openCard !== id) {
     state.openCard = id;
-    state.conflict = null;
+    state.conflict = {};
+    takeFocus = id;
     where('card:' + id);
   }
   state.openLink = state.openFile = null;
@@ -123,22 +134,48 @@ function attachDialog(card) {
 
 const rendered = (text) => inline(text, byHandle);
 
+// restoreFocus puts the keyboard back on the card the drawer was showing, now
+// that the board has been drawn again and that card is a node once more. It
+// keeps doing so across the renders that follow, because each one builds the
+// board again and drops the focus, and it stops the moment the keyboard is
+// somewhere the person put it.
+function restoreFocus() {
+  if (!returnTo) return;
+  const active = document.activeElement;
+  // Nothing has the focus, or the drawer that is going still does, or the card
+  // this already put it on. Anything else is where the person has since moved
+  // it and is not to be taken away from them.
+  const ours = !active || active === document.body
+    || $('#drawer').contains(active) || active.dataset.id === String(returnTo);
+  if (!ours) {
+    returnTo = 0;
+    return;
+  }
+  const card = $(`#board .card[data-id="${returnTo}"]`);
+  if (card) card.focus();
+}
+
 // DAY is the shape the board this came from wrote, a day and a month with the
 // year optional.
 const DAY = /^(\d{1,2} [A-Za-z]{3,9}|[A-Za-z]{3,9} \d{1,2})( \d{4})?$/;
 
 // isoDay is what goes into the due field. The card shows an ISO day and the
 // placeholder asks for one, but somebody who types "24 Sep" means this year.
-// Anything else is sent as typed: the column holds a line of text, and refusing
-// a person's own words here would be the wrong place to do it.
+// Anything else goes up as typed and is refused by the server, which is the one
+// place that decides what a due date may be.
 function isoDay(typed) {
   const value = typed.trim().replace(/\s+/g, ' ');
   if (!value || /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   // Only the shape the old board wrote is read. The browser's own parser will
   // find a year in anything at all and answer the first of January with it.
-  if (!DAY.test(value)) return value;
-  const when = new Date(/\d{4}$/.test(value) ? value : value + ' ' + new Date().getFullYear());
+  const shape = DAY.exec(value);
+  if (!shape) return value;
+  const when = new Date(shape[2] ? value : value + ' ' + new Date().getFullYear());
   if (Number.isNaN(when.getTime())) return value;
+  // A browser reads the thirty first of February as the second of March. A day
+  // that does not come back as the one typed goes up as typed, so the server
+  // refuses it and says so rather than quietly moving somebody's date.
+  if (when.getDate() !== Number(shape[1].match(/\d{1,2}/)[0])) return value;
   const pad = (n) => String(n).padStart(2, '0');
   return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
 }
@@ -151,9 +188,16 @@ export function renderDrawer() {
   if (!card && !state.openLink && !state.openFile && !state.panel) {
     drawer.hidden = true;
     document.body.classList.remove('has-drawer');
+    restoreFocus();
     return;
   }
   const top = drawer.scrollTop;
+  // Read before the rebuild, because clearing the drawer drops the keyboard on
+  // the body and the two would then be indistinguishable. Nothing focused, or
+  // something in the drawer that is about to be replaced, both want the focus
+  // put back; a control outside the drawer is where the person put it.
+  const active = document.activeElement;
+  const ours = !active || active === document.body || drawer.contains(active);
   clear(drawer);
   drawer.hidden = false;
   document.body.classList.add('has-drawer');
@@ -177,13 +221,15 @@ export function renderDrawer() {
   if (!card) {
     drawer.hidden = true;
     document.body.classList.remove('has-drawer');
+    restoreFocus();
     return;
   }
 
   const column = state.columns.find((c) => c.id === card.column_id);
+  const close = el('button', { class: 'x', type: 'button', text: 'Close', onclick: closeDrawer });
   drawer.append(el('div', { class: 'dh' },
     el('span', { class: 'mono', text: (column ? column.name : '') + ' · ' + (card.done_at ? 'done' : 'open') }),
-    el('button', { class: 'x', type: 'button', text: 'Close', onclick: closeDrawer })));
+    close));
 
   const heading = el('h2', { text: card.title, spellcheck: 'false' });
   if (canEdit()) {
@@ -218,6 +264,15 @@ export function renderDrawer() {
   if (canEdit()) drawer.append(noteForm(card));
   if (canEdit() && state.can.delete) drawer.append(deleteCard(card));
   drawer.scrollTop = top;
+  // Opened by a click or by Enter on the card, the keyboard comes with it. The
+  // heading is the landing place where it does something, the close button
+  // where it does not. As with the board, this acts only while the focus is on
+  // nothing, so the render that follows the presence echo puts it back rather
+  // than leaving it on the body, and a person who has since moved it keeps it.
+  if (takeFocus === card.id) {
+    if (ours) (canEdit() ? heading : close).focus();
+    else takeFocus = 0;
+  }
 }
 
 function props(card) {
@@ -314,7 +369,7 @@ function description(card) {
     hold(false);
     const value = node.textContent.trim();
     if (value === (card.description_md || '')) { emit(); return; }
-    versioned('card.description', card, { text: value }, node, value);
+    versioned('card.description', card, { text: value });
   });
   return node;
 }
@@ -323,30 +378,38 @@ function description(card) {
 // answer is a conflict, puts the choice in the page rather than in an alert.
 // The choice is held in the state rather than hung off the node the edit was
 // typed in: by the time the refusal arrives the drawer has been drawn again
-// from the server's row and that node is no longer in the page.
+// from the server's row and that node is no longer in the page. It is held by
+// field, because a title and a description can each be waiting on one.
 function versioned(cmd, card, args) {
   send(cmd, { card: card.id, base: card.version, ...args }).catch((err) => {
     if (!(err instanceof Conflict)) { say(err.message); emit(); return; }
-    state.conflict = { card: card.id, cmd, args, detail: err.detail };
+    state.conflict[err.detail.field] = { card: card.id, cmd, args };
     emit();
   });
 }
 
 // conflictBar is the choice, drawn under the field it is about, or nothing when
-// the held conflict is about some other field or some other card.
+// nothing on this card is waiting on one for that field. What theirs reads is
+// taken from the row rather than from the refusal, because a row that moves on
+// again while somebody is deciding would otherwise be quoted as it used to be.
 function conflictBar(card, field) {
-  const held = state.conflict;
-  if (!held || held.card !== card.id || held.detail.field !== field) return null;
-  const drop = () => { state.conflict = null; emit(); };
+  const held = state.conflict[field];
+  if (!held || held.card !== card.id) return null;
+  const drop = () => { delete state.conflict[field]; emit(); };
   const bar = el('p', { class: 'notice bad' },
     'Somebody changed this while you were editing it. Theirs reads ',
-    el('span', { class: 'mono', text: held.detail.current || '(nothing)' }), '. ');
+    el('span', { class: 'mono', text: card[field] || '(nothing)' }), '. ');
   bar.append(el('button', {
     class: 'lnk', type: 'button', text: 'Keep mine',
     onclick: () => {
-      state.conflict = null;
-      send(held.cmd, { card: held.card, base: held.detail.version, ...held.args })
-        .catch((e) => say(e.message));
+      // Sent again against the row as it stands now rather than against the
+      // version the first refusal named. A row that has moved on once more
+      // would be refused a second time and the typed text lost with nothing
+      // on the screen to say so; this way the refusal comes back through here
+      // and draws the choice again.
+      drop();
+      const live = state.cards.get(held.card);
+      if (live) versioned(held.cmd, live, held.args);
     },
   }), ' ', el('button', {
     class: 'lnk plain', type: 'button', text: 'Take theirs', onclick: drop,

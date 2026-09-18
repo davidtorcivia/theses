@@ -32,11 +32,12 @@ export const state = {
   boardFilter: 'all',
   openCard: null,
   connected: false,
-  // conflict is a stale text edit the server refused: which card and field it
-  // was on, the command that would send it again, and what the server holds. It
-  // is kept here rather than beside the node the edit was typed in, because the
-  // refusal redraws the drawer and takes that node away with it.
-  conflict: null,
+  // conflict is the stale text edits the server refused, by the field each was
+  // on: the card it was on and the command that would send it again. It is kept
+  // here rather than beside the node the edit was typed in, because the refusal
+  // redraws the drawer and takes that node away with it. By field, because a
+  // title and a description can each be waiting on a choice at the same time.
+  conflict: {},
 
   // The links and files beside the board. They are fetched when the tab is
   // first opened rather than rendered into the page, because the board is what
@@ -308,8 +309,10 @@ export function apply(ev) {
       if (ev.proposition !== state.open) break;
       if (ev.action === 'delete') {
         state.cards.delete(ev.entity_id);
-        if (state.openCard === ev.entity_id) state.openCard = null;
-        if (state.conflict && state.conflict.card === ev.entity_id) state.conflict = null;
+        if (state.openCard === ev.entity_id) {
+          state.openCard = null;
+          state.conflict = {};
+        }
       } else {
         state.cards.set(now.id, now);
       }

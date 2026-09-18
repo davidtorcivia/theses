@@ -14,7 +14,9 @@ import { activate } from './keys.js';
 // wherever the person reading the board happens to be sitting.
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-const late = (due) => ISO.test(due || '') && due < today();
+// A card that is done is never late, whatever day is on it: the work it was
+// asking for has happened.
+const late = (card) => !card.done_at && ISO.test(card.due_date || '') && card.due_date < today();
 
 // The formatter is kept rather than built per card, because a full board asks
 // this once per card per render. An empty or unknown zone throws on the way in
@@ -46,7 +48,7 @@ function visible(card) {
 
 function meta(card) {
   const bits = [];
-  if (card.due_date) bits.push(el('span', { class: 'due' + (late(card.due_date) ? ' late' : ''), text: card.due_date }));
+  if (card.due_date) bits.push(el('span', { class: 'due' + (late(card) ? ' late' : ''), text: card.due_date }));
   if (card.question) bits.push(el('span', { class: 'q', text: card.question }));
   const list = card.checklist || [];
   if (list.length) bits.push(el('span', { class: 'chk', text: list.filter((i) => i.done).length + '/' + list.length }));
@@ -72,7 +74,7 @@ function cardNode(card) {
   });
   const node = el('article', {
     class: 'card' + (card.done_at ? ' done' : '') + (mine ? ' mine' : ''),
-    draggable: canEdit() ? 'true' : null, 'data-id': card.id, role: 'button',
+    draggable: canEdit() ? 'true' : null, 'data-id': card.id,
   }, who, el('div', { class: 'cb' },
     el('div', { class: 'ct', text: card.title }),
     el('div', { class: 'cm' }, meta(card), canEdit() && tick)));

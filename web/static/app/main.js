@@ -4,6 +4,7 @@ import { state, emit } from './state.js';
 import { start } from './chrome.js';
 import { renderWork } from './workspace.js';
 import { renderDrawer } from './drawer.js';
+import { openPanel } from './activity.js';
 import { beforeRender, afterRender } from './docs.js';
 
 const startTab = location.hash.slice(1);
@@ -21,6 +22,9 @@ start(() => {
 
 window.addEventListener('hashchange', () => {
   const tab = location.hash.slice(1);
+  // Activity is a panel rather than a pane, so it has no tab of its own to
+  // land on. The settings page links here and names it in the hash.
+  if (tab === 'activity') { openPanel(); return; }
   state.tab = ['links', 'files'].includes(tab) ? tab : 'board';
   emit();
 });

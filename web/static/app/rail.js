@@ -35,7 +35,6 @@ function entry(p) {
   const li = el('li', {
     class: 'ws' + (p.archived_at ? ' arch' : '') + (p.id === state.open ? ' on' : ''),
     'data-n': p.id, 'data-status': p.status, draggable: p.archived_at ? null : 'true',
-    role: 'button',
   }, el('span', { class: 'no', text: num(p.number) }), title);
 
   if (state.can.edit) {
