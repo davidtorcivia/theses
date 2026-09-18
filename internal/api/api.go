@@ -206,6 +206,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})
+	a.notificationRoutes(mux)
 	return a.Authenticate(mux)
 }
 

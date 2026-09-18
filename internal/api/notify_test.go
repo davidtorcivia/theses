@@ -1,0 +1,127 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/notify"
+)
+
+func TestNotificationsNeedTheirScopes(t *testing.T) {
+	h := newHarness(t)
+	read := h.token(auth.ScopeRead)
+	if w := h.do("PUT", "/api/v1/me/notifications", read, `{"rules":{}}`); w.Code != http.StatusForbidden {
+		t.Errorf("a read token wrote the matrix: %d", w.Code)
+	}
+	if w := h.do("POST", "/api/v1/me/notifications/test", read, `{"channel":1}`); w.Code != http.StatusForbidden {
+		t.Errorf("a read token tested a channel: %d", w.Code)
+	}
+	if w := h.do("GET", "/api/v1/me/notifications", h.token(auth.ScopeWrite), ""); w.Code != http.StatusForbidden {
+		t.Errorf("a write only token read the matrix: %d", w.Code)
+	}
+}
+
+func TestNotificationsRoundTripWithoutSecrets(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+
+	w := h.do("PUT", "/api/v1/me/notifications", token,
+		`{"channels":[{"kind":"ntfy","topic":"alerts","token":"tk_secret","quiet_from":"23:00","quiet_to":"07:00"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "tk_secret") {
+		t.Fatalf("the answer carries the token: %s", w.Body)
+	}
+	var view notificationsView
+	into(t, w, &view)
+	if len(view.Channels) != 1 || view.Channels[0].Topic != "alerts" || !view.Channels[0].TokenSet {
+		t.Fatalf("channels = %+v", view.Channels)
+	}
+	if view.Channels[0].Verified {
+		t.Error("a channel created through the API is verified before anything reached it")
+	}
+	if len(view.Events) != len(notify.Events) {
+		t.Errorf("events = %d, want the whole matrix", len(view.Events))
+	}
+	id := view.Channels[0].ID
+
+	// The matrix, and an event nobody can tick.
+	w = h.do("PUT", "/api/v1/me/notifications", token,
+		`{"rules":{"mentioned":[`+strconv.FormatInt(id, 10)+`]}}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("saving rules gave %d: %s", w.Code, w.Body)
+	}
+	if w := h.do("PUT", "/api/v1/me/notifications", token,
+		`{"rules":{"nonsense":[`+strconv.FormatInt(id, 10)+`]}}`); w.Code != http.StatusBadRequest {
+		t.Errorf("an event nobody can tick gave %d", w.Code)
+	}
+
+	// A token left out keeps the stored one; an edit that moves the channel
+	// takes its verified state away.
+	if _, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{
+		ID: id, UserID: h.user.ID, Kind: notify.KindNtfy, VerifiedAt: 1,
+		Config: notify.Config{Topic: "alerts", Token: "tk_secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	w = h.do("PUT", "/api/v1/me/notifications", token,
+		`{"channels":[{"id":`+strconv.FormatInt(id, 10)+`,"kind":"ntfy","topic":"alerts"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+	}
+	back, err := notify.GetChannel(ctx, h.db, h.set, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Config.Token != "tk_secret" {
+		t.Errorf("a token nobody sent was cleared: %+v", back.Config)
+	}
+	if !back.Verified() {
+		t.Error("a channel that did not move lost its verified state")
+	}
+
+	w = h.do("PUT", "/api/v1/me/notifications", token,
+		`{"channels":[{"id":`+strconv.FormatInt(id, 10)+`,"kind":"ntfy","topic":"somewhere-else"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+	}
+	if back, _ = notify.GetChannel(ctx, h.db, h.set, id); back.Verified() {
+		t.Error("a channel that now points somewhere else is still verified")
+	}
+
+	// A list that leaves a channel out deletes it, which is what PUT means.
+	if w := h.do("PUT", "/api/v1/me/notifications", token, `{"channels":[]}`); w.Code != http.StatusOK {
+		t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+	}
+	channels, err := notify.ListChannels(ctx, h.db, h.set, h.user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 0 {
+		t.Errorf("channels = %+v, want none", channels)
+	}
+}
+
+func TestTestingSomebodyElsesChannelIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	hers, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{
+		Kind: notify.KindWebhook, Config: notify.Config{URL: "https://example.com/h"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := h.do("POST", "/api/v1/me/notifications/test", h.token(auth.ScopeWrite),
+		`{"channel":`+strconv.FormatInt(hers.ID, 10)+`}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("testing a workspace channel through a personal route gave %d", w.Code)
+	}
+	if w := h.do("POST", "/api/v1/me/notifications/test", h.token(auth.ScopeWrite),
+		`{"channel":999}`); w.Code != http.StatusNotFound {
+		t.Errorf("a channel that does not exist gave %d", w.Code)
+	}
+}
