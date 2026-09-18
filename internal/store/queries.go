@@ -286,12 +286,25 @@ func AcceptInvitation(ctx context.Context, q Querier, id int64) (bool, error) {
 }
 
 // ReissueInvitation replaces the token and expiry of a pending invitation, which
-// is what "resend" does: the old link stops working.
+// is what "resend" does: the old link stops working. It returns ErrNotFound when
+// no pending invitation has that id, because the statement is the guard as well:
+// without the check, resending an invitation that has already been accepted
+// hands out a link whose hash was never stored and which opens nothing.
 func ReissueInvitation(ctx context.Context, q Querier, id int64, tokenHash []byte, expiresAt int64) error {
-	_, err := q.ExecContext(ctx,
+	res, err := q.ExecContext(ctx,
 		`UPDATE invitations SET token_hash = ?, expires_at = ? WHERE id = ? AND accepted_at IS NULL`,
 		tokenHash, expiresAt, id)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func DeleteInvitation(ctx context.Context, q Querier, id int64) error {

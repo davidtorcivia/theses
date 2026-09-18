@@ -456,7 +456,14 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	// An invitation that has already been accepted keeps its row, and reissuing
+	// it stores nothing, so the link would open nothing. The statement reports
+	// that it changed no row and this answers as if the invitation were gone.
 	token, err := s.auth.ReissueInvitation(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		s.fail(w, r, err)
 		return

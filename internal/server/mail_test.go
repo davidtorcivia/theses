@@ -316,3 +316,43 @@ func TestRetryNowPutsUnsentRowsBackAtTheFront(t *testing.T) {
 		t.Errorf("the panel still counts it as given up:\n%s", body)
 	}
 }
+
+func TestResendingAnAcceptedInvitationIsRefused(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	h.post("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+	})
+	var id int64
+	if err := h.db.QueryRowContext(ctx, `SELECT id FROM invitations`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	// Accepted, as the enrolment step would leave it.
+	if _, err := h.db.ExecContext(ctx,
+		`UPDATE invitations SET accepted_at = unixepoch() WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `DELETE FROM mail_outbox`); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ := h.post("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("resending an accepted invitation gave %d", res.StatusCode)
+	}
+	var queued, logged int
+	if err := h.db.QueryRowContext(ctx, `SELECT count(*) FROM mail_outbox`).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM activity WHERE entity = 'invitation' AND action = 'resend'`).Scan(&logged); err != nil {
+		t.Fatal(err)
+	}
+	if queued != 0 {
+		t.Errorf("%d messages queued for a link that opens nothing", queued)
+	}
+	if logged != 0 {
+		t.Errorf("%d resend activity rows for a resend that did not happen", logged)
+	}
+}
