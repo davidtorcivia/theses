@@ -189,3 +189,23 @@ func TestIntegerSettingsAreBounded(t *testing.T) {
 		t.Errorf("a real port was refused: %v", err)
 	}
 }
+
+func TestSetAsRecordsTheActorThatIsNotAPerson(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+
+	if err := s.SetAs(ctx, "workspace.name", []string{"Debt Machine"},
+		Actor{Kind: "token", ID: "7", UserID: 0}); err != nil {
+		t.Fatal(err)
+	}
+	var kind, id string
+	if err := db.QueryRowContext(ctx,
+		`SELECT actor_kind, actor_id FROM activity WHERE entity_id = 'workspace.name'`).
+		Scan(&kind, &id); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "token" || id != "7" {
+		t.Errorf("activity actor = %s %s, want token 7", kind, id)
+	}
+}

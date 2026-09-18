@@ -147,10 +147,31 @@ func (s *Settings) IsSet(key string) bool {
 	return s.present[key]
 }
 
+// An Actor is who is making the change. Kind and ID are what the activity row
+// records: a person, an API token or an MCP client. UserID is the person the
+// settings row is attributed to, which for a token is the person it belongs to
+// and for an unattended client is zero.
+type Actor struct {
+	Kind   string
+	ID     string
+	UserID int64
+}
+
+// User is the actor for a change made by a person in the browser.
+func User(id int64) Actor {
+	return Actor{Kind: "user", ID: strconv.FormatInt(id, 10), UserID: id}
+}
+
 // Set validates values against the key's definition, stores it and writes an
 // activity row. values is the form's slice for that field: a list setting takes
 // every non-empty entry, everything else takes the first.
 func (s *Settings) Set(ctx context.Context, key string, values []string, actorID int64) error {
+	return s.SetAs(ctx, key, values, User(actorID))
+}
+
+// SetAs is Set for a change that is not a person at a form: the API and MCP
+// record the token or the client that made it.
+func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor Actor) error {
 	def, ok := Lookup(key)
 	if !ok {
 		return fmt.Errorf("settings: unknown key %s", key)
@@ -200,10 +221,10 @@ func (s *Settings) Set(ctx context.Context, key string, values []string, actorID
 		return err
 	}
 	defer tx.Rollback()
-	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actorID); err != nil {
+	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actor.UserID); err != nil {
 		return fmt.Errorf("save %s: %w", key, err)
 	}
-	if err := store.InsertActivity(ctx, tx, "user", strconv.FormatInt(actorID, 10),
+	if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID,
 		"setting", key, "set", before, after); err != nil {
 		return err
 	}

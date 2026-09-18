@@ -12,6 +12,7 @@ const (
 	BucketLogin  = "login"
 	BucketReset  = "reset"
 	BucketInvite = "invite"
+	BucketAPI    = "api"
 )
 
 type limit struct {
@@ -23,6 +24,9 @@ var limitsByBucket = map[string]limit{
 	BucketLogin:  {n: 10, window: 5 * time.Minute},
 	BucketReset:  {n: 5, window: time.Hour},
 	BucketInvite: {n: 20, window: time.Hour},
+	// One token, a few requests a second: enough for an agent working through a
+	// document, low enough that a loop cannot hold the one writer connection.
+	BucketAPI: {n: 300, window: time.Minute},
 }
 
 // longestWindow is how old a key's newest attempt has to be before no bucket
