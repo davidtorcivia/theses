@@ -21,7 +21,7 @@ route says which scope it needs; a token without it is refused.
 | 401 | no `Authorization: Bearer` header, or the token is unknown or revoked |
 | 403 | the token is valid but does not have the scope the route needs |
 | 404 | no such endpoint, or no such settings key |
-| 413 | the request body is over 64 KiB |
+| 413 | the request body is over 64 KiB, which `/api/v1` and `/mcp` both allow |
 | 429 | over 300 requests a minute for one token |
 | 500 | a fault on the server; the detail is in its log, not in the response |
 
@@ -59,10 +59,16 @@ Scope `read`. Full text search over cards, document blocks, links, files and
 comments, plus propositions and people matched by name. `limit` is per kind,
 10 by default and 50 at most.
 
-Anything in `q` that is not a letter or a digit is punctuation to match, not
-syntax: quotation marks, asterisks, `NEAR`, `AND`, `OR` and `NOT` are searched
-for as words. The last word is treated as a prefix, so `deb` finds `debt`. A
-query with no letter or digit in it returns no groups.
+`q` is cut into words at every character that is not a letter or a digit, and
+each word is matched as written. Punctuation is therefore dropped from the full
+text query rather than parsed as syntax: quotation marks, asterisks, colons,
+carets and parentheses do not reach FTS5, and `NEAR`, `AND`, `OR` and `NOT` are
+searched for as ordinary words. The last word is matched as a prefix, so `deb`
+finds `debt`.
+
+Propositions and people are not searched that way: they are matched on `q` as
+typed, punctuation and all, anywhere inside the title or the name. A `q` with no
+letter or digit in it returns no groups at all.
 
 ```json
 {
@@ -144,7 +150,10 @@ A write is recorded in the activity log as the person the token belongs to.
 
 `/mcp` is a streamable HTTP MCP endpoint. It takes the same
 `Authorization: Bearer` header and the same scopes, and it is stateless: every
-POST is authenticated on its own.
+POST is authenticated on its own. Only POST is served; GET and DELETE are 405. A
+POST body over 64 KiB is refused with 413, as on `/api/v1`. A token that the
+tool's scope does not cover is a tool error rather than an HTTP status, since
+one endpoint serves every tool.
 
 | Tool | Scope | What it does |
 | --- | --- | --- |
