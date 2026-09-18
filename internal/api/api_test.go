@@ -389,3 +389,18 @@ func TestUnknownEndpointIsJSON(t *testing.T) {
 		t.Errorf("body = %s", w.Body.String())
 	}
 }
+
+func TestATokenIsRateLimited(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead)
+	var last *httptest.ResponseRecorder
+	for range 301 {
+		last = h.do("GET", "/api/v1/me", token, "")
+	}
+	if last.Code != http.StatusTooManyRequests {
+		t.Errorf("status %d after 301 requests, want 429", last.Code)
+	}
+	if decode(t, last)["error"] == nil {
+		t.Errorf("body = %s", last.Body.String())
+	}
+}

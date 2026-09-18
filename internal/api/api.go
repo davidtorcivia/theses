@@ -123,6 +123,10 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 			a.failed(w, r, err)
 			return
 		}
+		// ponytail: the limit is keyed by token id, which needs the lookup, and
+		// the lookup records the use, so a token that floods still costs one
+		// write each time. Upgrade path: split APIToken into a lookup and a
+		// touch, and touch after this passes.
 		if !a.auth.Allow(auth.BucketAPI, "token:"+strconv.FormatInt(token.ID, 10)) {
 			fail(w, http.StatusTooManyRequests, "too many requests for this token; wait a minute")
 			return

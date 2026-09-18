@@ -100,10 +100,11 @@ with the last id you were given.
 ```
 
 `actor_kind` is `user` or `system`, and `actor_id` is the user id. What a token
-does is done by the person the token belongs to, so an API or MCP change is
-recorded as theirs, with the token name or the client name naming what carried
-it. `before` and `after` are the JSON of the entity before and after the change,
-and are absent when there was none.
+does is done by the person the token belongs to, so a change made through this
+API or through MCP is recorded as theirs. A `via` field naming the token or the
+MCP client that carried it will be added to these rows. `before` and `after` are
+the JSON of the entity before and after the change, and are absent when there
+was none.
 
 ## `GET /api/v1/settings`
 
@@ -137,8 +138,7 @@ PUT /api/v1/settings/signin.session_days
 {"value": 7}
 ```
 
-A write is recorded in the activity log as the person the token belongs to, with
-the token naming what carried it.
+A write is recorded in the activity log as the person the token belongs to.
 
 ## MCP
 
@@ -158,4 +158,4 @@ Resource `theses://workspace` describes the workspace: its name, time zone, how
 many people and propositions it holds, and what this endpoint can do.
 
 A write through MCP is recorded in the activity log as the person the token
-belongs to, with the MCP client naming what carried it.
+belongs to.
