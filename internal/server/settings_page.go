@@ -188,7 +188,7 @@ func (s *Server) envRows() []envRow {
 		{"THESES_BASE_URL", s.cfg.BaseURL, "Links in mail and the Secure flag on cookies depend on it, so it has to be right before the first sign-in."},
 		{"THESES_SECRET_KEY", set(len(s.cfg.SecretKey) > 0), "It encrypts the secrets on this page, so it cannot be one of them."},
 		{"THESES_SESSION_KEY", set(len(s.cfg.SessionKey) > 0), "It signs the cookie that says you are allowed to see this page."},
-		{"THESES_TRUST_PROXY", strconv.FormatBool(s.cfg.TrustProxy), "Whether a forwarded address is believed is a deployment fact, not a preference."},
+		{"THESES_TRUST_PROXY", strconv.FormatBool(s.cfg.TrustProxy), "Whether the address a proxy forwards is believed depends on there being a proxy, which is a deployment fact rather than a preference."},
 		{"THESES_DEV", strconv.FormatBool(s.cfg.Dev), "Templates and static files are read from disk rather than the binary."},
 		{"THESES_LOG_LEVEL", s.cfg.LogLevel.String(), "Logging starts before the database does."},
 	}
