@@ -60,12 +60,28 @@ var ErrNotConnected = errors.New("that integration is not connected yet; a works
 // pressing Connect again, not a retry.
 var ErrReconnect = errors.New("the connection to that service has expired; a workspace owner has to connect it again")
 
-// ErrProvider marks a refusal that came from the other end rather than from a
-// fault on this side: a status outside 2xx, or a file this cannot copy. The
-// message beside it is worth showing, and none of it means the server broke,
-// so a caller mapping errors to statuses answers it as a refusal rather than
-// logging it and returning a 500.
+// ErrProvider marks anything that went wrong at the other end rather than in
+// this server: a status outside 2xx, an answer that will not parse, a service
+// that cannot be reached, and a file this cannot copy. None of it means this
+// side broke, and all of it is worth reading, so a caller mapping errors to
+// statuses answers it as a refusal carrying its message rather than logging it
+// and returning a 500. It is never returned on its own; it is what the errors
+// below unwrap to.
 var ErrProvider = errors.New("that service refused it")
+
+// providerError is one of those messages. It is a type rather than a wrap of
+// ErrProvider because a wrap would put "that service refused it: " in front of
+// every one of them, and most are a plain sentence that reads better alone.
+// errors.Is still matches, because Unwrap says so.
+type providerError struct{ msg string }
+
+func (e providerError) Error() string { return e.msg }
+func (e providerError) Unwrap() error { return ErrProvider }
+
+// provider tags a message as the other end's.
+func provider(format string, args ...any) error {
+	return providerError{msg: fmt.Sprintf(format, args...)}
+}
 
 // maxImport is the largest object an import may stream. It is the S3 limit on
 // a single PutObject, which is what the import writes with.
@@ -109,9 +125,9 @@ func failure(name string, resp *http.Response) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	if said := reason(body); said != "" {
-		return fmt.Errorf("%w: %s said %s: %s", ErrProvider, name, resp.Status, said)
+		return provider("%s said %s: %s", name, resp.Status, said)
 	}
-	return fmt.Errorf("%w: %s said %s", ErrProvider, name, resp.Status)
+	return provider("%s said %s", name, resp.Status)
 }
 
 // reason digs the message out of the two error shapes these two APIs use:

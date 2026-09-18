@@ -311,17 +311,27 @@ func TestDriveStatRefusesWhatCannotBeImported(t *testing.T) {
 	d := g.drive(t, Settings{"client_id": "id", "client_secret": "secret",
 		"token": `{"access_token":"access-1","refresh_token":"refresh-1","expires_at":99999999999}`})
 
-	if _, err := d.Stat(context.Background(), "n1"); err == nil ||
-		!strings.Contains(err.Error(), "export it") {
-		t.Fatalf("a native Google file gave %v", err)
+	// Each is the whole message, because the message is what somebody reads:
+	// the tag that marks it as the other end's must not print in front of it.
+	cases := []struct{ name, id, says string }{
+		{"a native Google file", "n1",
+			"a Google Docs, Sheets or Slides file has no file to copy; export it to the format you want first"},
+		{"an empty file", "gone", "that file is empty"},
+		{"one Drive does not have", "missing", "Drive said 404 Not Found: File not found."},
 	}
-	if _, err := d.Stat(context.Background(), "gone"); err == nil ||
-		!strings.Contains(err.Error(), "empty") {
-		t.Fatalf("an empty file gave %v", err)
-	}
-	if _, err := d.Stat(context.Background(), "missing"); err == nil ||
-		!strings.Contains(err.Error(), "File not found") {
-		t.Fatalf("a missing file gave %v", err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := d.Stat(context.Background(), c.id)
+			if err == nil {
+				t.Fatal("it was allowed")
+			}
+			if err.Error() != c.says {
+				t.Fatalf("said %q, want %q", err, c.says)
+			}
+			if !errors.Is(err, ErrProvider) {
+				t.Fatal("it is not marked as the other end's")
+			}
+		})
 	}
 }
 
@@ -361,7 +371,13 @@ func TestDriveWithoutATokenSaysSo(t *testing.T) {
 	if _, err := d.List(context.Background(), "", ""); !errors.Is(err, ErrNotConnected) {
 		t.Fatalf("a listing with no token gave %v", err)
 	}
-	if err := d.Configure(Settings{"client_id": "id", "token": "not json"}); err == nil {
-		t.Fatal("a token that will not parse was accepted")
+	// A stored token that will not parse is the same dead end as a refresh
+	// token Google has stopped honouring, and says the same thing.
+	err := d.Configure(Settings{"client_id": "id", "token": "not json"})
+	if !errors.Is(err, ErrReconnect) {
+		t.Fatalf("a token that will not parse gave %v", err)
+	}
+	if err.Error() != ErrReconnect.Error() {
+		t.Fatalf("it said %q, which is more than the person needs", err)
 	}
 }

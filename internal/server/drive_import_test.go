@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +17,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/integrations"
+	"github.com/davidtorcivia/theses/internal/safehttp"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -295,6 +295,28 @@ func TestDriveRoutesCheckStandingBeforeAskingDrive(t *testing.T) {
 	}
 }
 
+// driveSaid is an error tagged the way integrations tags one that came from
+// the other end, made the way the package makes it rather than by hand.
+func driveSaid(t *testing.T, want string) error {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"error":{"message":"`+want+`"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	d := &integrations.Drive{HTTP: safehttp.Client(safehttp.AllowLoopback()),
+		Auth: srv.URL, TokenURL: srv.URL, API: srv.URL}
+	if err := d.Configure(integrations.Settings{"client_id": "id", "client_secret": "s",
+		"token": `{"access_token":"a","refresh_token":"r","expires_at":99999999999}`}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := d.List(t.Context(), "", "")
+	if err == nil {
+		t.Fatal("the fake did not refuse")
+	}
+	return err
+}
+
 // Every refusal these two routes can give, and the one answer they give to
 // something that is not a refusal at all.
 func TestDriveRefusalStatuses(t *testing.T) {
@@ -311,8 +333,8 @@ func TestDriveRefusalStatuses(t *testing.T) {
 		{"an archived proposition", board.ErrArchived, http.StatusConflict, "restore it first"},
 		{"an integration nobody connected", integrations.ErrNotConnected, http.StatusConflict, "not connected yet"},
 		{"a connection that has to be made again", integrations.ErrReconnect, http.StatusConflict, "connect it again"},
-		{"what Drive said no to", fmt.Errorf("%w: that file is empty", integrations.ErrProvider),
-			http.StatusUnprocessableEntity, "that file is empty"},
+		{"what Drive said no to", driveSaid(t, "that file is empty"),
+			http.StatusUnprocessableEntity, `{"error":"Drive said 404 Not Found: that file is empty"}`},
 		{"a file too big to import", files.ErrImportSize, http.StatusUnprocessableEntity, "1 byte"},
 		{"a folder that is not one of ours", files.ErrKind, http.StatusUnprocessableEntity, "not one of the kinds"},
 		{"storage nobody has set up", files.ErrNoBucket, http.StatusServiceUnavailable, "not set up yet"},
@@ -331,6 +353,9 @@ func TestDriveRefusalStatuses(t *testing.T) {
 			}
 			if !strings.Contains(rec.Body.String(), c.says) {
 				t.Fatalf("said %s, want %q in it", rec.Body, c.says)
+			}
+			if strings.Contains(rec.Body.String(), "that service refused it") {
+				t.Fatalf("the tag on the error printed in front of it: %s", rec.Body)
 			}
 			if c.status == http.StatusInternalServerError {
 				if strings.Contains(rec.Body.String(), "database is locked") {

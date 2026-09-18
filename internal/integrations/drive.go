@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -87,8 +88,10 @@ func (d *Drive) Configure(s Settings) error {
 		if err := json.Unmarshal([]byte(raw), &d.token); err != nil {
 			// The row is there and will not parse, which is the same dead end
 			// as a refresh token Google has stopped honouring and has the same
-			// answer: connect it again.
-			return fmt.Errorf("%w: the stored Drive token cannot be read", ErrReconnect)
+			// answer: connect it again. Why it will not parse is for whoever
+			// reads the log, not for the person being told to reconnect.
+			slog.Warn("the stored Drive token cannot be read", "err", err)
+			return ErrReconnect
 		}
 	}
 	if d.HTTP == nil {
@@ -212,7 +215,7 @@ func (d *Drive) exchange(ctx context.Context, endpoint string, form url.Values) 
 	req.Header.Set("Accept", "application/json")
 	resp, err := d.HTTP.Do(req)
 	if err != nil {
-		return Token{}, fmt.Errorf("Google could not be reached: %w", err)
+		return Token{}, provider("Google could not be reached: %v", err)
 	}
 	if resp.StatusCode/100 != 2 {
 		// invalid_grant is the one failure a retry cannot fix: the refresh
@@ -223,9 +226,9 @@ func (d *Drive) exchange(ctx context.Context, endpoint string, form url.Values) 
 			return Token{}, ErrReconnect
 		}
 		if said := reason(body); said != "" {
-			return Token{}, fmt.Errorf("Google said %s: %s", resp.Status, said)
+			return Token{}, provider("Google said %s: %s", resp.Status, said)
 		}
-		return Token{}, fmt.Errorf("Google said %s", resp.Status)
+		return Token{}, provider("Google said %s", resp.Status)
 	}
 	var answer struct {
 		Access  string `json:"access_token"`
@@ -233,10 +236,10 @@ func (d *Drive) exchange(ctx context.Context, endpoint string, form url.Values) 
 		In      int64  `json:"expires_in"`
 	}
 	if err := decode(resp, &answer); err != nil {
-		return Token{}, fmt.Errorf("Google's answer could not be read: %w", err)
+		return Token{}, provider("Google's answer could not be read: %v", err)
 	}
 	if answer.Access == "" {
-		return Token{}, fmt.Errorf("Google returned no access token")
+		return Token{}, provider("Google returned no access token")
 	}
 	return Token{
 		Access:  answer.Access,
@@ -360,13 +363,13 @@ func (d *Drive) Stat(ctx context.Context, id string) (DriveFile, error) {
 	// they carry ErrProvider and a caller answers them as refusals.
 	switch {
 	case f.Folder:
-		return DriveFile{}, fmt.Errorf("%w: that is a folder, not a file", ErrProvider)
+		return DriveFile{}, provider("that is a folder, not a file")
 	case strings.HasPrefix(f.Mime, nativePrefix):
-		return DriveFile{}, fmt.Errorf("%w: a Google Docs, Sheets or Slides file has no file to copy; export it to the format you want first", ErrProvider)
+		return DriveFile{}, provider("a Google Docs, Sheets or Slides file has no file to copy; export it to the format you want first")
 	case f.Size <= 0:
-		return DriveFile{}, fmt.Errorf("%w: that file is empty", ErrProvider)
+		return DriveFile{}, provider("that file is empty")
 	case f.Size > maxImport:
-		return DriveFile{}, fmt.Errorf("%w: that file is larger than the %d GB this can import in one piece", ErrProvider, int64(maxImport)>>30)
+		return DriveFile{}, provider("that file is larger than the %d GB this can import in one piece", int64(maxImport)>>30)
 	}
 	return f, nil
 }
@@ -388,7 +391,7 @@ func (d *Drive) Open(ctx context.Context, id string) (io.ReadCloser, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := d.HTTP.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Drive could not be reached: %w", err)
+		return nil, provider("Drive could not be reached: %v", err)
 	}
 	if resp.StatusCode/100 != 2 {
 		return nil, failure("Drive", resp)
@@ -405,13 +408,13 @@ func (d *Drive) call(ctx context.Context, token, url string, into any) error {
 	req.Header.Set("Accept", "application/json")
 	resp, err := d.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("Drive could not be reached: %w", err)
+		return provider("Drive could not be reached: %v", err)
 	}
 	if resp.StatusCode/100 != 2 {
 		return failure("Drive", resp)
 	}
 	if err := decode(resp, into); err != nil {
-		return fmt.Errorf("Drive's answer could not be read: %w", err)
+		return provider("Drive's answer could not be read: %v", err)
 	}
 	return nil
 }
