@@ -45,7 +45,10 @@ func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
 	// offering. A short body fails on the way out, and a long one is cut here
 	// rather than becoming an object that is not the size the row says.
 	if err := bucket.PutStream(ctx, row.ObjectKey, io.LimitReader(body, size), size, contentType(row.Name)); err != nil {
-		s.abandon(ctx, row)
+		// The likeliest way to get here is the browser going away mid copy,
+		// which cancels this context. Clearing up needs a live one, or the row
+		// stays at uploading with nothing behind it until the sweep.
+		s.abandon(context.WithoutCancel(ctx), row)
 		return File{}, fmt.Errorf("the file could not be written to the bucket: %w", err)
 	}
 	// The same completion a browser upload runs: the object is read back, its

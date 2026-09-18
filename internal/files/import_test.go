@@ -123,6 +123,47 @@ func TestImportLeavesNothingBehindWhenTheSourceStopsEarly(t *testing.T) {
 	}
 }
 
+// The likeliest partial failure is the person going away mid copy, which
+// cancels the context the import is running on. Clearing up still has to
+// happen, or the row sits at uploading with no object behind it.
+func TestImportLeavesNothingBehindWhenTheRequestIsCancelled(t *testing.T) {
+	f := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 64,
+		readerThatCancels(cancel, 64))
+	if err == nil {
+		t.Fatal("a cancelled copy was accepted")
+	}
+	rows, err := f.ListFiles(context.Background(), f.who["owner"], f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a cancelled import left %+v", rows)
+	}
+}
+
+// readerThatCancels hands out one byte and then pulls the context out from
+// under whoever is reading it.
+func readerThatCancels(cancel func(), n int) io.Reader {
+	first := true
+	return readerFunc(func(p []byte) (int, error) {
+		if first {
+			first = false
+			p[0] = 'x'
+			return 1, nil
+		}
+		cancel()
+		return 0, context.Canceled
+	})
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (r readerFunc) Read(p []byte) (int, error) { return r(p) }
+
 // And a source that is longer than it said is cut to the declared length, so
 // the object is always the size the row promises.
 func TestImportWritesNoMoreThanTheDeclaredSize(t *testing.T) {

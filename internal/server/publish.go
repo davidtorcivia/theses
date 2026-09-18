@@ -278,7 +278,7 @@ func (s *Server) publish(r *http.Request, p board.Proposition, chosen publishCho
 		Summary:     p.Blurb,
 		Description: notes,
 		AudioURL:    audio,
-		Number:      deref(p.Episode),
+		Number:      episodeNumber(p.Episode),
 	})
 	// The id comes back even when the publish step failed, so it is recorded
 	// either way and the next attempt updates rather than duplicates.
@@ -379,6 +379,21 @@ func (s *Server) audioURL(ctx context.Context, actor core.Actor, proposition, fi
 		return "", err
 	}
 	return bucket.PresignGet(ctx, row.ObjectKey, row.Name, publishWindow)
+}
+
+// episodeNumber is the proposition's episode field when it is a plain number,
+// which is what Transistor takes. The field is free text here, so something
+// like S2E4 is left out rather than refused by the other end and taking the
+// whole publish with it.
+func episodeNumber(episode *string) string {
+	if episode == nil {
+		return ""
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(*episode))
+	if err != nil || n <= 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
 }
 
 func number64(v string) int64 {
