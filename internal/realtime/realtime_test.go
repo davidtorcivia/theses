@@ -427,6 +427,59 @@ func TestIdleSocketIsDroppedWhenTheSessionGoes(t *testing.T) {
 	}
 }
 
+// A tab that falls behind is told so while it is still connected, not once it
+// has gone, because the frame is what sends it to the activity table to fill
+// the hole.
+func TestForwardTellsATabThatFellBehind(t *testing.T) {
+	bus := core.NewBus()
+	sub := bus.Subscribe(1)
+	defer sub.Close()
+	// More than the subscription holds, with nothing reading it yet.
+	for i := 0; i < 200; i++ {
+		bus.Publish(core.Event{Seq: int64(i + 1), Proposition: 1, Entity: "card", Action: "create"})
+	}
+	if sub.Dropped() == 0 {
+		t.Fatal("the subscription dropped nothing, so there is no hole to report")
+	}
+
+	c := &client{
+		user: &store.User{ID: 1}, proposition: 1, member: map[int64]bool{1: true},
+		out: make(chan []byte, 1024), done: make(chan struct{}),
+	}
+	go c.forward(sub)
+
+	var first message
+	select {
+	case raw := <-c.out:
+		if err := json.Unmarshal(raw, &first); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("nothing was forwarded")
+	}
+	if first.Type != "gap" {
+		t.Errorf("the first frame after a drop is %q, want gap", first.Type)
+	}
+}
+
+// A websocket request with no Origin header is not a browser on this site, and
+// the session cookie would otherwise be enough to open it from anywhere.
+func TestSocketRefusesARequestWithNoOrigin(t *testing.T) {
+	r := newRig(t)
+	wsURL := "ws" + strings.TrimPrefix(r.http.URL, "http") +
+		"/ws?proposition=" + strconv.FormatInt(r.prop, 10)
+	config, err := websocket.NewConfig(wsURL, r.http.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Origin = nil
+	config.Header.Set("Cookie", r.cookie["ada"])
+	if ws, err := websocket.DialConfig(config); err == nil {
+		ws.Close()
+		t.Error("a request with no origin opened a socket")
+	}
+}
+
 // The fallback reads the same stream out of the activity table.
 func TestLongPollServesTheSameStream(t *testing.T) {
 	ctx := context.Background()

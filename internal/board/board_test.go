@@ -581,3 +581,46 @@ func TestUndoRefusesARowThatHasMovedOn(t *testing.T) {
 		t.Errorf("undoing an assignment gave %v, want ErrNotUndoable", err)
 	}
 }
+
+// The sequence number a board is handed with has to stand for the rows that
+// came with it, not for a later moment, or a change that lands between the two
+// reads is never replayed by the catch up.
+func TestLoadReadsTheSequenceNumberBeforeTheRows(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	first := f.mustCard(t, f.cols[0].ID, "Call the engineer")
+
+	before, err := Load(ctx, f.db, f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := f.CreateCard(ctx, f.who["editor"], f.cols[0].ID, "Draft the opening", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Load(ctx, f.db, f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Whatever a board holds, the stream from its sequence number carries
+	// everything the board does not already have.
+	for _, b := range []Board{before, after} {
+		events, err := f.Since(ctx, f.prop, b.Seq, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		have := map[int64]bool{}
+		for _, c := range b.Cards {
+			have[c.ID] = true
+		}
+		for _, e := range events {
+			if e.Entity == "card" {
+				have[e.EntityID] = true
+			}
+		}
+		if !have[first.ID] || !have[second.EntityID] {
+			t.Errorf("a board at seq %d plus its stream is missing a card: %v", b.Seq, have)
+		}
+	}
+}

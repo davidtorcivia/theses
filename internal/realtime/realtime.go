@@ -132,7 +132,10 @@ func (h *Hub) handshake(config *websocket.Config, r *http.Request) error {
 		return err
 	}
 	config.Origin = origin
-	if origin != nil && origin.Host != r.Host {
+	if origin == nil {
+		return errors.New("no origin")
+	}
+	if origin.Host != r.Host {
 		return fmt.Errorf("origin %s is not %s", origin.Host, r.Host)
 	}
 	user, err := h.auth.SessionUser(r.Context(), r)
@@ -183,19 +186,7 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	// the filter below decides what this tab is entitled to see.
 	sub := h.board.Bus.Subscribe(0)
 	defer sub.Close()
-	go func() {
-		for e := range sub.C {
-			c.membership(e)
-			if c.wants(e) {
-				c.send(message{Type: "event", Event: &e})
-			}
-		}
-		// The bus dropped events on the way here, which means this tab's view
-		// has a hole in it and it is told to fill it from the activity table.
-		if sub.Dropped() > 0 {
-			c.send(message{Type: "gap"})
-		}
-	}()
+	go c.forward(sub)
 
 	h.join(c)
 	defer h.leave(c)
@@ -229,6 +220,23 @@ func (c *client) wants(e core.Event) bool {
 		return false
 	}
 	return c.canRead(e.Proposition)
+}
+
+// forward carries the bus to one tab. A drop means this tab's view has a hole
+// in it, and it is told so there and then: at teardown the socket is already
+// gone and the frame goes nowhere.
+func (c *client) forward(sub *core.Subscription) {
+	var dropped int64
+	for e := range sub.C {
+		if d := sub.Dropped(); d > dropped {
+			dropped = d
+			c.send(message{Type: "gap"})
+		}
+		c.membership(e)
+		if c.wants(e) {
+			c.send(message{Type: "event", Event: &e})
+		}
+	}
 }
 
 // membership keeps the set of propositions this tab may read in step with the
@@ -409,6 +417,11 @@ func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
 	}
 	since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 
+	// Subscribing before the query, not after it, so an event that lands while
+	// the query runs is waiting rather than missed.
+	sub := h.board.Bus.Subscribe(proposition)
+	defer sub.Close()
+
 	events, err := h.board.Since(ctx, proposition, since, 200)
 	if err != nil {
 		http.Error(w, "unavailable", http.StatusInternalServerError)
@@ -418,8 +431,6 @@ func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
 		// Nothing yet, so hold the request open until something happens or the
 		// browser would give up on it anyway. A tab catching up after a
 		// reconnect asks with wait=0 and takes the empty answer.
-		sub := h.board.Bus.Subscribe(proposition)
-		defer sub.Close()
 		timer := time.NewTimer(pollWait)
 		defer timer.Stop()
 		select {

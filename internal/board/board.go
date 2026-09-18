@@ -276,6 +276,17 @@ func GetCard(ctx context.Context, q store.Querier, id int64) (Card, error) {
 // rendered with and the state the websocket then keeps up to date.
 func Load(ctx context.Context, q store.Querier, proposition int64) (Board, error) {
 	b := Board{Proposition: proposition, Cards: []Card{}}
+	// The sequence number is read before the rows it stands for, not after. A
+	// change that lands in between is then replayed by the catch up rather
+	// than skipped by it, and replaying one costs nothing: every event carries
+	// the whole row.
+	var seq sql.NullInt64
+	if err := q.QueryRowContext(ctx,
+		`SELECT max(id) FROM activity WHERE proposition_id = ?`, proposition).Scan(&seq); err != nil {
+		return b, err
+	}
+	b.Seq = seq.Int64
+
 	cols, err := ListColumns(ctx, q, proposition)
 	if err != nil {
 		return b, err
@@ -307,13 +318,6 @@ func Load(ctx context.Context, q store.Querier, proposition int64) (Board, error
 	if err := fillCards(ctx, q, where, proposition, byID); err != nil {
 		return b, err
 	}
-
-	var seq sql.NullInt64
-	if err := q.QueryRowContext(ctx,
-		`SELECT max(id) FROM activity WHERE proposition_id = ?`, proposition).Scan(&seq); err != nil {
-		return b, err
-	}
-	b.Seq = seq.Int64
 	return b, nil
 }
 
