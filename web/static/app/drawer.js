@@ -2,18 +2,19 @@
 // checklist and the activity with its notes. Everything in it is a command, and
 // the two text fields carry the version they started from.
 
-import { $, el, clear, add, initials, inline, say, editable } from './dom.js';
+import { $, el, clear, add, initials, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit, material } from './state.js';
 import { send, where, Conflict } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { renderLinkDrawer, attachedLinks, host } from './links.js';
 import { renderFileDrawer, attachedFiles, bytes } from './files.js';
 import { renderPanel, closePanel } from './activity.js';
+import { activate } from './keys.js';
 import * as api from './api.js';
 
 export function closeDrawer() {
   closePanel();
-  state.openCard = state.openLink = state.openFile = null;
+  state.openCard = state.openLink = state.openFile = state.conflict = null;
   $('#drawer').hidden = true;
   document.body.classList.remove('has-drawer');
   where('');
@@ -23,6 +24,7 @@ export function closeDrawer() {
 export function openCard(id) {
   if (state.openCard !== id) {
     state.openCard = id;
+    state.conflict = null;
     where('card:' + id);
   }
   state.openLink = state.openFile = null;
@@ -121,6 +123,26 @@ function attachDialog(card) {
 
 const rendered = (text) => inline(text, byHandle);
 
+// DAY is the shape the board this came from wrote, a day and a month with the
+// year optional.
+const DAY = /^(\d{1,2} [A-Za-z]{3,9}|[A-Za-z]{3,9} \d{1,2})( \d{4})?$/;
+
+// isoDay is what goes into the due field. The card shows an ISO day and the
+// placeholder asks for one, but somebody who types "24 Sep" means this year.
+// Anything else is sent as typed: the column holds a line of text, and refusing
+// a person's own words here would be the wrong place to do it.
+function isoDay(typed) {
+  const value = typed.trim().replace(/\s+/g, ' ');
+  if (!value || /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  // Only the shape the old board wrote is read. The browser's own parser will
+  // find a year in anything at all and answer the first of January with it.
+  if (!DAY.test(value)) return value;
+  const when = new Date(/\d{4}$/.test(value) ? value : value + ' ' + new Date().getFullYear());
+  if (Number.isNaN(when.getTime())) return value;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}`;
+}
+
 export function renderDrawer() {
   const drawer = $('#drawer');
   const card = state.cards.get(state.openCard);
@@ -165,21 +187,25 @@ export function renderDrawer() {
 
   const heading = el('h2', { text: card.title, spellcheck: 'false' });
   if (canEdit()) {
-    heading.addEventListener('click', () => {
+    const edit = () => {
       if (heading.isContentEditable) return;
       hold(true);
       editable(heading, card.title, (value) => {
         hold(false);
         if (!value || value === card.title) { emit(); return; }
-        versioned('card.title', card, { title: value }, heading, card.title);
+        versioned('card.title', card, { title: value });
       });
-    });
+    };
+    heading.addEventListener('click', edit);
+    activate(heading, edit);
   }
   drawer.append(heading);
+  add(drawer, [conflictBar(card, 'title')]);
   drawer.append(props(card));
 
   drawer.append(el('h4', { text: 'Description' }));
   drawer.append(description(card));
+  add(drawer, [conflictBar(card, 'description_md')]);
 
   drawer.append(el('h4', { text: 'Checklist' }));
   drawer.append(checklist(card));
@@ -190,6 +216,7 @@ export function renderDrawer() {
   drawer.append(el('h4', { text: 'Activity' }));
   drawer.append(activity(card));
   if (canEdit()) drawer.append(noteForm(card));
+  if (canEdit() && state.can.delete) drawer.append(deleteCard(card));
   drawer.scrollTop = top;
 }
 
@@ -218,7 +245,7 @@ function props(card) {
     card.due_date ? document.createTextNode(card.due_date) : el('span', { class: 'dim', text: 'set a date' }));
   due.addEventListener('click', () => {
     if (!canEdit()) return;
-    const field = el('input', { class: 'inline', value: card.due_date || '', placeholder: 'e.g. 24 Sep' });
+    const field = el('input', { class: 'inline', value: card.due_date || '', placeholder: 'YYYY-MM-DD' });
     due.replaceWith(field);
     hold(true);
     field.focus();
@@ -228,7 +255,7 @@ function props(card) {
       done = true;
       hold(false);
       if (!save) { emit(); return; }
-      send('card.due', { card: card.id, due: field.value.trim() }).catch((e) => say(e.message));
+      send('card.due', { card: card.id, due: isoDay(field.value) }).catch((e) => say(e.message));
     };
     field.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') finish(true);
@@ -294,27 +321,53 @@ function description(card) {
 
 // versioned sends a text edit with the version it started from and, when the
 // answer is a conflict, puts the choice in the page rather than in an alert.
-function versioned(cmd, card, args, anchor, mine) {
+// The choice is held in the state rather than hung off the node the edit was
+// typed in: by the time the refusal arrives the drawer has been drawn again
+// from the server's row and that node is no longer in the page.
+function versioned(cmd, card, args) {
   send(cmd, { card: card.id, base: card.version, ...args }).catch((err) => {
     if (!(err instanceof Conflict)) { say(err.message); emit(); return; }
-    anchor.after(conflictBar(err.detail, () => {
-      send(cmd, { card: card.id, base: err.detail.version, ...args }).catch((e) => say(e.message));
-    }));
+    state.conflict = { card: card.id, cmd, args, detail: err.detail };
+    emit();
   });
 }
 
-function conflictBar(detail, keepMine) {
+// conflictBar is the choice, drawn under the field it is about, or nothing when
+// the held conflict is about some other field or some other card.
+function conflictBar(card, field) {
+  const held = state.conflict;
+  if (!held || held.card !== card.id || held.detail.field !== field) return null;
+  const drop = () => { state.conflict = null; emit(); };
   const bar = el('p', { class: 'notice bad' },
     'Somebody changed this while you were editing it. Theirs reads ',
-    el('span', { class: 'mono', text: detail.current || '(nothing)' }), '. ');
+    el('span', { class: 'mono', text: held.detail.current || '(nothing)' }), '. ');
   bar.append(el('button', {
     class: 'lnk', type: 'button', text: 'Keep mine',
-    onclick: () => { bar.remove(); keepMine(); },
+    onclick: () => {
+      state.conflict = null;
+      send(held.cmd, { card: held.card, base: held.detail.version, ...held.args })
+        .catch((e) => say(e.message));
+    },
   }), ' ', el('button', {
-    class: 'lnk plain', type: 'button', text: 'Take theirs',
-    onclick: () => { bar.remove(); emit(); },
+    class: 'lnk plain', type: 'button', text: 'Take theirs', onclick: drop,
   }));
   return bar;
+}
+
+// deleteCard is the one thing the drawer could not do that the API always
+// could. A researcher may not delete, so they are not offered it.
+function deleteCard(card) {
+  return el('div', { class: 'cf danger' }, el('button', {
+    class: 'lnk del', type: 'button', text: 'Delete this card',
+    onclick: () => ask(`Delete ${card.title}?`,
+      'Its checklist, its notes and what is attached to it go with it. The record of the deletion stays in activity.',
+      'Delete permanently').then((yes) => {
+      if (!yes) return;
+      send('card.delete', { card: card.id })
+        .then(() => closeDrawer())
+        .catch((err) => say(err.message));
+    }),
+  }));
 }
 
 function checklist(card) {

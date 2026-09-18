@@ -9,6 +9,11 @@ import { renderDocument } from './docs.js';
 import { renderLinks } from './links.js';
 import { renderFiles } from './files.js';
 import { openPanel, outstanding } from './activity.js';
+import { activate } from './keys.js';
+
+// Activity is a panel rather than a pane, so it has no tab of its own to land
+// on. The settings page's Activity tab links here and names it in the hash.
+if (location.hash === '#activity') openPanel();
 
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
@@ -16,17 +21,25 @@ export function renderWork() {
   const work = clear($('#work'));
   const p = open();
   if (!p) {
-    work.append(el('p', {
-      class: 'empty',
-      text: state.fromCache
-        ? 'Nothing of this proposition is on this device. It will be here when the connection is back.'
-        : 'Nothing here yet.',
-    }));
+    work.append(el('p', { class: 'empty', text: nothing() }));
     return;
   }
   document.title = `${num(p.number)} ${p.title} · THESES`;
   work.append(head(p));
   work.append(pane(p));
+}
+
+// nothing is the line an empty work area carries. A proposition is per
+// membership, so an account that is on none opens a workspace with nothing in
+// it and used to be told only that there was nothing. Now it is told why.
+function nothing() {
+  if (state.fromCache) {
+    return 'Nothing of this proposition is on this device. It will be here when the connection is back.';
+  }
+  if (!state.props.length && user(state.me).role !== 'owner') {
+    return "You are not on any proposition yet. An owner adds you from a proposition's settings.";
+  }
+  return 'Nothing here yet.';
 }
 
 function head(p) {
@@ -77,7 +90,7 @@ function schedule(p) {
 }
 
 function editOnClick(node, read, save) {
-  node.addEventListener('click', () => {
+  const edit = () => {
     if (node.isContentEditable) return;
     hold(true);
     editable(node, read(), (value) => {
@@ -85,7 +98,9 @@ function editOnClick(node, read, save) {
       if (value === null || value === read()) { emit(); return; }
       save(value).catch((err) => { say(err.message); emit(); });
     });
-  });
+  };
+  node.addEventListener('click', edit);
+  activate(node, edit);
 }
 
 function pane(p) {

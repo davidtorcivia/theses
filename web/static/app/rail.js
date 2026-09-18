@@ -4,6 +4,7 @@
 import { $, $$, el, clear, num, ask, say, editable } from './dom.js';
 import { state, emit, hold } from './state.js';
 import { send } from './net.js';
+import { activate } from './keys.js';
 
 function groups() {
   const statuses = state.statuses;
@@ -34,6 +35,7 @@ function entry(p) {
   const li = el('li', {
     class: 'ws' + (p.archived_at ? ' arch' : '') + (p.id === state.open ? ' on' : ''),
     'data-n': p.id, 'data-status': p.status, draggable: p.archived_at ? null : 'true',
+    role: 'button',
   }, el('span', { class: 'no', text: num(p.number) }), title);
 
   if (state.can.edit) {
@@ -61,6 +63,7 @@ function entry(p) {
     if (e.target.closest('.menu') || e.target.closest('.more') || title.isContentEditable) return;
     go(p.id);
   });
+  activate(li, () => { if (!title.isContentEditable) go(p.id); });
   if (!p.archived_at) {
     li.addEventListener('dragstart', (e) => {
       li.classList.add('dragging');

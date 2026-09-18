@@ -32,9 +32,13 @@ type person struct {
 // shell is the state the page is rendered with. Everything after it arrives on
 // the websocket, and the same shape comes back from a reload.
 type shell struct {
-	Me             int64               `json:"me"`
-	Users          []person            `json:"users"`
-	Workspace      string              `json:"workspace"`
+	Me        int64    `json:"me"`
+	Users     []person `json:"users"`
+	Workspace string   `json:"workspace"`
+	// Timezone is the workspace's IANA name. A due date is a calendar day, so
+	// whether it has passed is a question about the show's day rather than
+	// about the day on whatever laptop is reading the board.
+	Timezone       string              `json:"timezone"`
 	Statuses       []string            `json:"statuses"`
 	Questions      []string            `json:"questions"`
 	QuestionLabels []string            `json:"question_labels"`
@@ -117,6 +121,7 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 		Me:             me.ID,
 		Users:          make([]person, 0, len(users)),
 		Workspace:      settings.Get[string](s.settings, "workspace.name"),
+		Timezone:       settings.Get[string](s.settings, "workspace.timezone"),
 		Statuses:       settings.Get[[]string](s.settings, "defaults.statuses"),
 		Questions:      board.Questions,
 		QuestionLabels: settings.Get[[]string](s.settings, "defaults.question_labels"),
