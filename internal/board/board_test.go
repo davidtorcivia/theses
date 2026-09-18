@@ -213,6 +213,17 @@ func TestUndoPutsTheTitleBackAndOnlyOnce(t *testing.T) {
 	if _, err := f.Undo(ctx, f.who["editor"], create); !errors.Is(err, core.ErrNotUndoable) {
 		t.Errorf("a card creation was undone: %v", err)
 	}
+
+	// Nor is deleting one: the row is gone, and putting it back would give it a
+	// new id. Only a delete that leaves the row behind as a tombstone, which is
+	// what a document block does, can be undone.
+	deleted, err := f.DeleteCard(ctx, f.who["editor"], card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], deleted.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Errorf("a card deletion was undone: %v", err)
+	}
 }
 
 // Moving a card anywhere in the board leaves every column in a strict order,
