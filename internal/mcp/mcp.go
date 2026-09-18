@@ -92,8 +92,10 @@ func principal(ctx context.Context, scope string) (api.Principal, error) {
 	if !ok {
 		return api.Principal{}, errors.New("this connection is not authenticated")
 	}
-	if scope != "" && !auth.HasScope(p.Token.Scopes, scope) {
-		return api.Principal{}, fmt.Errorf("this token does not have the %s scope", scope)
+	if scope != "" {
+		if why := p.Deny(scope); why != "" {
+			return api.Principal{}, errors.New(why)
+		}
 	}
 	return p, nil
 }

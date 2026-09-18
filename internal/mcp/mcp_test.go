@@ -287,3 +287,28 @@ func TestWorkspaceResourceDescribesTheWorkspace(t *testing.T) {
 		t.Error("a files token read the workspace resource")
 	}
 }
+
+// A token may not do what the person it belongs to may not do. The principal is
+// resolved when the transport is connected, which over stateless HTTP is once
+// per request, so the demotion here is made before connecting.
+func TestAToolCannotOutrankTheTokenOwner(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.db.ExecContext(context.Background(),
+		`UPDATE users SET role = 'guest' WHERE id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	cs := h.connect(auth.ScopeAdmin)
+	if res := h.call(cs, "set_setting",
+		setSettingArgs{Key: "workspace.name", Value: "Debt Machine"}, nil); !res.IsError {
+		t.Error("a demoted owner's token changed a setting")
+	}
+	if got := settings.Get[string](h.set, "workspace.name"); got != "We All Fall Down" {
+		t.Errorf("workspace.name = %q", got)
+	}
+	// A guest may still read, so the read tools keep working.
+	var out usersOut
+	h.call(cs, "list_users", noArgs{}, &out)
+	if len(out.Users) != 1 {
+		t.Errorf("users = %+v", out.Users)
+	}
+}

@@ -433,3 +433,44 @@ func TestActivityCarriesRowsThatAreNotJSON(t *testing.T) {
 		t.Errorf("JSON value came back as %v", after)
 	}
 }
+
+// demote changes the role in place, past the guard that keeps one owner, since
+// what is being tested is what happens to a token afterwards.
+func (h *harness) demote(role string) {
+	h.Helper()
+	if _, err := h.db.ExecContext(context.Background(),
+		`UPDATE users SET role = ? WHERE id = ?`, role, h.user.ID); err != nil {
+		h.Fatal(err)
+	}
+}
+
+func TestATokenCannotOutrankItsOwner(t *testing.T) {
+	h := newHarness(t)
+	admin := h.token(auth.ScopeAdmin)
+	if w := h.do("GET", "/api/v1/settings", admin, ""); w.Code != http.StatusOK {
+		t.Fatalf("before the demotion: %d (%s)", w.Code, w.Body.String())
+	}
+
+	h.demote("guest")
+
+	for _, target := range []string{"/api/v1/settings", "/api/v1/users"} {
+		w := h.do("GET", target, admin, "")
+		if target == "/api/v1/users" {
+			// A guest may still read, and admin implies read.
+			if w.Code != http.StatusOK {
+				t.Errorf("%s: %d (%s)", target, w.Code, w.Body.String())
+			}
+			continue
+		}
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s: %d (%s)", target, w.Code, w.Body.String())
+		}
+		if got := decode(t, w)["error"]; got != "the person this token belongs to no longer has that permission" {
+			t.Errorf("%s: error = %v", target, got)
+		}
+	}
+	w := h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Debt Machine"}`)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("a demoted owner's token wrote a setting: %d", w.Code)
+	}
+}

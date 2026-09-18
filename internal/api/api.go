@@ -56,6 +56,31 @@ func (p Principal) Actor() settings.Actor {
 // Scopes returns the token's scopes as a list, for the JSON that reports them.
 func (p Principal) Scopes() []string { return strings.Fields(p.Token.Scopes) }
 
+// capabilityFor is the standing a scope also asks of the person the token
+// belongs to. A token may not do what its owner may not do, so demoting someone
+// takes their tokens down with them on the next request.
+var capabilityFor = map[string]string{
+	auth.ScopeRead:  auth.CanRead,
+	auth.ScopeWrite: auth.CanEdit,
+	auth.ScopeFiles: auth.CanEdit,
+	auth.ScopeAdmin: auth.CanSettings,
+}
+
+// Deny says why a scope is refused, or "" when it is allowed. Both surfaces ask
+// it, so the two conditions are written once.
+func (p Principal) Deny(scope string) string {
+	if !auth.HasScope(p.Token.Scopes, scope) {
+		return "this token does not have the " + scope + " scope"
+	}
+	if !auth.Can(p.User.Role, capabilityFor[scope]) {
+		return "the person this token belongs to no longer has that permission"
+	}
+	return ""
+}
+
+// Allowed is Deny asked as a question, for a caller with nothing to say back.
+func (p Principal) Allowed(scope string) bool { return p.Deny(scope) == "" }
+
 // A MeView is the answer to who am I: the token and the person it belongs to.
 // The REST route and the MCP tool return the same one.
 type MeView struct {
@@ -149,9 +174,11 @@ func (a *API) scoped(scope string, h func(http.ResponseWriter, *http.Request, Pr
 			a.serverError(w, r, errors.New("route is not behind Authenticate"))
 			return
 		}
-		if scope != anyScope && !auth.HasScope(p.Token.Scopes, scope) {
-			a.fail(w, http.StatusForbidden, "this token does not have the "+scope+" scope")
-			return
+		if scope != anyScope {
+			if why := p.Deny(scope); why != "" {
+				a.fail(w, http.StatusForbidden, why)
+				return
+			}
 		}
 		h(w, r, p)
 	}
