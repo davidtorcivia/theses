@@ -1299,3 +1299,38 @@ func TestANewInvitationShowsItsLinkOnce(t *testing.T) {
 		t.Error("the resent link is shown again on a later load")
 	}
 }
+
+// Back after signing out used to redisplay whatever the browser had cached,
+// which for /settings is member addresses, pending invitations and the
+// environment section, and for the panels shown once is the whole point of them.
+func TestRenderedPagesAreNotCached(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	for _, p := range []string{"/", "/settings", "/profile", "/offline", "/no-such-page"} {
+		res, _ := h.get(p)
+		if got := res.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q", p, got)
+		}
+	}
+
+	// A page rendered as the answer to a POST, which is where the once-only
+	// panels live.
+	res, _ := h.post("/settings/tokens", url.Values{
+		"csrf": {h.csrf("/settings")}, "name": {"research agent"}, "scopes": {"read"},
+	})
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("a new token page: Cache-Control = %q", got)
+	}
+
+	h.signOut()
+	if res, _ := h.get("/login"); res.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("/login: Cache-Control = %q", res.Header.Get("Cache-Control"))
+	}
+
+	// Static files are content hashed and keep their own year.
+	res, _ = h.get(h.srv.assets.URL("app.css"))
+	if got := res.Header.Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Errorf("app.css: Cache-Control = %q", got)
+	}
+}

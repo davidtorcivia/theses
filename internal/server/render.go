@@ -175,6 +175,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Every page here is either private or shown once. Without this, Back after
+	// signing out redisplays the settings page from the browser's own cache,
+	// member addresses, pending invitations and all, and so do the panels that
+	// are meant to be readable only the once. Static files set their own header.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	io.WriteString(w, body)
 }
@@ -238,6 +243,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		body = brokenPage
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusInternalServerError)
 	io.WriteString(w, body)
 }
