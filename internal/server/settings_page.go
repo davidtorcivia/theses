@@ -276,7 +276,7 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
-	_, err := s.auth.CreateInvitation(r.Context(), email, r.PostFormValue("role"), userOf(r).ID)
+	token, err := s.auth.CreateInvitation(r.Context(), email, r.PostFormValue("role"), userOf(r).ID)
 	if err != nil {
 		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
@@ -286,7 +286,9 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logInvite(email)
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	// Rendered rather than redirected, for the same reason as a new API token:
+	// this is the only time the link exists anywhere it can be read from.
+	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewInvite": s.inviteURL(token)})
 }
 
 func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
@@ -295,7 +297,7 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
 	}
-	_, err = s.auth.ReissueInvitation(r.Context(), id)
+	token, err := s.auth.ReissueInvitation(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -305,7 +307,7 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logInvite("invitation " + itoa(id))
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewInvite": s.inviteURL(token)})
 }
 
 func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
@@ -323,9 +325,11 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
 }
 
-// ponytail: the invitation row is written but nothing sends it until
-// internal/mail lands. The link is deliberately not logged, because anything
-// that can read the log could accept the invitation with it.
+func (s *Server) inviteURL(token string) string { return s.cfg.BaseURL + "/invite/" + token }
+
+// The link is deliberately not logged, because anything that can read the log
+// could accept the invitation with it. It is shown to the owner once, on the
+// page that made it, and mail will carry it once internal/mail lands.
 func (s *Server) logInvite(who string) {
 	s.log.Info("invitation issued", "to", who)
 }

@@ -116,10 +116,11 @@ func (h *harness) post(path string, form url.Values) (*http.Response, string) {
 }
 
 var (
-	csrfRe   = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
-	secretRe = regexp.MustCompile(`type the key: ([A-Z2-7]+)`)
-	hrefRe   = regexp.MustCompile(`<a [^>]*href="([^"]*)"`)
-	tokenRe  = regexp.MustCompile(`(thes_[A-Za-z0-9_-]+)`)
+	csrfRe       = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+	secretRe     = regexp.MustCompile(`type the key: ([A-Z2-7]+)`)
+	hrefRe       = regexp.MustCompile(`<a [^>]*href="([^"]*)"`)
+	tokenRe      = regexp.MustCompile(`(thes_[A-Za-z0-9_-]+)`)
+	inviteLinkRe = regexp.MustCompile(`(http[^"<\s]*/invite/[A-Za-z0-9_-]+)`)
 )
 
 func (h *harness) csrf(path string) string {
@@ -168,6 +169,16 @@ func (h *harness) setupOwner() (password, secret string) {
 		h.Fatalf("setup confirm: %d %s", res.StatusCode, res.Header.Get("Location"))
 	}
 	return password, secret
+}
+
+// setRole is test setup, not something the app does: the handlers change a role
+// only through the guarded statement.
+func (h *harness) setRole(t *testing.T, id int64, role string) {
+	t.Helper()
+	if _, err := h.db.ExecContext(context.Background(),
+		`UPDATE users SET role = ? WHERE id = ?`, role, id); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (h *harness) signOut() {
@@ -447,12 +458,9 @@ func TestSettingsSaveRoundTrips(t *testing.T) {
 }
 
 func TestSettingsAreOwnerOnly(t *testing.T) {
-	ctx := context.Background()
 	h := newHarness(t)
 	h.setupOwner()
-	if err := store.SetUserRole(ctx, h.db, 1, auth.RoleEditor); err != nil {
-		t.Fatal(err)
-	}
+	h.setRole(t, 1, auth.RoleEditor)
 	if res, _ := h.get("/settings"); res.StatusCode != http.StatusForbidden {
 		t.Errorf("an editor got %d from /settings", res.StatusCode)
 	}
@@ -647,7 +655,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 	res, _ := h.post("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
 	})
-	if res.StatusCode != http.StatusSeeOther {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("invite gave %d", res.StatusCode)
 	}
 	pending, err := store.ListPendingInvitations(ctx, h.db, time.Now().Unix())
@@ -665,7 +673,7 @@ func TestTeamInvitationsAndTokens(t *testing.T) {
 	}
 	id := pending[0].ID
 	if res, _ := h.post("/settings/team/invite/"+itoa(id)+"/resend",
-		url.Values{"csrf": {h.csrf("/settings")}}); res.StatusCode != http.StatusSeeOther {
+		url.Values{"csrf": {h.csrf("/settings")}}); res.StatusCode != http.StatusOK {
 		t.Fatalf("resend gave %d", res.StatusCode)
 	}
 	var secondHash []byte
@@ -746,9 +754,7 @@ func TestRoleChangesAreGuarded(t *testing.T) {
 	}
 
 	// A second owner can be demoted; the one doing it is still an owner.
-	if err := store.SetUserRole(ctx, h.db, id, auth.RoleOwner); err != nil {
-		t.Fatal(err)
-	}
+	h.setRole(t, id, auth.RoleOwner)
 	if res, _ := h.post("/settings/team/role", url.Values{
 		"csrf": {h.csrf("/settings")}, "user": {itoa(id)}, "role": {auth.RoleEditor},
 	}); res.StatusCode != http.StatusSeeOther {
@@ -838,9 +844,7 @@ func TestDeleteAccountRefusesTheLastOwner(t *testing.T) {
 func TestForbiddenPageLinksOnlyToLogin(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
-	if err := store.SetUserRole(context.Background(), h.db, 1, auth.RoleGuest); err != nil {
-		t.Fatal(err)
-	}
+	h.setRole(t, 1, auth.RoleGuest)
 	res, body := h.get("/settings")
 	if res.StatusCode != http.StatusForbidden || !strings.Contains(body, "No access.") {
 		t.Fatalf("status = %d", res.StatusCode)
@@ -1053,7 +1057,7 @@ func TestNoResetOrInviteLinkReachesTheLog(t *testing.T) {
 
 	if res, _ := h.post("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
-	}); res.StatusCode != http.StatusSeeOther {
+	}); res.StatusCode != http.StatusOK {
 		t.Fatalf("invite gave %d", res.StatusCode)
 	}
 	h.signOut()
@@ -1243,4 +1247,55 @@ func activityCount(t *testing.T, h *harness, action string) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// The link is not in the log and mail does not exist yet, so the page that made
+// the invitation is the one place it can be read from, once.
+func TestANewInvitationShowsItsLinkOnce(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+
+	res, body := h.post("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {auth.RoleEditor},
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("invite gave %d", res.StatusCode)
+	}
+	m := inviteLinkRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("the accept link is not on the page:\n%s", body)
+	}
+	link := m[1]
+
+	// It is a link that works.
+	if _, err := h.srv.auth.Invitation(ctx, strings.TrimPrefix(link, h.srv.cfg.BaseURL+"/invite/")); err != nil {
+		t.Errorf("the link on the page does not resolve: %v", err)
+	}
+
+	// And it is not on the page the next time it is loaded.
+	if _, again := h.get("/settings"); inviteLinkRe.MatchString(again) {
+		t.Error("the accept link is shown again on a later load")
+	}
+
+	// Resending shows the new link once, and it is a different one.
+	pending, err := store.ListPendingInvitations(ctx, h.db, time.Now().Unix())
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("pending invitations = %v, %v", pending, err)
+	}
+	res, body = h.post("/settings/team/invite/"+itoa(pending[0].ID)+"/resend",
+		url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("resend gave %d", res.StatusCode)
+	}
+	again := inviteLinkRe.FindStringSubmatch(body)
+	if again == nil {
+		t.Fatal("resending showed no link")
+	}
+	if again[1] == link {
+		t.Error("resending showed the link it had just replaced")
+	}
+	if _, body := h.get("/settings"); inviteLinkRe.MatchString(body) {
+		t.Error("the resent link is shown again on a later load")
+	}
 }

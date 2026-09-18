@@ -123,6 +123,7 @@
         </form>
 
         <h3 class="sub">Pending invitations</h3>
+        {{if .NewInvite}}<p class="notice">Send this to them now; it is not shown again. <span class="mono">{{.NewInvite}}</span></p>{{end}}
         <ul class="pending">
           {{range .Invitations}}<li>
             <span>{{.Email}}</span>
