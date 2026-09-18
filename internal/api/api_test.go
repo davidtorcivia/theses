@@ -308,7 +308,7 @@ func TestActivityIsACursor(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	for _, name := range []string{"one", "two", "three"} {
-		if err := store.InsertActivity(ctx, h.db, "user", "1", "card", name, "create", "", `{"a":1}`); err != nil {
+		if err := store.InsertActivity(ctx, h.db, "user", "1", "", "card", name, "create", "", `{"a":1}`); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -410,10 +410,10 @@ func TestActivityCarriesRowsThatAreNotJSON(t *testing.T) {
 	h := newHarness(t)
 	// A role change stores the role either side, which is a bare word and not
 	// the JSON the column usually holds.
-	if err := store.InsertActivity(ctx, h.db, "user", "1", "user", "2", "role", "owner", "guest"); err != nil {
+	if err := store.InsertActivity(ctx, h.db, "user", "1", "", "user", "2", "role", "owner", "guest"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.InsertActivity(ctx, h.db, "user", "1", "card", "3", "create", "", `{"t":"x"}`); err != nil {
+	if err := store.InsertActivity(ctx, h.db, "user", "1", "", "card", "3", "create", "", `{"t":"x"}`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -485,7 +485,7 @@ func TestActivityHidesAdministrationFromAReadToken(t *testing.T) {
 		{"api_token", "deploy", "", "admin"},
 	}
 	for _, e := range rows {
-		if err := store.InsertActivity(ctx, h.db, "user", "1",
+		if err := store.InsertActivity(ctx, h.db, "user", "1", "",
 			e.entity, e.entityID, "set", e.before, e.after); err != nil {
 			t.Fatal(err)
 		}

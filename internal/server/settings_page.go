@@ -689,7 +689,7 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 // activity records a mutation that could not share a transaction with its
 // change, because the change went through a package holding its own handle.
 func (s *Server) activity(ctx context.Context, actorID int64, entity, entityID, action, before, after string) error {
-	return store.InsertActivity(ctx, s.db, "user", itoa(actorID), entity, entityID, action, before, after)
+	return store.InsertActivity(ctx, s.db, "user", itoa(actorID), "", entity, entityID, action, before, after)
 }
 
 // errRefused is what a write closure returns when the statement it guards
@@ -711,7 +711,7 @@ func (s *Server) write(r *http.Request, entity, entityID, action, before, after 
 	if u := userOf(r); u != nil {
 		actor = itoa(u.ID)
 	}
-	if err := store.InsertActivity(r.Context(), tx, "user", actor, entity, entityID, action, before, after); err != nil {
+	if err := store.InsertActivity(r.Context(), tx, "user", actor, "", entity, entityID, action, before, after); err != nil {
 		return err
 	}
 	return tx.Commit()

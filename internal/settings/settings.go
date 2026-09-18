@@ -161,10 +161,6 @@ var ErrStorage = errors.New("the setting could not be stored")
 // ID are theirs; Via names what carried it, "token:<name>" or "mcp:<client>",
 // and is empty for a person at a form. UserID is who the settings row is
 // attributed to.
-//
-// ponytail: Via has nowhere to go until the activity table has a column for it.
-// Upgrade path: pass it to store.InsertActivity in SetAs below, which is the one
-// line this waits on.
 type Actor struct {
 	Kind   string
 	ID     string
@@ -253,7 +249,7 @@ func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor
 	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actor.UserID); err != nil {
 		return fmt.Errorf("%w: save %s: %w", ErrStorage, key, err)
 	}
-	if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID,
+	if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID, actor.Via,
 		"setting", key, "set", before, after); err != nil {
 		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}

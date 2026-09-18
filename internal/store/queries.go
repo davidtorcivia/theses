@@ -443,8 +443,10 @@ func PutSetting(ctx context.Context, q Querier, key, valueJSON string, secret bo
 	return err
 }
 
-// InsertActivity records one mutation. before and after are JSON or empty.
-func InsertActivity(ctx context.Context, q Querier, actorKind, actorID, entity, entityID, action, before, after string) error {
+// InsertActivity records one mutation. before and after are JSON or empty, and
+// via is what carried the change, "token:<name>" or "mcp:<client>", empty for a
+// person at a form.
+func InsertActivity(ctx context.Context, q Querier, actorKind, actorID, via, entity, entityID, action, before, after string) error {
 	null := func(s string) any {
 		if s == "" {
 			return nil
@@ -452,8 +454,8 @@ func InsertActivity(ctx context.Context, q Querier, actorKind, actorID, entity, 
 		return s
 	}
 	_, err := q.ExecContext(ctx, `INSERT INTO activity
-		(actor_kind, actor_id, entity, entity_id, action, before_json, after_json, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, unixepoch())`,
-		actorKind, actorID, entity, entityID, action, null(before), null(after))
+		(actor_kind, actor_id, via, entity, entity_id, action, before_json, after_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, unixepoch())`,
+		actorKind, actorID, null(via), entity, entityID, action, null(before), null(after))
 	return err
 }
