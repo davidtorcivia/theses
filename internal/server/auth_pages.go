@@ -477,6 +477,9 @@ func (s *Server) postReset(w http.ResponseWriter, r *http.Request) {
 		default:
 			// The link is deliberately not logged, because anything that can
 			// read the log could then use it. Only the mail carries it.
+			// ponytail: the token row and the mail row are two commits, because
+			// CreatePasswordReset holds its own handle; give it a store.Querier
+			// and enqueue inside the same transaction when auth is next opened.
 			token, err := s.auth.CreatePasswordReset(r.Context(), u.ID)
 			if err != nil {
 				s.fail(w, r, err)

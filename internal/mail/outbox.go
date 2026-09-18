@@ -206,6 +206,10 @@ func (o *Outbox) State(ctx context.Context) (State, error) {
 
 // RetryNow puts every unsent row back at the front of the queue. It restarts the
 // day as well, because a row that has run out of it is picked up by nothing.
+//
+// ponytail: restarting the day loses when the row was first queued, which is
+// half of what keeping it for inspection was for; a gave_up_at column would
+// hold both, and belongs in the next migration this schema opens anyway.
 func (o *Outbox) RetryNow(ctx context.Context) error {
 	if _, err := o.db.ExecContext(ctx, `UPDATE mail_outbox
 		SET attempts = 0, next_at = unixepoch(), created_at = unixepoch()
