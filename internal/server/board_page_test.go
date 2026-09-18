@@ -675,3 +675,55 @@ func TestTheEventStreamNamesWhatCarriedTheChange(t *testing.T) {
 		t.Errorf("a change made in the browser names a carrier: %q", got.Events[0].Actor.Via)
 	}
 }
+
+// The payload carries the workspace's time zone, because whether a due date has
+// passed is a question about the show's calendar day and not about the one on
+// the laptop reading the board.
+func TestShellCarriesTheWorkspaceTimezone(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	if err := h.srv.settings.Set(context.Background(), "workspace.timezone",
+		[]string{"Europe/Berlin"}, h.owner().ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.payload("/").Timezone; got != "Europe/Berlin" {
+		t.Fatalf("the payload carries the time zone %q", got)
+	}
+}
+
+// The Members section says what membership does, and offers an owner the row
+// that brings somebody into the workspace. Nobody else is offered it: the
+// handler behind it is owner only and would refuse them.
+func TestPropositionSettingsOffersTheInviteRowToOwnersOnly(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		role  string
+		offer bool
+	}{
+		{auth.RoleOwner, true},
+		{auth.RoleEditor, false},
+		{auth.RoleResearcher, false},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			h := newHarness(t)
+			h.setupOwner()
+			owner := h.owner()
+			e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.setRole(t, owner.ID, tc.role)
+
+			_, body := h.get("/p/" + strconv.FormatInt(e.EntityID, 10) + "/settings")
+			if !strings.Contains(body, "an account that is on none opens an empty workspace") {
+				t.Error("the Members section does not say what membership does")
+			}
+			if !strings.Contains(body, `id="members"`) {
+				t.Error("the Members section has no anchor to land on")
+			}
+			if got := strings.Contains(body, `action="/settings/team/invite"`); got != tc.offer {
+				t.Errorf("the invite row is drawn %v for a %s", got, tc.role)
+			}
+		})
+	}
+}
