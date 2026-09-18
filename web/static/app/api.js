@@ -38,9 +38,13 @@ async function call(method, path, body) {
   // follows and hands back as a successful page of HTML. Answering null to the
   // caller would be a crash three lines later, so it is a refusal here.
   if (!/json/i.test(res.headers.get('Content-Type') || '')) {
-    if (res.redirected || res.status === 200) {
-      // There is no session behind this browser any more, so what this device
-      // holds of the workspace goes with it.
+    // Only our own sign-in page means the session has ended, and only that is
+    // worth throwing this device's work away for. Anything else that answers a
+    // read with a page is something in the way, a captive portal, a proxy's
+    // block page, a maintenance notice, and the session behind this browser is
+    // very likely still good.
+    const answered = new URL(res.url || '', location.href);
+    if (answered.origin === location.origin && answered.pathname === '/login') {
       offline.signedOut();
       throw new Refused('Your session has ended. Sign in again.', 401);
     }

@@ -79,6 +79,11 @@ export function boot(payload) {
   state.open = payload.open || 0;
   loadBoard(payload.board);
   loadDocuments(payload.documents);
+  // Opening a proposition is enough to have it on this device. Without this the
+  // snapshot was only ever written by an applied event, so a proposition that
+  // was read and not edited had nothing cached and said so when the connection
+  // went. A page booted from a snapshot is already one and writes nothing.
+  remember();
 }
 
 function loadDocuments(documents) {
@@ -104,7 +109,14 @@ export async function material() {
   // With no connection there is nothing to read them from, and every render
   // would try again and say so again over whatever else is on the bar. What
   // was cached is already here; the next render with a network fetches.
-  if (!navigator.onLine) return;
+  //
+  // The browser's own flag is not believed on its own, because it is wrong
+  // often enough to matter: some VPN and captive states report no network while
+  // the socket is plainly carrying one, and a pane that trusted the flag would
+  // say there are no links for as long as the lie lasted. A live socket is the
+  // better witness, and when it says yes the rows are read whatever the flag
+  // feels.
+  if (!navigator.onLine && !state.connected) return;
   const proposition = state.open;
   state.loaded = proposition;
   try {
@@ -121,9 +133,15 @@ export async function material() {
     state.folders = files.folders || [];
     state.kinds = links.kinds || [];
     state.attachments = { links: attached.links || [], files: attached.files || [] };
+    // The snapshot the boot wrote had none of this in it, because none of it
+    // had arrived. It is what the links and files panes draw offline.
+    remember();
     emit();
   } catch (err) {
-    state.loaded = 0;
+    // The mark stays, so this is said once rather than on every render for as
+    // long as whatever went wrong lasts. The socket coming back clears it and
+    // the rows are read again, which is the event that means a retry is worth
+    // making.
     throw err;
   }
 }

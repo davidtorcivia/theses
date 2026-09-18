@@ -62,6 +62,10 @@ export function connect() {
       location.reload();
       return;
     }
+    // A socket coming back is the moment a read that failed is worth making
+    // again, so the links and files of the open proposition are marked unread
+    // and the next render asks for them.
+    state.loaded = 0;
     await catchUp();
     replay();
   });
@@ -227,14 +231,21 @@ function transient(err) {
 // up joins the back of it: one pass over a list read at the start would leave
 // it sitting there until the next reconnection. Every pass drops, marks or
 // backs off on every row it sees, so there is always one less to do.
+//
 // tries counts what a row has been handed back for a reason that was nobody's
 // decision. Three rounds of that and it stops being a hold-up and becomes an
 // answer, so it goes to the panel with try it again beside let it go rather
 // than sitting in the queue for ever in front of everything behind it.
+//
+// patience is how long the first of those rounds waits, and it doubles. Four
+// seconds, eight, and then the row is handed back, so the three rounds span
+// about twelve: long enough for a server to be restarted and come back, short
+// enough that nobody is left wondering.
 const rounds = 3;
+const patience = 4000;
 
 async function drain() {
-  let pause = 500;
+  let pause = patience;
   const tries = new Map();
   for (;;) {
     const pass = (await offline.queued()).filter((row) => !row.refused);
@@ -257,7 +268,7 @@ async function drain() {
         await offline.dropIfUnchanged(row.n, row.at);
         reverts.delete(row.n);
         tries.delete(row.n);
-        pause = 500;
+        pause = patience;
         await sleep(pace);
       } catch (err) {
         if (err instanceof Offline) {
