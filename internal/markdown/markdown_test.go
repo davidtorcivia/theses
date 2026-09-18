@@ -36,7 +36,7 @@ func TestRenderBlock(t *testing.T) {
 		{
 			name: "autolinks",
 			in:   "See https://example.com/x and www.example.com",
-			want: "<p>See <a href=\"https://example.com/x\">https://example.com/x</a> and <a href=\"http://www.example.com\">www.example.com</a></p>\n",
+			want: "<p>See <a href=\"https://example.com/x\" rel=\"noopener\">https://example.com/x</a> and <a href=\"http://www.example.com\" rel=\"noopener\">www.example.com</a></p>\n",
 		},
 		{
 			name: "mention",
@@ -51,7 +51,7 @@ func TestRenderBlock(t *testing.T) {
 		{
 			name: "address is not a mention",
 			in:   "Write to ada@example.com.",
-			want: "<p>Write to <a href=\"mailto:ada@example.com\">ada@example.com</a>.</p>\n",
+			want: "<p>Write to <a href=\"mailto:ada@example.com\" rel=\"noopener\">ada@example.com</a>.</p>\n",
 		},
 		{
 			name: "note addressed to someone",
@@ -72,6 +72,16 @@ func TestRenderBlock(t *testing.T) {
 			name: "a link carries rel",
 			in:   "The [tide station](http://example.com/rance) record.",
 			want: "<p>The <a href=\"http://example.com/rance\" rel=\"noopener\">tide station</a> record.</p>\n",
+		},
+		{
+			name: "a target with balanced parentheses",
+			in:   "[tide](https://en.wikipedia.org/wiki/Tide_(disambiguation))",
+			want: "<p><a href=\"https://en.wikipedia.org/wiki/Tide_(disambiguation)\" rel=\"noopener\">tide</a></p>\n",
+		},
+		{
+			name: "a label is inline markdown",
+			in:   "[the **long** record](https://example.com)",
+			want: "<p><a href=\"https://example.com\" rel=\"noopener\">the <strong>long</strong> record</a></p>\n",
 		},
 		{
 			name: "a mailto link is text",

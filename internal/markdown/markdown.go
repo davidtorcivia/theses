@@ -178,14 +178,15 @@ func (r nodeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(kindMention, r.renderMention)
 	reg.Register(kindNote, r.renderNote)
 	reg.Register(ast.KindLink, r.renderLink)
+	reg.Register(ast.KindAutoLink, r.renderAutoLink)
 }
 
-// A link is written out only when its target is http or https, and then with
-// rel="noopener" on it. Every other scheme is put back as the text it was
-// written as, because this is a workspace where anyone may type a paragraph and
-// a mailto: or a javascript: target is never something the page should offer to
-// follow. The browser's own renderer does exactly this, so an export and the
-// live view agree.
+// A written link, [text](target), is written out only when its target is http
+// or https, and then with rel="noopener" on it. Every other scheme is put back
+// as the text it was typed as, because this is a workspace where anyone may
+// write a paragraph and a mailto: or a javascript: target behind a friendly
+// label is never something the page should offer to follow. The browser's own
+// renderer does exactly this, so an export and the live view agree.
 func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	link := n.(*ast.Link)
 	if !httpURL.Match(link.Destination) {
@@ -208,8 +209,30 @@ func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, ente
 	return ast.WalkContinue, nil
 }
 
-// httpURL is the only kind of target a link in this app may point at.
+// httpURL is the only kind of target a written link in this app may point at.
 var httpURL = regexp.MustCompile(`^(?i:https?)://`)
+
+// An autolink is a URL or an address Linkify found in the running text. There
+// is no label to hide behind, so what it points at is what it reads as and
+// every one of them is written out; rel="noopener" goes on it for the same
+// reason it goes on a written link. The browser's renderer leaves these as
+// text, which is the one difference between the two that is on purpose.
+func (nodeRenderer) renderAutoLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkContinue, nil
+	}
+	link := n.(*ast.AutoLink)
+	url := link.URL(source)
+	_, _ = w.WriteString(`<a href="`)
+	if link.AutoLinkType == ast.AutoLinkEmail && !bytes.HasPrefix(bytes.ToLower(url), []byte("mailto:")) {
+		_, _ = w.WriteString("mailto:")
+	}
+	_, _ = w.Write(util.EscapeHTML(util.URLEscape(url, false)))
+	_, _ = w.WriteString(`" rel="noopener">`)
+	_, _ = w.Write(util.EscapeHTML(link.Label(source)))
+	_, _ = w.WriteString(`</a>`)
+	return ast.WalkContinue, nil
+}
 
 func (nodeRenderer) renderMention(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	if entering {

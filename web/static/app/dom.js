@@ -52,10 +52,20 @@ const MENTION = /@([a-z0-9][a-z0-9-]*)/g;
 // The link alternative comes before the note so that [AL: read this](url) is a
 // link with an odd label rather than an aside, which is what the server makes
 // of the same text. The scheme is in the pattern, so a target that is not http
-// or https never matches and the whole of it stays the text somebody typed.
-// The groups are named because the order of the alternatives is a reading
-// decision and numbering them makes it one more thing to keep in step.
-const INLINE = /\*\*(?<bold>.+?)\*\*|\*(?<italic>.+?)\*|\[(?<label>[^\]\n]+)\]\((?<href>https?:\/\/[^\s)]+)\)|\[(?<by>[A-Za-z0-9-]+): (?<aside>[^\]]+)\]|\[(?<check>check[^\]]*)\]|@(?<handle>[a-z0-9][a-z0-9-]*)/g;
+// or https never matches and the whole of it stays the text somebody typed. A
+// target may hold balanced parentheses, because half of Wikipedia's addresses
+// do and goldmark reads them that way. The label is bounded so that a line of
+// nothing but open brackets is linear work rather than quadratic. The groups
+// are named because the order of the alternatives is a reading decision and
+// numbering them makes it one more thing to keep in step.
+//
+// Where this and internal/markdown still differ, deliberately:
+//   - a bare URL in the text is a link on the server, which runs goldmark's
+//     Linkify, and plain text here;
+//   - tables, footnotes, strikethrough and code fences are the server's alone,
+//     because the live view renders a paragraph at a time;
+//   - a note carries data-by on the server and only its text here.
+const INLINE = /\*\*(?<bold>.+?)\*\*|\*(?<italic>.+?)\*|\[(?<label>[^\]\n]{1,512})\]\((?<href>https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|\[(?<by>[A-Z]{2,4}): (?<aside>[^\]]+)\]|\[(?<check>check[^\]]*)\]|@(?<handle>[a-z0-9][a-z0-9-]*)/g;
 
 export function inline(text, lookup) {
   const out = [];
@@ -63,10 +73,14 @@ export function inline(text, lookup) {
   let at = 0;
   for (let m; (m = INLINE.exec(text)); ) {
     if (m.index > at) out.push(text.slice(at, m.index));
+    at = m.index + m[0].length;
     const g = m.groups;
     if (g.bold) out.push(el('b', { text: g.bold }));
     else if (g.italic) out.push(el('i', { text: g.italic }));
-    else if (g.href) out.push(el('a', { href: g.href, rel: 'noopener', text: g.label }));
+    // A label is inline markdown too, the way the server reads it. It cannot
+    // hold a closing bracket, so it cannot hold a second link and this goes one
+    // deep and no further.
+    else if (g.href) out.push(add(el('a', { href: g.href, rel: 'noopener' }), [inline(g.label, lookup)]));
     else if (g.aside) out.push(el('mark', { class: 'note', text: g.by + ': ' + g.aside }));
     else if (g.check) out.push(el('mark', { class: 'note', text: g.check }));
     else {
@@ -75,7 +89,9 @@ export function inline(text, lookup) {
         ? el('b', { class: 'mention ' + person.colour, text: '@' + g.handle })
         : m[0]);
     }
-    at = m.index + m[0].length;
+    // The call above for a link's label shares this regex, so where the outer
+    // scan had got to is put back.
+    INLINE.lastIndex = at;
   }
   if (at < text.length) out.push(text.slice(at));
   return out;
