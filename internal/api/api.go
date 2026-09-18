@@ -36,17 +36,58 @@ type Principal struct {
 	User  *store.User
 }
 
-// Actor is how this token is recorded in the activity log.
+// TokenVia and ClientVia name what an action was carried by, for the activity
+// row's via column. What a token does is done by the person it belongs to, so
+// the actor is always that person and via is how they reached in.
+func TokenVia(name string) string  { return "token:" + name }
+func ClientVia(name string) string { return "mcp:" + name }
+
+// Actor is how a call with this token is recorded in the activity log: the
+// person who owns it, and the token's name as via.
 func (p Principal) Actor() settings.Actor {
 	return settings.Actor{
-		Kind:   "token",
-		ID:     strconv.FormatInt(p.Token.ID, 10),
+		Kind:   "user",
+		ID:     strconv.FormatInt(p.User.ID, 10),
+		Via:    TokenVia(p.Token.Name),
 		UserID: p.User.ID,
 	}
 }
 
 // Scopes returns the token's scopes as a list, for the JSON that reports them.
 func (p Principal) Scopes() []string { return strings.Fields(p.Token.Scopes) }
+
+// A MeView is the answer to who am I: the token and the person it belongs to.
+// The REST route and the MCP tool return the same one.
+type MeView struct {
+	Token TokenView `json:"token"`
+	User  OwnerView `json:"user"`
+}
+
+type TokenView struct {
+	ID     int64    `json:"id"`
+	Name   string   `json:"name"`
+	Scopes []string `json:"scopes"`
+}
+
+// An OwnerView is the person a token belongs to. It carries the email address
+// that UserView leaves out: a token may see whose it is.
+type OwnerView struct {
+	ID     int64  `json:"id"`
+	Handle string `json:"handle"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+}
+
+func (p Principal) Me() MeView {
+	return MeView{
+		Token: TokenView{ID: p.Token.ID, Name: p.Token.Name, Scopes: p.Scopes()},
+		User: OwnerView{
+			ID: p.User.ID, Handle: p.User.Handle, Name: p.User.Name,
+			Email: p.User.Email, Role: p.User.Role,
+		},
+	}
+}
 
 type principalKey struct{}
 
@@ -130,16 +171,12 @@ func (a *API) Handler() http.Handler {
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request, p Principal) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token": map[string]any{"id": p.Token.ID, "name": p.Token.Name, "scopes": p.Scopes()},
-		"user": map[string]any{
-			"id": p.User.ID, "handle": p.User.Handle, "name": p.User.Name,
-			"email": p.User.Email, "role": p.User.Role,
-		},
-	})
+	writeJSON(w, http.StatusOK, p.Me())
 }
 
-type userJSON struct {
+// A UserView is one member of the workspace. Email addresses are not in it: a
+// read token is what an agent is given, and it has no use for them.
+type UserView struct {
 	ID       int64  `json:"id"`
 	Handle   string `json:"handle"`
 	Name     string `json:"name"`
@@ -149,18 +186,27 @@ type userJSON struct {
 	LastSeen int64  `json:"last_seen_at,omitempty"`
 }
 
-func (a *API) users(w http.ResponseWriter, r *http.Request, _ Principal) {
-	users, err := store.ListUsers(r.Context(), a.db)
+// UserViews is the workspace, for both surfaces.
+func (a *API) UserViews(ctx context.Context) ([]UserView, error) {
+	users, err := store.ListUsers(ctx, a.db)
 	if err != nil {
-		a.failed(w, r, err)
-		return
+		return nil, err
 	}
-	out := make([]userJSON, 0, len(users))
+	out := make([]UserView, 0, len(users))
 	for _, u := range users {
-		out = append(out, userJSON{
+		out = append(out, UserView{
 			ID: u.ID, Handle: u.Handle, Name: u.Name, Initials: u.Initials,
 			Colour: u.Colour, Role: u.Role, LastSeen: u.LastSeenAt.Int64,
 		})
+	}
+	return out, nil
+}
+
+func (a *API) users(w http.ResponseWriter, r *http.Request, _ Principal) {
+	out, err := a.UserViews(r.Context())
+	if err != nil {
+		a.failed(w, r, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
@@ -245,7 +291,8 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, _ Principal) {
 	writeJSON(w, http.StatusOK, map[string]any{"activity": out})
 }
 
-type settingJSON struct {
+// A SettingView is one setting as both surfaces report it.
+type SettingView struct {
 	Key     string   `json:"key"`
 	Kind    string   `json:"kind"`
 	Label   string   `json:"label"`
@@ -264,10 +311,10 @@ var kindNames = map[settings.Kind]string{
 	settings.KindText:   "text",
 }
 
-// describe is one setting as the API reports it. A secret's value is never in
+// Describe is one setting as the API reports it. A secret's value is never in
 // it: the client is told only that one is stored, which is all it can act on.
-func (a *API) describe(def settings.Def) settingJSON {
-	s := settingJSON{
+func (a *API) Describe(def settings.Def) SettingView {
+	s := SettingView{
 		Key: def.Key, Kind: kindNames[def.Kind], Label: def.Label, Hint: def.Hint,
 		Choices: def.Choices, Secret: def.Secret, Set: a.set.IsSet(def.Key),
 	}
@@ -285,12 +332,17 @@ func (a *API) describe(def settings.Def) settingJSON {
 	return s
 }
 
-func (a *API) getSettings(w http.ResponseWriter, r *http.Request, _ Principal) {
-	out := make([]settingJSON, 0, len(settings.Registry))
+// SettingViews is every known setting, for both surfaces.
+func (a *API) SettingViews() []SettingView {
+	out := make([]SettingView, 0, len(settings.Registry))
 	for _, def := range settings.Registry {
-		out = append(out, a.describe(def))
+		out = append(out, a.Describe(def))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"settings": out})
+	return out
+}
+
+func (a *API) getSettings(w http.ResponseWriter, r *http.Request, _ Principal) {
+	writeJSON(w, http.StatusOK, map[string]any{"settings": a.SettingViews()})
 }
 
 // maxBodyBytes is what a request body may be. Every write here is one setting;
@@ -327,7 +379,7 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a.describe(def))
+	writeJSON(w, http.StatusOK, a.Describe(def))
 }
 
 // formValues turns the JSON value into what settings parses: the strings a form

@@ -92,16 +92,18 @@ with the last id you were given.
 
 ```json
 {"activity": [
-  {"id": 12, "proposition_id": 10, "actor_kind": "token", "actor_id": "3",
+  {"id": 12, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
    "entity": "setting", "entity_id": "workspace.name", "action": "set",
    "before": "\"We All Fall Down\"", "after": "\"Debt Machine\"",
    "created_at": 1758067200}
 ]}
 ```
 
-`actor_kind` is `user`, `token`, `mcp` or `system`, and `actor_id` is the user
-id, the token id, or the MCP client's name. `before` and `after` are the JSON of
-the entity before and after the change, and are absent when there was none.
+`actor_kind` is `user` or `system`, and `actor_id` is the user id. What a token
+does is done by the person the token belongs to, so an API or MCP change is
+recorded as theirs, with the token name or the client name naming what carried
+it. `before` and `after` are the JSON of the entity before and after the change,
+and are absent when there was none.
 
 ## `GET /api/v1/settings`
 
@@ -135,8 +137,8 @@ PUT /api/v1/settings/signin.session_days
 {"value": 7}
 ```
 
-A write is recorded in the activity log with `actor_kind` `token` and the token
-id as `actor_id`.
+A write is recorded in the activity log as the person the token belongs to, with
+the token naming what carried it.
 
 ## MCP
 
@@ -155,5 +157,5 @@ POST is authenticated on its own.
 Resource `theses://workspace` describes the workspace: its name, time zone, how
 many people and propositions it holds, and what this endpoint can do.
 
-A write through MCP is recorded in the activity log with `actor_kind` `mcp` and
-the client's name as `actor_id`.
+A write through MCP is recorded in the activity log as the person the token
+belongs to, with the MCP client naming what carried it.

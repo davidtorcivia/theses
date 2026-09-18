@@ -237,18 +237,29 @@ func TestSettingsHideSecretsAndWriteAsTheToken(t *testing.T) {
 		t.Errorf("stored workspace.name = %q", got)
 	}
 
-	var kind, actor string
+	var kind, actorID string
 	if err := h.db.QueryRowContext(ctx, `SELECT actor_kind, actor_id FROM activity
-		WHERE entity_id = 'workspace.name'`).Scan(&kind, &actor); err != nil {
+		WHERE entity_id = 'workspace.name'`).Scan(&kind, &actorID); err != nil {
 		t.Fatal(err)
 	}
-	var tokenID string
-	if err := h.db.QueryRowContext(ctx, `SELECT id FROM api_tokens WHERE name = 'admin'`).
-		Scan(&tokenID); err != nil {
+	if want := strconv.FormatInt(h.user.ID, 10); kind != "user" || actorID != want {
+		t.Errorf("activity actor = %s %s, want user %s", kind, actorID, want)
+	}
+}
+
+func TestActorIsTheOwnerByWayOfTheToken(t *testing.T) {
+	h := newHarness(t)
+	token, user, err := h.auth.APIToken(context.Background(), h.token(auth.ScopeAdmin))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if kind != "token" || actor != tokenID {
-		t.Errorf("activity actor = %s %s, want token %s", kind, actor, tokenID)
+	actor := Principal{Token: token, User: user}.Actor()
+	want := settings.Actor{
+		Kind: "user", ID: strconv.FormatInt(h.user.ID, 10),
+		Via: "token:admin", UserID: h.user.ID,
+	}
+	if actor != want {
+		t.Errorf("actor = %+v, want %+v", actor, want)
 	}
 }
 

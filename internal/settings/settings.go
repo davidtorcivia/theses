@@ -147,13 +147,19 @@ func (s *Settings) IsSet(key string) bool {
 	return s.present[key]
 }
 
-// An Actor is who is making the change. Kind and ID are what the activity row
-// records: a person, an API token or an MCP client. UserID is the person the
-// settings row is attributed to, which for a token is the person it belongs to
-// and for an unattended client is zero.
+// An Actor is who is making the change. An action taken with an API token or by
+// an MCP client is the action of the person the token belongs to, so Kind and
+// ID are theirs; Via names what carried it, "token:<name>" or "mcp:<client>",
+// and is empty for a person at a form. UserID is who the settings row is
+// attributed to.
+//
+// ponytail: Via has nowhere to go until migration 002 adds the column to
+// activity. Upgrade path: pass it to store.InsertActivity in SetAs below, which
+// is the one line this waits on.
 type Actor struct {
 	Kind   string
 	ID     string
+	Via    string
 	UserID int64
 }
 
