@@ -122,7 +122,8 @@ func (db *DB) Close() error {
 // rename a file another handle still has open.
 //
 // It is a variable so that the test for a connection that never comes back does
-// not take ten seconds to make its point.
+// not take ten seconds to make its point. While it is one, no test in this
+// package may call t.Parallel.
 var drainWait = 10 * time.Second
 
 // Swap replaces the database file with the one at from and opens it. The old
@@ -141,6 +142,7 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 	defer db.mu.Unlock()
 
 	if err := db.db.Close(); err != nil {
+		db.reopen()
 		return fmt.Errorf("close the pool: %w", err)
 	}
 	if err := drain(db.db); err != nil {

@@ -14,6 +14,7 @@ import (
 
 	_ "time/tzdata" // so TZ works on a runtime image with no zone files
 
+	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/config"
 	"github.com/davidtorcivia/theses/internal/server"
 	"github.com/davidtorcivia/theses/internal/settings"
@@ -40,6 +41,12 @@ func run() error {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("data directory: %w", err)
 	}
+	// Before anything opens the data directory, because this is the one moment
+	// nothing in it is in use.
+	if err := backup.Sweep(cfg.DataDir, log); err != nil {
+		return err
+	}
+
 	db, err := store.Open(filepath.Join(cfg.DataDir, "theses.db"))
 	if err != nil {
 		return err
