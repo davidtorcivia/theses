@@ -6,6 +6,7 @@ require (
 	filippo.io/age v1.3.2
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/johannesboyne/gofakes3 v1.2.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pquerna/otp v1.5.0

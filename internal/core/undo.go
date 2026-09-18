@@ -18,7 +18,8 @@ import (
 // undoable names the entities whose before can be put back and the columns it
 // may write. Anything else refuses, and so do creates and deletes: putting a
 // deleted row back would give it a new id and orphan everything that pointed at
-// it, and unmaking a created one is a delete wearing a different name.
+// it, and unmaking a created one is a delete wearing a different name. The one
+// delete that is undone is a tombstone, which never took the row away.
 type undoSpec struct {
 	table string
 	// scope is the column an ordering key is unique within, empty for a table
@@ -26,13 +27,22 @@ type undoSpec struct {
 	// put back has been taken since.
 	scope string
 	cols  []string
+	// versioned is a table whose rows carry the version a stale edit is refused
+	// against. Putting old text back has to move that forward rather than
+	// backward, or the editor that lost the race wins the next one.
+	versioned bool
+	// tombstone is a table whose delete sets a column rather than removing the
+	// row, so undoing one is an ordinary column write.
+	tombstone bool
 }
 
 var undoable = map[string]undoSpec{
-	"proposition":    {"propositions", "", []string{"title", "statement", "blurb", "status", "episode", "target_date", "position", "archived_at"}},
-	"column":         {"columns", "proposition_id", []string{"name", "position"}},
-	"card":           {"cards", "column_id", []string{"column_id", "position", "title", "description_md", "question", "due_date", "done_at"}},
-	"checklist_item": {"checklist_items", "card_id", []string{"text", "done", "position"}},
+	"proposition":    {table: "propositions", cols: []string{"title", "statement", "blurb", "status", "episode", "target_date", "position", "archived_at"}},
+	"column":         {table: "columns", scope: "proposition_id", cols: []string{"name", "position"}},
+	"card":           {table: "cards", scope: "column_id", cols: []string{"column_id", "position", "title", "description_md", "question", "due_date", "done_at"}, versioned: true},
+	"checklist_item": {table: "checklist_items", scope: "card_id", cols: []string{"text", "done", "position"}},
+	"document":       {table: "documents", scope: "proposition_id", cols: []string{"name", "slug", "position"}},
+	"block":          {table: "blocks", scope: "document_id", cols: []string{"position", "text", "deleted_at"}, versioned: true, tombstone: true},
 }
 
 // Undo puts back the before of one activity row and marks the row undone. The
@@ -55,7 +65,7 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 
 	spec, ok := undoable[entity]
 	if !ok || !before.Valid || !after.Valid || undoneAt.Valid ||
-		action == "create" || action == "delete" || action == "undo" {
+		action == "create" || (action == "delete" && !spec.tombstone) || action == "undo" {
 		return Event{}, ErrNotUndoable
 	}
 	id, err := strconv.ParseInt(entityID, 10, 64)
@@ -91,7 +101,7 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		// before back would throw away whatever came after it and, for a
 		// position, put two rows on one ordering key. This is the same refusal
 		// a stale text edit gets, so the editor offers the same choice.
-		current, err := snapshot(ctx, tx, spec.table, spec.scope, spec.cols, id)
+		current, err := snapshot(ctx, tx, spec, id)
 		if err != nil {
 			return Change{}, err
 		}
@@ -162,9 +172,9 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		if len(set) == 0 {
 			return Change{}, ErrNotUndoable
 		}
-		// A card's version is what stale edits are refused against, so putting
-		// the old text back has to move it forward, not backward.
-		if spec.table == "cards" {
+		// The version is what stale edits are refused against, so putting the
+		// old text back has to move it forward, not backward.
+		if spec.versioned {
 			set = append(set, "version = version + 1")
 		}
 		args = append(args, id)
@@ -194,18 +204,18 @@ func (s *Service) whole(ctx context.Context, tx *sql.Tx, entity string, spec und
 			return nil, err
 		}
 	}
-	return snapshot(ctx, tx, spec.table, spec.scope, spec.cols, id)
+	return snapshot(ctx, tx, spec, id)
 }
 
 // snapshot reads one row as the map that goes into an activity payload. It is
 // generic so that core needs to know nothing about the board's row types.
-func snapshot(ctx context.Context, tx *sql.Tx, table, scope string, cols []string, id int64) (map[string]any, error) {
-	all := append([]string{"id"}, cols...)
-	if table == "cards" {
+func snapshot(ctx context.Context, tx *sql.Tx, spec undoSpec, id int64) (map[string]any, error) {
+	all := append([]string{"id"}, spec.cols...)
+	if spec.versioned {
 		all = append(all, "version")
 	}
-	if scope != "" && !slices.Contains(all, scope) {
-		all = append(all, scope)
+	if spec.scope != "" && !slices.Contains(all, spec.scope) {
+		all = append(all, spec.scope)
 	}
 	dest := make([]any, len(all))
 	values := make([]any, len(all))
@@ -213,7 +223,7 @@ func snapshot(ctx context.Context, tx *sql.Tx, table, scope string, cols []strin
 		dest[i] = &values[i]
 	}
 	err := tx.QueryRowContext(ctx,
-		`SELECT `+strings.Join(all, ", ")+` FROM `+table+` WHERE id = ?`, id).Scan(dest...)
+		`SELECT `+strings.Join(all, ", ")+` FROM `+spec.table+` WHERE id = ?`, id).Scan(dest...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

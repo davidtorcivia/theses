@@ -15,6 +15,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -25,11 +26,12 @@ const clientName = "research agent"
 
 type harness struct {
 	*testing.T
-	db   *store.DB
-	set  *settings.Settings
-	auth *auth.Auth
-	srv  *Server
-	user *store.User
+	db    *store.DB
+	set   *settings.Settings
+	auth  *auth.Auth
+	srv   *Server
+	user  *store.User
+	board *board.Service
 }
 
 func newHarness(t *testing.T) *harness {
@@ -54,7 +56,11 @@ func newHarness(t *testing.T) *harness {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	restAPI := api.New(db, a, set, log)
-	return &harness{T: t, db: db, set: set, auth: a, user: user,
+	boards := board.New(core.New(db, core.NewBus()), func() board.Defaults {
+		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+	})
+	restAPI.Docs = docs.New(boards.Service, "", func() string { return "" }, log)
+	return &harness{T: t, db: db, set: set, auth: a, user: user, board: boards,
 		srv: New(restAPI, db, set, log, "test")}
 }
 
@@ -122,7 +128,9 @@ func TestToolsAreListedWithOneSentenceEach(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{"whoami": true, "search": true, "list_users": true,
-		"get_settings": true, "set_setting": true}
+		"get_settings": true, "set_setting": true,
+		"list_documents": true, "read_document": true, "create_document": true,
+		"append_block": true, "insert_after_heading": true, "replace_block": true}
 	for _, tool := range res.Tools {
 		if !want[tool.Name] {
 			t.Errorf("unexpected tool %q", tool.Name)
@@ -315,9 +323,13 @@ func TestAToolCannotOutrankTheTokenOwner(t *testing.T) {
 	}
 }
 
-// A client shows these hints before it runs a tool, so the four that only look
-// must say so and the one that replaces a value must not.
+// A client shows these hints before it runs a tool, so the ones that only look
+// must say so, the ones that write over a value must say that, and the ones
+// that only add must say they take nothing away.
 func TestToolsCarryTheirHints(t *testing.T) {
+	overwriting := map[string]bool{"set_setting": true, "replace_block": true}
+	adding := map[string]bool{"create_document": true, "append_block": true,
+		"insert_after_heading": true}
 	h := newHarness(t)
 	res, err := h.connect(auth.ScopeRead).ListTools(context.Background(), nil)
 	if err != nil {
@@ -335,9 +347,15 @@ func TestToolsCarryTheirHints(t *testing.T) {
 		if tool.OutputSchema == nil {
 			t.Errorf("%s has no output schema", tool.Name)
 		}
-		if tool.Name == "set_setting" {
+		if overwriting[tool.Name] {
 			if a.ReadOnlyHint || a.DestructiveHint == nil || !*a.DestructiveHint || !a.IdempotentHint {
-				t.Errorf("set_setting = %+v", a)
+				t.Errorf("%s = %+v", tool.Name, a)
+			}
+			continue
+		}
+		if adding[tool.Name] {
+			if a.ReadOnlyHint || a.DestructiveHint == nil || *a.DestructiveHint || a.IdempotentHint {
+				t.Errorf("%s = %+v", tool.Name, a)
 			}
 			continue
 		}

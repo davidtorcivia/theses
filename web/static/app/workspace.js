@@ -5,6 +5,7 @@ import { $, el, clear, num, initials, say, editable } from './dom.js';
 import { state, user, open, emit, hold, canEdit, archived } from './state.js';
 import { send } from './net.js';
 import { renderBoard, boardSummary } from './board.js';
+import { renderDocument } from './docs.js';
 
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
@@ -103,9 +104,5 @@ function pane(p) {
       filters,
       el('span', { class: 'hint mono', text: 'Drag cards between columns. Click a name to rename a column. + on a card assigns.' })),
     board,
-    el('div', { class: 'ph doc-ph' },
-      el('div', { id: 'doctabs', class: 'doctabs' }, el('button', { class: 'dtab on', type: 'button', text: 'Research' })),
-      el('span', { id: 'dsum', class: 'mono', text: 'The document lands in step three.' })),
-    el('div', { id: 'docwrap' }, el('div', { id: 'doc' },
-      el('p', { class: 'empty', text: 'The shared document under the board arrives in step three, with its blocks, its merge and its markdown mirror.' }))));
+    renderDocument());
 }

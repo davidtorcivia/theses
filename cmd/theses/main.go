@@ -87,6 +87,15 @@ func run() error {
 		srv.Backups().Schedule(ctx)
 	}()
 
+	// The markdown mirror and its watcher stop with ctx too. They hold nothing
+	// between a command and the file it writes, so a cancellation in between
+	// costs the next start one file.
+	docsDone := make(chan struct{})
+	go func() {
+		defer close(docsDone)
+		srv.Docs().Run(ctx)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:    cfg.Bind,
 		Handler: srv,
@@ -121,6 +130,7 @@ func run() error {
 		}
 		<-mailDone
 		<-backupDone
+		<-docsDone
 		return <-done
 	}
 }

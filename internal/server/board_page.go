@@ -12,6 +12,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/realtime"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -40,6 +41,7 @@ type shell struct {
 	Propositions   []board.Proposition `json:"propositions"`
 	Open           int64               `json:"open"`
 	Board          *board.Board        `json:"board"`
+	Documents      []docs.Doc          `json:"documents"`
 	Presence       []realtime.Person   `json:"presence"`
 	Can            map[string]bool     `json:"can"`
 }
@@ -169,6 +171,9 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 		return nil, err
 	}
 	state.Board = &b
+	if state.Documents, err = docs.Load(ctx, s.db, state.Open); err != nil {
+		return nil, err
+	}
 	if s.hub != nil {
 		state.Presence = s.hub.Presence(state.Open)
 	}

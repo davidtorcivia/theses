@@ -20,6 +20,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/config"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
 	"github.com/davidtorcivia/theses/internal/realtime"
@@ -47,6 +48,7 @@ type Server struct {
 
 	board *board.Service
 	hub   *realtime.Hub
+	docs  *docs.Service
 
 	dev        bool
 	assets     *assets
@@ -113,6 +115,10 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return board.Defaults{Status: status, Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
 	s.hub = realtime.New(s.board, s.auth, log)
+	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
+		return settings.Get[string](set, "defaults.document_template")
+	}, log)
+	s.api.Docs, s.hub.Docs = s.docs, s.docs
 
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {
 		var n int
@@ -136,6 +142,10 @@ func (s *Server) Mail() *mail.Outbox { return s.mail }
 
 // Backups is the archive scheduler. main runs it and stops it with the process.
 func (s *Server) Backups() *backup.Backup { return s.backups }
+
+// Docs is the document service. main runs its markdown mirror and watcher and
+// stops them with the process.
+func (s *Server) Docs() *docs.Service { return s.docs }
 
 // AddCheck registers a readiness probe. Call it before the server starts serving.
 func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
@@ -181,6 +191,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /p/{id}", s.requireUser(s.getProposition))
 	mux.HandleFunc("GET /p/{id}/settings", s.requireUser(s.getPropositionSettings))
 	mux.HandleFunc("POST /p/{id}/settings", s.requireUser(s.postPropositionSettings))
+	mux.HandleFunc("GET /documents/{id}/revisions", s.requireUser(s.getDocumentRevisions))
 
 	// Both of these authenticate the session themselves, because one of them
 	// answers on a connection the handler chain never gets to write to.

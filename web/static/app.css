@@ -460,3 +460,21 @@ pre.cors{font-family:var(--monof);font-size:11px;line-height:1.6;color:var(--dim
 .env small{display:block;color:var(--dim);font-weight:400;margin-top:.2rem}
 @media (max-width:900px){.env li{grid-template-columns:minmax(0,1fr);gap:.2rem}}
 #work .empty{color:var(--dim);max-width:44ch;margin:4rem 0 0}
+
+/* The document's conflict notice and its history. The mockup drew neither,
+   because nothing in it could refuse a write or remember an older version. */
+.doc-ph .dlinks{margin-left:auto;display:flex;gap:1.2rem;align-items:baseline;padding-bottom:.7rem}
+.blk .notice{border-left-color:#c0392b;color:rgba(0,0,0,.65);font-size:14px;max-width:none;margin:0 0 .6rem}
+.blk .notice .theirs{font-family:var(--monof);font-size:12px;color:var(--k);overflow-wrap:anywhere}
+.blk .notice .choices{display:block;margin-top:.4rem}
+.blk .notice .choices button{color:#c0392b;font-weight:700}
+.blk .notice .choices button+button{margin-left:1.2rem;color:rgba(0,0,0,.6)}
+dialog.history{max-width:44rem;width:calc(100vw - 2rem)}
+.hist{list-style:none;margin:0 0 1rem;padding:0;max-height:9rem;overflow:auto}
+.hist li{display:flex;gap:.6rem;align-items:baseline;padding:.25rem 0;border-bottom:1px solid var(--hair)}
+.hist .mono{color:var(--dim);font-size:12px}
+.diff{font-family:var(--monof);font-size:12px;line-height:1.5;max-height:40vh;overflow:auto;border-left:2px solid var(--hair);padding-left:.8rem}
+.diff div{white-space:pre-wrap;overflow-wrap:anywhere}
+.diff .same{color:var(--dim)}
+.diff .in{color:var(--y)}
+.diff .out{color:#ff5a3c}

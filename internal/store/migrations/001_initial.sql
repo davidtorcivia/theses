@@ -140,6 +140,10 @@ CREATE TABLE comments (
 );
 CREATE INDEX comments_card ON comments(card_id, created_at);
 
+-- revision counts every change to the document's blocks, whoever made it. The
+-- markdown mirror writes it into the file's front matter and the watcher
+-- compares what it reads against what the database holds, which is how an edit
+-- made on disk against a file the browser has since moved past is recognised.
 CREATE TABLE documents (
   id             INTEGER PRIMARY KEY,
   proposition_id INTEGER NOT NULL REFERENCES propositions(id) ON DELETE CASCADE,
@@ -148,6 +152,7 @@ CREATE TABLE documents (
   position       REAL    NOT NULL,
   created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at     INTEGER NOT NULL,
+  revision       INTEGER NOT NULL DEFAULT 0,
   UNIQUE (proposition_id, slug)
 );
 
@@ -339,6 +344,17 @@ END;
 CREATE TRIGGER blocks_au AFTER UPDATE ON blocks BEGIN
   INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
   INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+-- The document's revision moves for every block change, in the database rather
+-- than in the command that made it, so that an undo and anything written later
+-- carry it too. There is no delete trigger: blocks are tombstoned by an update
+-- and only ever removed by the cascade from the document they belong to.
+CREATE TRIGGER blocks_revision_ai AFTER INSERT ON blocks BEGIN
+  UPDATE documents SET revision = revision + 1 WHERE id = new.document_id;
+END;
+CREATE TRIGGER blocks_revision_au AFTER UPDATE ON blocks BEGIN
+  UPDATE documents SET revision = revision + 1 WHERE id = new.document_id;
 END;
 
 CREATE VIRTUAL TABLE links_fts USING fts5(

@@ -66,6 +66,7 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 		Description: "Changes one workspace setting, taking one line per entry for a setting that holds a list.",
 		Annotations: overwrites("Change a setting"),
 	}, s.setSetting)
+	s.addDocumentTools()
 
 	s.srv.AddResource(&sdk.Resource{
 		URI:         WorkspaceURI,
