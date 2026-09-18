@@ -170,6 +170,13 @@ func (s *Server) postNotificationRules(w http.ResponseWriter, r *http.Request) {
 		ticked[event] = append(ticked[event], channel)
 	}
 	if err := notify.SetRules(r.Context(), s.db, s.settings, u.ID, ticked); err != nil {
+		// A failure to read or write is this side's: logged, and answered with
+		// the error page rather than printed to the person as a matrix they
+		// could have posted differently.
+		if errors.Is(err, notify.ErrStorage) {
+			s.fail(w, r, err)
+			return
+		}
 		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
@@ -253,15 +260,17 @@ func (s *Server) postChannel(w http.ResponseWriter, r *http.Request) {
 // saveAndTest is the one path a channel is written by, whoever it belongs to.
 func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Channel, email string,
 	refuse func(http.ResponseWriter, *http.Request, int, map[string]any), back string) {
-	// Email is verified by existing: the address is the account's own. Anything
-	// else that is new, or that now points somewhere else, has to prove it
-	// works, and saying so is the save's job.
-	if c.Kind == notify.KindEmail {
-		c.VerifiedAt = s.auth.Now().Unix()
-	}
+	// Anything that is new, or that now points somewhere else, has to prove it
+	// works before anything is sent to it, and saying so is the save's job.
+	// Email is the exception, verified by SaveChannel because the address is
+	// the account's own.
 	saved, err := notify.SaveChannel(r.Context(), s.db, s.settings, c)
 	if errors.Is(err, store.ErrNotFound) {
 		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if errors.Is(err, notify.ErrStorage) {
+		s.fail(w, r, err)
 		return
 	}
 	if err != nil {

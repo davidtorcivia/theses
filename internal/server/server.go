@@ -120,7 +120,8 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		if len(statuses) > 0 {
 			status = statuses[0]
 		}
-		return board.Defaults{Status: status, Columns: settings.Get[[]string](set, "defaults.columns")}
+		return board.Defaults{Status: status, Statuses: statuses,
+			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
@@ -134,7 +135,9 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	// client, which is the only outbound fetch the app makes.
 	s.blobs = newBuckets()
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
+	s.api.Board, s.api.Files = s.board, s.files
 	mcp.Files(s.mcp, s.files)
+	mcp.Board(s.mcp, s.board, s.files, s.backups.Now)
 
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {
 		var n int
@@ -270,20 +273,10 @@ func (s *Server) routes() http.Handler {
 		s.errorPage(w, r, http.StatusNotFound)
 	})
 
-	// Links and files. The same handlers twice: under /api/v1 for a bearer
-	// token, more specific than the API's own pattern so they win the match,
-	// and under /app for the browser, which has a session instead. The browser
-	// cannot use the first, because /api/ carries no CSRF check.
-	machine := s.api.Authenticate(api.FilesHandler(s.api, s.files))
-	// The card patterns name the two paths attachments use rather than the
-	// whole of /api/v1/cards/, which would shadow the board's own resources
-	// when they land: the outer mux wins on specificity, so a wider pattern
-	// here would take them.
-	for _, pattern := range []string{"/api/v1/links", "/api/v1/links/", "/api/v1/files",
-		"/api/v1/files/", "/api/v1/attachments",
-		"/api/v1/cards/{card}/links/", "/api/v1/cards/{card}/files/"} {
-		mux.Handle(pattern, machine)
-	}
+	// Links and files for a token are part of /api/v1 and live on the API's own
+	// mux. The same handlers under /app are the browser's, which has a session
+	// instead of a token; it cannot use the first, because /api/ carries no
+	// CSRF check.
 	mux.Handle("/app/", s.requireUser(api.SessionHandler(s.api, s.files, userOf).ServeHTTP))
 	mux.HandleFunc("POST /settings/test/cors", s.requireOwner(s.postTestCORS))
 	return mux

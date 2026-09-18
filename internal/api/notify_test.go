@@ -58,7 +58,7 @@ func TestNotificationsRoundTripWithoutSecrets(t *testing.T) {
 		t.Fatalf("saving rules gave %d: %s", w.Code, w.Body)
 	}
 	if w := h.do("PUT", "/api/v1/me/notifications", token,
-		`{"rules":{"nonsense":[`+strconv.FormatInt(id, 10)+`]}}`); w.Code != http.StatusBadRequest {
+		`{"rules":{"nonsense":[`+strconv.FormatInt(id, 10)+`]}}`); w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("an event nobody can tick gave %d", w.Code)
 	}
 
@@ -107,6 +107,25 @@ func TestNotificationsRoundTripWithoutSecrets(t *testing.T) {
 	}
 }
 
+// An email channel goes to the address the account signs in with, so it is
+// verified the moment it is saved. The profile page has always done this; a
+// channel created through the API used to stay silent until somebody found the
+// test button.
+func TestAnEmailChannelIsVerifiedWhereverItIsCreated(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+
+	w := h.do("PUT", "/api/v1/me/notifications", token, `{"channels":[{"kind":"email"}]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+	}
+	var view notificationsView
+	into(t, w, &view)
+	if len(view.Channels) != 1 || !view.Channels[0].Verified {
+		t.Fatalf("channels = %+v, want one verified", view.Channels)
+	}
+}
+
 func TestTestingSomebodyElsesChannelIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -123,5 +142,46 @@ func TestTestingSomebodyElsesChannelIsNotFound(t *testing.T) {
 	if w := h.do("POST", "/api/v1/me/notifications/test", h.token(auth.ScopeWrite),
 		`{"channel":999}`); w.Code != http.StatusNotFound {
 		t.Errorf("a channel that does not exist gave %d", w.Code)
+	}
+}
+
+// A channel the rules will not take is the caller's to correct; a failure to
+// read or write is this side's, logged rather than repeated back.
+func TestANotificationRefusalIsToldApartFromAFailure(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"a kind that is not one", `{"channels":[{"kind":"pigeon"}]}`, http.StatusUnprocessableEntity},
+		{"ntfy with no topic", `{"channels":[{"kind":"ntfy"}]}`, http.StatusUnprocessableEntity},
+		{"a webhook that is not a URL", `{"channels":[{"kind":"webhook","url":"nowhere"}]}`,
+			http.StatusUnprocessableEntity},
+		{"quiet hours that are not a time",
+			`{"channels":[{"kind":"email","quiet_from":"bedtime","quiet_to":"07:00"}]}`,
+			http.StatusUnprocessableEntity},
+		{"a body that is not JSON", `nonsense`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := h.do("PUT", "/api/v1/me/notifications", token, tc.body); w.Code != tc.want {
+				t.Fatalf("answered %d, want %d: %s", w.Code, tc.want, w.Body)
+			}
+		})
+	}
+
+	// With the table gone, the matrix cannot be written, which is a fault on
+	// this side rather than a body to correct.
+	if _, err := h.db.ExecContext(ctx, `DROP TABLE notification_rules`); err != nil {
+		t.Fatal(err)
+	}
+	w := h.do("PUT", "/api/v1/me/notifications", token, `{"rules":{}}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("a failure to write answered %d: %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "notification_rules") {
+		t.Errorf("the answer carries the driver's detail: %s", w.Body)
 	}
 }

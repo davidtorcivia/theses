@@ -303,3 +303,46 @@ func TestNotificationSectionsAreOwnerOnly(t *testing.T) {
 		}
 	}
 }
+
+// A failure to write the matrix is this side's: the error page, a line in the
+// log, and nothing of the database in front of the person.
+func TestAMatrixThatCannotBeWrittenIsTheErrorPage(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	token := h.csrf("/profile")
+
+	if _, err := h.db.ExecContext(ctx, `DROP TABLE notification_rules`); err != nil {
+		t.Fatal(err)
+	}
+	res, body := h.post("/profile/notifications", url.Values{
+		"csrf": {token}, "rule": {"moved:1"},
+	})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("a failure to write the matrix gave %d: %s", res.StatusCode, body)
+	}
+	if strings.Contains(body, "notification_rules") {
+		t.Errorf("the page carries the driver's detail: %s", body)
+	}
+}
+
+// And so is a channel that cannot be saved.
+func TestAChannelThatCannotBeSavedIsTheErrorPage(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	token := h.csrf("/profile")
+
+	if _, err := h.db.ExecContext(ctx, `DROP TABLE notification_channels`); err != nil {
+		t.Fatal(err)
+	}
+	res, body := h.post("/profile/notifications/channel", url.Values{
+		"csrf": {token}, "kind": {"ntfy"}, "topic": {"alerts"},
+	})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("a failure to save a channel gave %d: %s", res.StatusCode, body)
+	}
+	if strings.Contains(body, "notification_channels") {
+		t.Errorf("the page carries the driver's detail: %s", body)
+	}
+}

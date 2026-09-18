@@ -7,7 +7,6 @@ import (
 	"strconv"
 
 	"github.com/davidtorcivia/theses/internal/auth"
-	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -26,19 +25,14 @@ type handler func(http.ResponseWriter, *http.Request, core.Actor)
 // for before the handler runs.
 type wrapper func(scope string, h handler) http.HandlerFunc
 
-// FilesHandler is the links and files routes for a token. The caller mounts it
-// inside Authenticate, the same as the rest of /api/v1.
-func FilesHandler(a *API, svc *files.Service) http.Handler {
-	mux := http.NewServeMux()
-	mount(mux, "/api/v1", a, svc, func(scope string, h handler) http.HandlerFunc {
+// fileRoutes is the links and files routes for a token, registered on the API's
+// own mux beside the rest of /api/v1 so that one mux owns the prefix.
+func (a *API) fileRoutes(mux *http.ServeMux) {
+	mount(mux, "/api/v1", a, a.Files, func(scope string, h handler) http.HandlerFunc {
 		return a.scoped(scope, func(w http.ResponseWriter, r *http.Request, p Principal) {
-			h(w, r, core.Actor{
-				Kind: core.KindUser, ID: p.User.ID, Name: p.User.Name,
-				Via: TokenVia(p.Token.Name),
-			})
+			h(w, r, actorOf(p))
 		})
 	})
-	return mux
 }
 
 // SessionHandler is the same routes under /app for a browser. The caller
@@ -272,30 +266,6 @@ func (f *fileAPI) read(w http.ResponseWriter, r *http.Request, into any) bool {
 		return false
 	}
 	return true
-}
-
-// refuse maps a command's error to a status. Anything not named here is a fault
-// on this side: it is logged with the path and answered without its detail.
-func (f *fileAPI) refuse(w http.ResponseWriter, r *http.Request, err error) {
-	switch {
-	case errors.Is(err, core.ErrNotFound):
-		// A proposition somebody is not a member of answers the same way as one
-		// that does not exist, because the rule is that they are not told.
-		f.fail(w, http.StatusNotFound, "that is not here")
-	case errors.Is(err, core.ErrForbidden):
-		f.fail(w, http.StatusForbidden, "you cannot do that here")
-	case errors.Is(err, files.ErrNoBucket):
-		f.fail(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrEmpty),
-		errors.Is(err, board.ErrTooLong), errors.Is(err, files.ErrKind),
-		errors.Is(err, files.ErrQuestion), errors.Is(err, files.ErrURL),
-		errors.Is(err, files.ErrState), errors.Is(err, files.ErrSize),
-		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
-		errors.Is(err, files.ErrPart):
-		f.fail(w, http.StatusUnprocessableEntity, err.Error())
-	default:
-		f.serverError(w, r, err)
-	}
 }
 
 // path is a numeric path value, zero when it is not one. Zero reaches the

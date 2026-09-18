@@ -397,10 +397,10 @@ func checkWindow(from, to string) error {
 		return nil
 	}
 	if _, ok := minutes(from); !ok {
-		return errors.New("quiet hours start at a time like 23:00")
+		return Refusal("quiet hours start at a time like 23:00")
 	}
 	if _, ok := minutes(to); !ok {
-		return errors.New("quiet hours end at a time like 07:00")
+		return Refusal("quiet hours end at a time like 07:00")
 	}
 	return nil
 }

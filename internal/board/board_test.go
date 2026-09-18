@@ -29,7 +29,8 @@ func setup(t *testing.T) *fixture {
 	ctx := context.Background()
 	db := store.OpenTemp(t)
 	svc := New(core.New(db, core.NewBus()), func() Defaults {
-		return Defaults{Status: "idea", Columns: []string{"Research", "Outline", "Script"}}
+		return Defaults{Status: "idea", Statuses: []string{"idea", "recording"},
+			Columns: []string{"Research", "Outline", "Script"}}
 	})
 
 	f := &fixture{Service: svc, db: db, who: map[string]core.Actor{}}
@@ -778,5 +779,40 @@ func TestUndoRefusesWhenTheOrderingKeyHasBeenTaken(t *testing.T) {
 	}
 	if back.ColumnID != f.cols[0].ID || back.Position != moving.Position {
 		t.Errorf("the card came back to column %d at %q", back.ColumnID, back.Position)
+	}
+}
+
+// The rail groups by status, so a proposition cannot be moved to a word the
+// workspace does not have: the rail would have nowhere to draw it.
+func TestSetStatusTakesOnlyTheWorkspacesStatuses(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	owner := f.who["owner"]
+
+	for _, tc := range []struct {
+		name, status string
+		want         error
+	}{
+		{"one the workspace has", "recording", nil},
+		{"the one it starts on", "idea", nil},
+		{"a word it does not have", "shipped", ErrStatus},
+		{"the same word in another case", "Recording", ErrStatus},
+		{"nothing at all", "   ", ErrEmpty},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := f.SetStatus(ctx, owner, f.prop, tc.status)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("%q gave %v, want %v", tc.status, err, tc.want)
+			}
+		})
+	}
+
+	// A workspace that names no statuses has nothing to check against, so any
+	// word is taken rather than every word refused.
+	was := f.Defaults
+	f.Defaults = func() Defaults { return Defaults{Status: "idea", Columns: []string{"Research"}} }
+	defer func() { f.Defaults = was }()
+	if _, err := f.SetStatus(ctx, owner, f.prop, "shipped"); err != nil {
+		t.Fatalf("a workspace with no statuses refused one: %v", err)
 	}
 }

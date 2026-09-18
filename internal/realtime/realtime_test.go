@@ -40,7 +40,7 @@ func newRig(t *testing.T) *rig {
 	db := store.OpenTemp(t)
 	a := auth.New(db, []byte("a session key of at least thirty-two bytes"), false, false)
 	boards := board.New(core.New(db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research", "Outline"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research", "Outline"}}
 	})
 	hub := New(boards, a, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	hub.Docs = docs.New(boards.Service, "", func() string { return "" },
@@ -263,6 +263,14 @@ func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 	send(t, ws, command{ID: 3, Cmd: "card.nonsense"})
 	if refusal := read(t, ws, "error"); refusal.ID != 3 {
 		t.Errorf("an unknown command got %+v", refusal)
+	}
+
+	// A refusal the tab can act on says what it was. A question that is not one
+	// of the four used to come back as a fault on this side.
+	send(t, ws, command{ID: 4, Cmd: "card.question", Args: args{Card: card.ID, Question: "V"}})
+	if refusal := read(t, ws, "error"); refusal.ID != 4 ||
+		!strings.Contains(refusal.Error, "four questions") {
+		t.Errorf("a question that is not one of the four got %+v", refusal)
 	}
 }
 

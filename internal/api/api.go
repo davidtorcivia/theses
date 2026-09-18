@@ -13,7 +13,9 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/docs"
+	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -26,6 +28,12 @@ type API struct {
 	log  *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
+	// Files is the links and files service, set the same way. Its routes live
+	// on this mux rather than the server's, so one mux owns /api/v1.
+	Files *files.Service
+	// Board is the proposition and board commands, set the same way. Every
+	// board route is one of them with a token's actor.
+	Board *board.Service
 }
 
 func New(db *store.DB, a *auth.Auth, set *settings.Settings, log *slog.Logger) *API {
@@ -203,6 +211,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings", a.scoped(auth.ScopeAdmin, a.getSettings))
 	mux.HandleFunc("PUT /api/v1/settings/{key}", a.scoped(auth.ScopeAdmin, a.putSetting))
 	a.documentRoutes(mux)
+	a.fileRoutes(mux)
+	a.boardRoutes(mux)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})
@@ -277,18 +287,26 @@ func (a *API) Reader(p Principal) search.Reader {
 	return search.Member(p.User.ID)
 }
 
-type activityJSON struct {
-	ID            int64           `json:"id"`
-	PropositionID int64           `json:"proposition_id,omitempty"`
-	ActorKind     string          `json:"actor_kind"`
-	ActorID       string          `json:"actor_id"`
-	Entity        string          `json:"entity"`
-	EntityID      string          `json:"entity_id"`
-	Action        string          `json:"action"`
-	Before        json.RawMessage `json:"before,omitempty"`
-	After         json.RawMessage `json:"after,omitempty"`
-	CreatedAt     int64           `json:"created_at"`
-	UndoneAt      int64           `json:"undone_at,omitempty"`
+// An ActivityView is one row of the log as both surfaces report it. Via names
+// the token or the MCP client that carried the change, and is absent when a
+// browser made it.
+type ActivityView struct {
+	ID            int64  `json:"id"`
+	PropositionID int64  `json:"proposition_id,omitempty"`
+	ActorKind     string `json:"actor_kind"`
+	ActorID       string `json:"actor_id"`
+	Via           string `json:"via,omitempty"`
+	Entity        string `json:"entity"`
+	EntityID      string `json:"entity_id"`
+	Action        string `json:"action"`
+	// Before and After are the entity as it was and as it is, decoded rather
+	// than passed through as raw JSON so that a schema built from this type
+	// says what they are: anything the log holds, which is an object for most
+	// rows and a bare value for a few.
+	Before    any   `json:"before,omitempty"`
+	After     any   `json:"after,omitempty"`
+	CreatedAt int64 `json:"created_at"`
+	UndoneAt  int64 `json:"undone_at,omitempty"`
 }
 
 // The default page of activity and the most one request may ask for.
@@ -315,20 +333,31 @@ const workspaceWide = `'setting', 'user', 'invitation', 'api_token', 'backup'`
 // given. Ids are used and not timestamps because created_at is whole seconds
 // and a busy second holds many rows.
 func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
-	limit := intParam(r, "limit", activityLimit)
+	out, err := a.Activity(r.Context(), p, int64(intParam(r, "since", 0)), intParam(r, "limit", activityLimit))
+	if err != nil {
+		a.serverError(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"activity": out})
+}
+
+// Activity is the page of the log this token may read, for both surfaces. A
+// limit of zero or less is the default one and anything over the maximum is cut
+// to it, so a caller cannot ask for the whole table.
+func (a *API) Activity(ctx context.Context, p Principal, since int64, limit int) ([]ActivityView, error) {
 	if limit <= 0 {
 		limit = activityLimit
 	}
 	if limit > activityMaxLimit {
 		limit = activityMaxLimit
 	}
-	query := `SELECT id, proposition_id, actor_kind, actor_id,
+	query := `SELECT id, proposition_id, actor_kind, actor_id, via,
 		entity, entity_id, action, before_json, after_json, created_at, undone_at
 		FROM activity WHERE id > ?`
 	if !p.Allowed(auth.ScopeAdmin) {
 		query += ` AND entity NOT IN (` + administration + `)`
 	}
-	args := []any{intParam(r, "since", 0)}
+	args := []any{since}
 	// A row about a proposition is readable the way the proposition is. Rows
 	// about the workspace itself are readable by anyone, but carrying no
 	// proposition is not enough to be one: a deleted proposition's row carries
@@ -343,50 +372,40 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
 		}
 		args = append(args, id)
 	}
-	rows, err := a.db.QueryContext(r.Context(), query+` ORDER BY id LIMIT ?`,
-		append(args, limit)...)
+	rows, err := a.db.QueryContext(ctx, query+` ORDER BY id LIMIT ?`, append(args, limit)...)
 	if err != nil {
-		a.serverError(w, r, err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
-	out := []activityJSON{}
+	out := []ActivityView{}
 	for rows.Next() {
-		var e activityJSON
+		var e ActivityView
 		var prop, undone sql.NullInt64
-		var before, after sql.NullString
-		if err := rows.Scan(&e.ID, &prop, &e.ActorKind, &e.ActorID, &e.Entity, &e.EntityID,
+		var via, before, after sql.NullString
+		if err := rows.Scan(&e.ID, &prop, &e.ActorKind, &e.ActorID, &via, &e.Entity, &e.EntityID,
 			&e.Action, &before, &after, &e.CreatedAt, &undone); err != nil {
-			a.serverError(w, r, err)
-			return
+			return nil, err
 		}
-		e.PropositionID, e.UndoneAt = prop.Int64, undone.Int64
-		e.Before, e.After = jsonOrString(before), jsonOrString(after)
+		e.PropositionID, e.UndoneAt, e.Via = prop.Int64, undone.Int64, via.String
+		e.Before, e.After = payload(before), payload(after)
 		out = append(out, e)
 	}
-	if err := rows.Err(); err != nil {
-		a.serverError(w, r, err)
-		return
-	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"activity": out})
+	return out, rows.Err()
 }
 
-// jsonOrString is an activity column as JSON. Most hold the JSON of an entity,
-// but a few hold a bare value such as a role name, and quoting those is what
-// keeps one of them from making the whole page unencodable.
-func jsonOrString(v sql.NullString) json.RawMessage {
+// payload is an activity column as a value. Most hold the JSON of an entity,
+// but a few hold a bare value such as a role name, and reporting one of those
+// as the string it is keeps it from making the whole page unencodable.
+func payload(v sql.NullString) any {
 	if !v.Valid {
 		return nil
 	}
-	if json.Valid([]byte(v.String)) {
-		return json.RawMessage(v.String)
+	var out any
+	if err := json.Unmarshal([]byte(v.String), &out); err != nil {
+		return v.String
 	}
-	quoted, err := json.Marshal(v.String)
-	if err != nil {
-		return nil
-	}
-	return quoted
+	return out
 }
 
 // A SettingView is one setting as both surfaces report it.
@@ -475,11 +494,13 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 		// Set validates against the key's definition, so what it complains about
 		// is the client's fault and worth repeating word for word. A failure to
 		// store is not, and carries driver detail that says nothing to a client.
+		// A value the definition refuses is 422 like every other body the rules
+		// turn down; a body that is not JSON at all is the 400 above.
 		if errors.Is(err, settings.ErrStorage) {
 			a.serverError(w, r, err)
 			return
 		}
-		a.fail(w, http.StatusBadRequest, err.Error())
+		a.fail(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	a.writeJSON(w, http.StatusOK, a.Describe(def))

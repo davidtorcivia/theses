@@ -39,7 +39,7 @@ func setup(t *testing.T, dir string) *fixture {
 	db := store.OpenTemp(t)
 	c := core.New(db, core.NewBus())
 	b := board.New(c, func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	svc := New(c, dir, func() string { return "# {statement}\n\n## Is it true?\n## Who pays?" }, discard())
 

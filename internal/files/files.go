@@ -13,6 +13,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -73,6 +74,9 @@ var (
 	ErrCrossBucket = errors.New("that folder is in another bucket; download it and upload it again")
 	// ErrPart is a part number outside the ones this upload has.
 	ErrPart = errors.New("that part number is not in this upload")
+	// ErrBadSize is an upload that declares nothing to send or more than the
+	// largest object this app takes.
+	ErrBadSize = fmt.Errorf("a file has to be between 1 byte and %d bytes", int64(maxFileSize))
 )
 
 // Kinds a link may be. The list is the one the drawer offers and the one

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -54,9 +55,10 @@ func newHarness(t *testing.T) *harness {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	api := New(db, a, set, log)
 	b := board.New(core.New(db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	api.Docs = docs.New(b.Service, "", func() string { return "" }, log)
+	api.Board = b
 	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), user: user,
 		board: b, docs: api.Docs}
 }
@@ -293,9 +295,9 @@ func TestSettingsWriteRefusesWhatSettingsRefuses(t *testing.T) {
 		want               int
 	}{
 		{"unknown key", "/api/v1/settings/not.a.key", `{"value":"x"}`, http.StatusNotFound},
-		{"not a number", "/api/v1/settings/signin.session_days", `{"value":"soon"}`, http.StatusBadRequest},
-		{"out of range", "/api/v1/settings/signin.session_days", `{"value":4000}`, http.StatusBadRequest},
-		{"not a choice", "/api/v1/settings/workspace.release_day", `{"value":"Caturday"}`, http.StatusBadRequest},
+		{"not a number", "/api/v1/settings/signin.session_days", `{"value":"soon"}`, http.StatusUnprocessableEntity},
+		{"out of range", "/api/v1/settings/signin.session_days", `{"value":4000}`, http.StatusUnprocessableEntity},
+		{"not a choice", "/api/v1/settings/workspace.release_day", `{"value":"Caturday"}`, http.StatusUnprocessableEntity},
 		{"not JSON", "/api/v1/settings/workspace.name", `hello`, http.StatusBadRequest},
 		{"no value", "/api/v1/settings/workspace.name", `{}`, http.StatusBadRequest},
 		{"list of numbers", "/api/v1/settings/defaults.columns", `{"value":[1,2]}`, http.StatusBadRequest},
@@ -648,7 +650,7 @@ func TestSearchAndActivityShowOnlyWhatMembershipAllows(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")
@@ -682,10 +684,10 @@ func TestSearchAndActivityShowOnlyWhatMembershipAllows(t *testing.T) {
 		}
 		return all
 	}
-	rows := func() []activityJSON {
+	rows := func() []ActivityView {
 		t.Helper()
 		var body struct {
-			Activity []activityJSON `json:"activity"`
+			Activity []ActivityView `json:"activity"`
 		}
 		into(t, h.do("GET", "/api/v1/activity", read, ""), &body)
 		return body.Activity
@@ -740,7 +742,7 @@ func TestADeletedPropositionIsNotReadableByEverybody(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")
@@ -765,7 +767,7 @@ func TestADeletedPropositionIsNotReadableByEverybody(t *testing.T) {
 
 	w := h.do("GET", "/api/v1/activity?limit=200", h.token(auth.ScopeRead), "")
 	var body struct {
-		Activity []activityJSON `json:"activity"`
+		Activity []ActivityView `json:"activity"`
 	}
 	into(t, w, &body)
 	for _, row := range body.Activity {
@@ -784,5 +786,37 @@ func TestADeletedPropositionIsNotReadableByEverybody(t *testing.T) {
 	if !strings.Contains(h.do("GET", "/api/v1/activity?limit=200", h.token(auth.ScopeRead), "").Body.String(),
 		"The tide is a battery") {
 		t.Error("an owner cannot read what the deletion took away")
+	}
+}
+
+// A change made with a token is the token owner's, carried by the token. The
+// log says which, so the activity panel can tell an agent's edit from a
+// person's without the two being different people.
+func TestActivityNamesWhatCarriedTheChange(t *testing.T) {
+	h := newHarness(t)
+	prop := h.proposition()
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+
+	w := h.do("POST", fmt.Sprintf("/api/v1/propositions/%d/documents", prop), token, `{"name":"Research"}`)
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+
+	w = h.do("GET", "/api/v1/activity?limit=200", token, "")
+	var body struct {
+		Activity []ActivityView `json:"activity"`
+	}
+	into(t, w, &body)
+	var carried string
+	for _, row := range body.Activity {
+		if row.Entity == "document" && row.Action == "create" {
+			carried = row.Via
+		}
+		if row.Entity == "proposition" && row.Via != "" {
+			t.Errorf("a change made in the browser names a carrier: %q", row.Via)
+		}
+	}
+	if want := TokenVia("read-write"); carried != want {
+		t.Errorf("via = %q, want %q", carried, want)
 	}
 }

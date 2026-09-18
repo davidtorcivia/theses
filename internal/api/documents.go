@@ -1,14 +1,10 @@
 package api
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/davidtorcivia/theses/internal/auth"
-	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
 )
@@ -54,7 +50,7 @@ func (a *API) listDocuments(w http.ResponseWriter, r *http.Request, p Principal)
 	}
 	list, err := a.Docs.Documents(r.Context(), p.User, id)
 	if err != nil {
-		a.documentError(w, r, err)
+		a.refuse(w, r, err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"documents": list})
@@ -67,7 +63,7 @@ func (a *API) readDocument(w http.ResponseWriter, r *http.Request, p Principal) 
 	}
 	doc, err := a.Docs.Document(r.Context(), p.User, id)
 	if err != nil {
-		a.documentError(w, r, err)
+		a.refuse(w, r, err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{
@@ -120,7 +116,7 @@ func (a *API) listRevisions(w http.ResponseWriter, r *http.Request, p Principal)
 	}
 	list, err := a.Docs.History(r.Context(), p.User, id)
 	if err != nil {
-		a.documentError(w, r, err)
+		a.refuse(w, r, err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"revisions": list})
@@ -135,13 +131,15 @@ func (a *API) createRevision(w http.ResponseWriter, r *http.Request, p Principal
 	if !ok {
 		return
 	}
-	// A revision asked for over the API is one somebody asked for, whatever
-	// they called it; the timer and the importer keep their own.
-	if body.Reason == "" {
-		body.Reason = docs.ReasonManual
+	// A revision asked for over the API is one somebody asked for. The timer's
+	// reason and the importer's belong to the timer and the importer, so naming
+	// one here is refused rather than quietly filed under it.
+	if body.Reason != "" && body.Reason != docs.ReasonManual {
+		a.refuse(w, r, docs.ErrReason)
+		return
 	}
 	a.applied(w, r, p, func() (core.Event, error) {
-		return a.Docs.CreateRevision(r.Context(), actorOf(p), id, body.Reason)
+		return a.Docs.CreateRevision(r.Context(), actorOf(p), id, docs.ReasonManual)
 	})
 }
 
@@ -208,7 +206,7 @@ func actorOf(p Principal) core.Actor {
 func (a *API) applied(w http.ResponseWriter, r *http.Request, _ Principal, run func() (core.Event, error)) {
 	e, err := run()
 	if err != nil {
-		a.documentError(w, r, err)
+		a.refuse(w, r, err)
 		return
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"event": e})
@@ -227,41 +225,5 @@ func (a *API) pathID(w http.ResponseWriter, r *http.Request, what string) (int64
 // that a delete or a move to the head need send nothing.
 func (a *API) documentBody(w http.ResponseWriter, r *http.Request) (documentBody, bool) {
 	var body documentBody
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		if errors.Is(err, io.EOF) {
-			return body, true
-		}
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return body, false
-		}
-		a.fail(w, http.StatusBadRequest, "the body must be JSON")
-		return body, false
-	}
-	return body, true
-}
-
-// documentError maps one refusal to one status. A caller who may not read the
-// proposition and one asking about a document that is not there are told the
-// same thing, because core answers the role and the membership with one error
-// and saying which would say whether the row is there.
-func (a *API) documentError(w http.ResponseWriter, r *http.Request, err error) {
-	var clash *core.ConflictError
-	switch {
-	case errors.As(err, &clash):
-		a.writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "that changed while you were editing it", "conflict": clash})
-	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
-		a.fail(w, http.StatusNotFound, "that is not there")
-	case errors.Is(err, board.ErrArchived):
-		a.fail(w, http.StatusConflict, err.Error())
-	case errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong),
-		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrReason),
-		errors.Is(err, docs.ErrTooManyDocuments):
-		a.fail(w, http.StatusBadRequest, err.Error())
-	default:
-		a.serverError(w, r, err)
-	}
+	return body, a.decode(w, r, &body)
 }

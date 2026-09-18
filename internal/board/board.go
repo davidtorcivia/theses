@@ -22,6 +22,10 @@ var Questions = []string{"I", "II", "III", "IV"}
 type Defaults struct {
 	Status  string
 	Columns []string
+	// Statuses is the whole list the rail groups by, so a command can refuse a
+	// status the board would have nowhere to draw. An empty list is a workspace
+	// that names none, and then any word is taken.
+	Statuses []string
 }
 
 type Service struct {

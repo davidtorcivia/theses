@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
@@ -623,5 +624,54 @@ func TestARefusedSectionLeavesNothingBehind(t *testing.T) {
 	// proposition itself, so neither refused section should have left a row.
 	if rows != 0 {
 		t.Errorf("%d column and member rows in activity, want none from a refused section", rows)
+	}
+}
+
+// The stream says what carried a change as well as who made it, so a tab can
+// draw an agent's edit differently from the same person's own.
+func TestTheEventStreamNamesWhatCarriedTheChange(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := owner
+	agent.Via = api.ClientVia("research agent")
+	if _, err := h.srv.board.SetStatus(ctx, agent, e.EntityID, "recording"); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest("GET",
+		h.http.URL+"/api/v1/propositions/"+strconv.FormatInt(e.EntityID, 10)+"/events?since=0&wait=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+h.apiToken(auth.ScopeRead))
+	res, err := h.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+
+	var got struct {
+		Events []core.Event `json:"events"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) == 0 {
+		t.Fatalf("the stream is %s", body)
+	}
+	last := got.Events[len(got.Events)-1]
+	if last.Action != "status" || last.Actor.Via != api.ClientVia("research agent") {
+		t.Errorf("last event = %+v", last)
+	}
+	if got.Events[0].Actor.Via != "" {
+		t.Errorf("a change made in the browser names a carrier: %q", got.Events[0].Actor.Via)
 	}
 }

@@ -159,6 +159,7 @@ func reason(err error) string {
 	case errors.Is(err, core.ErrNotUndoable), errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty),
 		errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong),
+		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
 		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrTooManyDocuments):
 		return err.Error()
 	default:

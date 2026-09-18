@@ -4,6 +4,7 @@
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
 import { state, user, emit, hold, canEdit, material } from './state.js';
+import { send } from './net.js';
 import * as api from './api.js';
 
 export function renderLinks(pane) {
@@ -214,6 +215,7 @@ export function renderLinkDrawer(drawer) {
       class: 'lnk', type: 'button', text: 'Copy citation',
       onclick: (e) => copy(link.citation || '', e.currentTarget),
     }));
+  if (canEdit() && state.documents.length) buttons.append(sendToDoc(link));
   if (canEdit()) {
     buttons.append(el('button', {
       class: 'lnk', type: 'button', text: 'Fetch again',
@@ -251,6 +253,35 @@ export function renderLinkDrawer(drawer) {
 function close() {
   state.openLink = null;
   emit();
+}
+
+// sendToDoc puts the citation at the end of one of the proposition's documents.
+// It is the same block.insert the document itself sends, so the paragraph
+// arrives in every other tab the way any other one does.
+function sendToDoc(link) {
+  const pick = el('select', { 'aria-label': 'Send the citation to a document' },
+    el('option', { value: '', text: 'Send to doc' }));
+  for (const doc of state.documents) {
+    pick.append(el('option', { value: String(doc.id), text: doc.name }));
+  }
+  pick.addEventListener('change', async () => {
+    const doc = state.documents.find((d) => String(d.id) === pick.value);
+    pick.value = '';
+    if (!doc) return;
+    const blocks = doc.blocks || [];
+    const text = link.citation || link.title || link.url;
+    try {
+      await send('block.insert', {
+        document: doc.id,
+        after: blocks.length ? blocks[blocks.length - 1].id : 0,
+        text,
+      });
+      say('Sent to ' + doc.name + '.');
+    } catch (err) {
+      say(err.message);
+    }
+  });
+  return pick;
 }
 
 function props(link) {

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,6 +29,11 @@ var (
 	ErrArchived = errors.New("that proposition is archived; restore it first")
 	// ErrTooLong is a field with more in it than the field is for.
 	ErrTooLong = errors.New("that is longer than this field takes")
+	// ErrQuestion is a card filed under something that is not one of the four.
+	ErrQuestion = errors.New("that is not one of the four questions")
+	// ErrStatus is a proposition moved to a status the workspace does not have,
+	// which the rail would have no column to draw it in.
+	ErrStatus = errors.New("that is not one of the workspace's statuses")
 )
 
 // What a field on the board holds. A status or a date is a word, a title is a
@@ -268,6 +272,12 @@ func (s *Service) SetStatus(ctx context.Context, a core.Actor, id int64, status 
 	if status == "" {
 		return core.Event{}, ErrEmpty
 	}
+	// The rail groups by status, so a word that is not on the workspace's list
+	// is a proposition it has nowhere to draw. A workspace that names no
+	// statuses at all is one nothing can be checked against.
+	if known := s.Defaults().Statuses; len(known) > 0 && !slices.Contains(known, status) {
+		return core.Event{}, ErrStatus
+	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "status", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
 		_, err := tx.ExecContext(ctx, `UPDATE propositions SET status = ? WHERE id = ?`, status, id)
 		return err
@@ -349,10 +359,17 @@ func (s *Service) member(ctx context.Context, a core.Actor, proposition, user in
 			}
 			return core.Change{Entity: "member", EntityID: user, Action: "add", After: row}, nil
 		}
-		if _, err := tx.ExecContext(ctx,
+		res, err := tx.ExecContext(ctx,
 			`DELETE FROM proposition_members WHERE proposition_id = ? AND user_id = ?`,
-			proposition, user); err != nil {
+			proposition, user)
+		if err != nil {
 			return core.Change{}, err
+		}
+		// Taking off somebody who was never on is nothing happening, and an
+		// activity row and an event saying it happened would be a lie every
+		// board watching would draw.
+		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			return core.Change{}, core.ErrNotFound
 		}
 		return core.Change{Entity: "member", EntityID: user, Action: "remove", Before: row}, nil
 	})
@@ -658,7 +675,7 @@ func (s *Service) SetCardDue(ctx context.Context, a core.Actor, id int64, due st
 func (s *Service) SetCardQuestion(ctx context.Context, a core.Actor, id int64, question string) (core.Event, error) {
 	question = strings.TrimSpace(question)
 	if question != "" && !slices.Contains(Questions, question) {
-		return core.Event{}, fmt.Errorf("%q is not one of the four questions", question)
+		return core.Event{}, ErrQuestion
 	}
 	return s.card(ctx, a, id, auth.CanEdit, "question", func(ctx context.Context, tx *sql.Tx, _ Card) error {
 		_, err := tx.ExecContext(ctx, `UPDATE cards SET question = ? WHERE id = ?`, value(question), id)

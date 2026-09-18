@@ -33,9 +33,12 @@ type fileHarness struct {
 	owner   *store.User
 	// stranger is an editor who is a member of nothing.
 	stranger *store.User
-	prop     int64
-	card     int64
-	page     string
+	// board is the command service behind the same core, for the tests that
+	// have to put a proposition into a state the routes cannot.
+	board *board.Service
+	prop  int64
+	card  int64
+	page  string
 }
 
 func newFileHarness(t *testing.T) *fileHarness {
@@ -59,7 +62,7 @@ func newFileHarness(t *testing.T) *fileHarness {
 
 	c := core.New(h.db, core.NewBus())
 	b := board.New(c, func() board.Defaults {
-		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+		return board.Defaults{Status: "idea", Statuses: []string{"idea", "recording"}, Columns: []string{"Research"}}
 	})
 	svc := files.New(c, func(context.Context, string) (*blob.Client, error) { return bucket, nil },
 		safehttp.Client(safehttp.AllowLoopback()))
@@ -99,9 +102,10 @@ func newFileHarness(t *testing.T) *fileHarness {
 	t.Cleanup(page.Close)
 
 	api := New(h.db, h.auth, h.set, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	api.Files = svc
 	return &fileHarness{
-		T: t, db: h.db, auth: h.auth, svc: svc,
-		handler: api.Authenticate(FilesHandler(api, svc)),
+		T: t, db: h.db, auth: h.auth, svc: svc, board: b,
+		handler: api.Handler(),
 		owner:   h.user, stranger: stranger, prop: e.EntityID, card: card.EntityID,
 		page: page.URL,
 	}
