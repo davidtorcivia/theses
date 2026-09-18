@@ -1,0 +1,340 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/settings"
+	"github.com/davidtorcivia/theses/internal/store"
+)
+
+type columnRow struct {
+	ID          int64
+	Name        string
+	Cards       int
+	First, Last bool
+}
+
+type propositionMember struct {
+	person
+	On bool
+}
+
+func (s *Server) getPropositionSettings(w http.ResponseWriter, r *http.Request) {
+	extra := map[string]any{}
+	if r.URL.Query().Get("saved") != "" {
+		extra["Notice"] = "Saved."
+	}
+	s.renderPropositionSettings(w, r, http.StatusOK, extra)
+}
+
+func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Request, status int, extra map[string]any) {
+	ctx := r.Context()
+	me := userOf(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	readable, err := board.Readable(ctx, s.db, me, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if !readable {
+		// Not a member is not told it is there, which is the same answer as
+		// not there at all.
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	p, err := board.GetProposition(ctx, s.db, id)
+	if errors.Is(err, core.ErrNotFound) {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	users, err := store.ListUsers(ctx, s.db)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	members := make([]propositionMember, 0, len(users))
+	for _, u := range users {
+		m := propositionMember{person: person{ID: u.ID, Handle: u.Handle, Name: u.Name,
+			Initials: u.Initials, Colour: colourClass(u.Colour), Role: u.Role}}
+		for _, id := range p.Members {
+			if id == u.ID {
+				m.On = true
+			}
+		}
+		members = append(members, m)
+	}
+
+	cols, err := board.ListColumns(ctx, s.db, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	b, err := board.Load(ctx, s.db, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	counts := map[int64]int{}
+	for _, c := range b.Cards {
+		counts[c.ColumnID]++
+	}
+	rows := make([]columnRow, 0, len(cols))
+	for i, c := range cols {
+		rows = append(rows, columnRow{ID: c.ID, Name: c.Name, Cards: counts[c.ID],
+			First: i == 0, Last: i == len(cols)-1})
+	}
+
+	doc, err := board.GetDocumentSettings(ctx, s.db, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	// The page carries the same payload the board does, so the rail beside it,
+	// the initials in the top bar and the palette are the same live ones.
+	payload, err := s.shellPayload(r, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+
+	statuses := make([]option, 0, 5)
+	for _, st := range settings.Get[[]string](s.settings, "defaults.statuses") {
+		statuses = append(statuses, option{Value: st, Label: st, On: st == p.Status})
+	}
+
+	data := s.page(r, number(p.Number)+" "+p.Title, merge(map[string]any{
+		"Payload":  payload,
+		"P":        p,
+		"Num":      number(p.Number),
+		"Episode":  deref(p.Episode),
+		"Target":   deref(p.TargetDate),
+		"Archived": p.ArchivedAt != nil,
+		"Statuses": statuses,
+		"Members":  members,
+		"Columns":  rows,
+		"Doc":      doc,
+		"CanEdit":  auth.Can(me.Role, auth.CanEdit) && p.ArchivedAt == nil,
+		"CanDel":   auth.Can(me.Role, auth.CanDelete),
+	}, extra))
+	s.render(w, r, status, "prop_settings.html", data)
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// postPropositionSettings runs one section's save. Every branch is a core
+// command, so the board watching this proposition sees the change arrive.
+func (s *Server) postPropositionSettings(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	me := userOf(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	actor := core.Actor{Kind: core.KindUser, ID: me.ID, Name: me.Name}
+	form := r.PostForm
+
+	// A section is one form and several commands, so every field in it is
+	// checked before the first of them runs. Without this a refusal halfway
+	// down leaves the ones above it applied and the page redrawn with the
+	// person's own unsaved values beside them.
+	if err := lengths(form); err != nil {
+		s.renderPropositionSettings(w, r, http.StatusUnprocessableEntity,
+			map[string]any{"Error": err.Error()})
+		return
+	}
+
+	var refused error
+	switch form.Get("do") {
+	case "proposition":
+		_, refused = s.board.EditProposition(ctx, actor, id,
+			form.Get("title"), form.Get("statement"), form.Get("blurb"))
+	case "schedule":
+		// A section is several commands and one save, so they go in together:
+		// a refusal on the second must not leave the first applied.
+		refused = s.board.Together(ctx, func(ctx context.Context) error {
+			if _, err := s.board.SetStatus(ctx, actor, id, form.Get("status")); err != nil {
+				return err
+			}
+			_, err := s.board.Schedule(ctx, actor, id, form.Get("episode"), form.Get("target"))
+			return err
+		})
+	case "members":
+		refused = s.board.Together(ctx, func(ctx context.Context) error {
+			return s.saveMembers(ctx, actor, id, form["member"])
+		})
+	case "columns":
+		refused = s.board.Together(ctx, func(ctx context.Context) error {
+			return s.saveColumns(ctx, actor, id, form)
+		})
+	case "document":
+		_, refused = s.board.SetDocumentSettings(ctx, actor, id, board.DocumentSettings{
+			OpenEditing: form.Get("open_editing") != "",
+			History:     form.Get("history") != "",
+			Publish:     form.Get("publish") != "",
+		})
+	case "archive":
+		_, refused = s.board.ArchiveProposition(ctx, actor, id)
+	case "restore":
+		_, refused = s.board.RestoreProposition(ctx, actor, id)
+	case "delete":
+		if _, refused = s.board.DeleteProposition(ctx, actor, id); refused == nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+	default:
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+
+	switch {
+	case errors.Is(refused, core.ErrForbidden):
+		s.errorPage(w, r, http.StatusForbidden)
+	case errors.Is(refused, core.ErrNotFound):
+		s.errorPage(w, r, http.StatusNotFound)
+	case refused != nil:
+		s.renderPropositionSettings(w, r, http.StatusUnprocessableEntity,
+			map[string]any{"Error": refused.Error()})
+	default:
+		http.Redirect(w, r, "/p/"+strconv.FormatInt(id, 10)+"/settings?saved=1", http.StatusSeeOther)
+	}
+}
+
+// sectionFields is every text field a section can post and how long it may be.
+// A field a section does not post is absent from the form and unchecked.
+var sectionFields = map[string]int{
+	"title":     board.MaxLine,
+	"statement": board.MaxLine,
+	"blurb":     board.MaxBody,
+	"status":    board.MaxWord,
+	"episode":   board.MaxWord,
+	"target":    board.MaxWord,
+	"add":       board.MaxLine,
+}
+
+// lengths checks every field of a section against the cap the board would
+// refuse it with, before any of the section's commands runs.
+func lengths(form url.Values) error {
+	for name, most := range sectionFields {
+		if !form.Has(name) {
+			continue
+		}
+		if _, err := board.Field(form.Get(name), most); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	// The column names are one field each, named after the column they rename.
+	for name, values := range form {
+		if !strings.HasPrefix(name, "name-") {
+			continue
+		}
+		if _, err := board.Field(values[0], board.MaxLine); err != nil {
+			return fmt.Errorf("a column name: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Server) saveMembers(ctx context.Context, actor core.Actor, id int64, wanted []string) error {
+	p, err := board.GetProposition(ctx, s.db, id)
+	if err != nil {
+		return err
+	}
+	on := map[int64]bool{}
+	for _, v := range wanted {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			on[n] = true
+		}
+	}
+	was := map[int64]bool{}
+	for _, m := range p.Members {
+		was[m] = true
+		if !on[m] {
+			if _, err := s.board.RemoveMember(ctx, actor, id, m); err != nil {
+				return err
+			}
+		}
+	}
+	for m := range on {
+		if !was[m] {
+			if _, err := s.board.AddMember(ctx, actor, id, m); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// saveColumns applies the one control that was pressed, then the renames, so
+// that a reorder and a retitle in the same submission both land.
+func (s *Server) saveColumns(ctx context.Context, actor core.Actor, id int64, form url.Values) error {
+	cols, err := board.ListColumns(ctx, s.db, id)
+	if err != nil {
+		return err
+	}
+	index := map[int64]int{}
+	for i, c := range cols {
+		index[c.ID] = i
+	}
+
+	if v := strings.TrimSpace(form.Get("add")); v != "" {
+		if _, err := s.board.CreateColumn(ctx, actor, id, v); err != nil {
+			return err
+		}
+	}
+	if n, err := strconv.ParseInt(form.Get("remove"), 10, 64); err == nil {
+		if _, err := s.board.DeleteColumn(ctx, actor, n); err != nil {
+			return err
+		}
+	}
+	// Up means after the one two places above; down means after the next one.
+	if n, err := strconv.ParseInt(form.Get("up"), 10, 64); err == nil {
+		after := int64(0)
+		if i := index[n]; i >= 2 {
+			after = cols[i-2].ID
+		}
+		if _, err := s.board.MoveColumn(ctx, actor, n, after); err != nil {
+			return err
+		}
+	}
+	if n, err := strconv.ParseInt(form.Get("down"), 10, 64); err == nil {
+		if i := index[n]; i+1 < len(cols) {
+			if _, err := s.board.MoveColumn(ctx, actor, n, cols[i+1].ID); err != nil {
+				return err
+			}
+		}
+	}
+	for _, c := range cols {
+		name := strings.TrimSpace(form.Get("name-" + strconv.FormatInt(c.ID, 10)))
+		if name != "" && name != c.Name {
+			if _, err := s.board.RenameColumn(ctx, actor, c.ID, name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

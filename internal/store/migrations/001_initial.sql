@@ -79,7 +79,7 @@ CREATE TABLE propositions (
   target_date TEXT,
   released_at INTEGER,
   duration    INTEGER,
-  position    REAL    NOT NULL,
+  position    TEXT    NOT NULL,
   created_at  INTEGER NOT NULL,
   archived_at INTEGER
 );
@@ -95,7 +95,7 @@ CREATE TABLE columns (
   id             INTEGER PRIMARY KEY,
   proposition_id INTEGER NOT NULL REFERENCES propositions(id) ON DELETE CASCADE,
   name           TEXT    NOT NULL,
-  position       REAL    NOT NULL
+  position       TEXT    NOT NULL
 );
 CREATE INDEX columns_proposition ON columns(proposition_id, position);
 
@@ -103,7 +103,7 @@ CREATE TABLE cards (
   id             INTEGER PRIMARY KEY,
   proposition_id INTEGER NOT NULL REFERENCES propositions(id) ON DELETE CASCADE,
   column_id      INTEGER NOT NULL REFERENCES columns(id) ON DELETE CASCADE,
-  position       REAL    NOT NULL,
+  position       TEXT    NOT NULL,
   title          TEXT    NOT NULL,
   description_md TEXT    NOT NULL DEFAULT '',
   question       TEXT CHECK (question IN ('I','II','III','IV')),
@@ -114,6 +114,7 @@ CREATE TABLE cards (
   version        INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX cards_column ON cards(column_id, position);
+CREATE INDEX cards_proposition ON cards(proposition_id);
 
 CREATE TABLE card_assignees (
   card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
@@ -126,7 +127,7 @@ CREATE TABLE checklist_items (
   card_id  INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
   text     TEXT    NOT NULL,
   done     INTEGER NOT NULL DEFAULT 0,
-  position REAL    NOT NULL
+  position TEXT    NOT NULL
 );
 CREATE INDEX checklist_items_card ON checklist_items(card_id, position);
 
@@ -230,13 +231,17 @@ CREATE TABLE card_files (
   PRIMARY KEY (card_id, file_id)
 );
 
--- actor_id is not a foreign key: it names a user, an API token or an MCP client
--- depending on actor_kind, and the row outlives all three.
+-- actor_id is not a foreign key: it names the person who made the change, and
+-- the row outlives the account. An API token and an MCP client are not actors
+-- of their own but a way for a person to act, which is what via records: empty
+-- for a browser session, 'token:<name>' for the API, 'mcp:<client>' for MCP.
+-- Only the markdown watcher has no person behind it.
 CREATE TABLE activity (
   id             INTEGER PRIMARY KEY,
   proposition_id INTEGER REFERENCES propositions(id) ON DELETE CASCADE,
-  actor_kind     TEXT    NOT NULL CHECK (actor_kind IN ('user','token','mcp','system')),
+  actor_kind     TEXT    NOT NULL CHECK (actor_kind IN ('user','file','system')),
   actor_id       TEXT    NOT NULL DEFAULT '',
+  via            TEXT,
   entity         TEXT    NOT NULL,
   entity_id      TEXT    NOT NULL DEFAULT '',
   action         TEXT    NOT NULL,
@@ -246,7 +251,7 @@ CREATE TABLE activity (
   undone_at      INTEGER
 );
 CREATE INDEX activity_created ON activity(created_at);
-CREATE INDEX activity_proposition ON activity(proposition_id, created_at);
+CREATE INDEX activity_proposition ON activity(proposition_id, id);
 
 CREATE TABLE notification_channels (
   id          INTEGER PRIMARY KEY,

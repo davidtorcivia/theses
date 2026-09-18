@@ -6,13 +6,8 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
-	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
-
-func (s *Server) getShell(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, "shell.html", s.page(r, settings.Get[string](s.settings, "workspace.name"), nil))
-}
 
 func (s *Server) renderProfile(w http.ResponseWriter, r *http.Request, status int, extra map[string]any) {
 	u := userOf(r)

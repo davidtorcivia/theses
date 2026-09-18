@@ -20,16 +20,17 @@ var Palette = []string{"#1100ff", "#d0021b", "#0a8a3a", "#b35c00", "#7b2cbf", "#
 
 // layoutFor says which layout each page is wrapped in.
 var layoutFor = map[string]string{
-	"login.html":     "auth.html",
-	"setup.html":     "auth.html",
-	"enrol.html":     "auth.html",
-	"invite.html":    "auth.html",
-	"reset.html":     "auth.html",
-	"reset_new.html": "auth.html",
-	"error.html":     "auth.html",
-	"shell.html":     "app.html",
-	"settings.html":  "app.html",
-	"profile.html":   "app.html",
+	"login.html":         "auth.html",
+	"setup.html":         "auth.html",
+	"enrol.html":         "auth.html",
+	"invite.html":        "auth.html",
+	"reset.html":         "auth.html",
+	"reset_new.html":     "auth.html",
+	"error.html":         "auth.html",
+	"shell.html":         "app.html",
+	"prop_settings.html": "app.html",
+	"settings.html":      "app.html",
+	"profile.html":       "app.html",
 }
 
 // assets serves web/static under one content-hashed prefix. One hash for the

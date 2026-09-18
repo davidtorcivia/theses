@@ -187,10 +187,11 @@ type searchOut struct {
 }
 
 func (s *Server) search(ctx context.Context, req *sdk.CallToolRequest, in searchArgs) (*sdk.CallToolResult, searchOut, error) {
-	if _, err := principal(ctx, auth.ScopeRead); err != nil {
+	p, err := principal(ctx, auth.ScopeRead)
+	if err != nil {
 		return nil, searchOut{}, err
 	}
-	groups, err := search.Search(ctx, s.db, in.Query, in.Limit)
+	groups, err := search.Search(ctx, s.db, in.Query, in.Limit, s.api.Reader(p))
 	if err != nil {
 		return nil, searchOut{}, s.failed("search", err)
 	}
@@ -241,8 +242,8 @@ func (s *Server) setSetting(ctx context.Context, req *sdk.CallToolRequest, in se
 		return nil, api.SettingView{}, fmt.Errorf("there is no setting called %q", in.Key)
 	}
 	who := actor(req, p)
-	// Until the activity table records it, the via is written here, so that an
-	// owner reading the log can find which client made a change.
+	// The activity row carries the via as well now; this is the same line in
+	// the log, for reading a write next to the connection that made it.
 	s.log.Info("mcp write", "tool", "set_setting", "key", def.Key,
 		"user", p.User.ID, "via", who.Via, "protocol", req.ProtocolVersion())
 	if err := s.set.SetAs(ctx, def.Key, []string{in.Value}, who); err != nil {

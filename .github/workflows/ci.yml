@@ -17,6 +17,12 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      # The browser modules are read by nothing else in this gate, and a name
+      # that collides across two imports breaks the page at load rather than in
+      # a test. Reading each file on stdin as a module is what catches that:
+      # `node --check <file.js>` parses it as a script and lets it through.
+      - name: node --check the browser modules
+        run: for f in $(find web/static -name '*.js'); do node --input-type=module --check < "$f" || { echo "syntax error in $f"; exit 1; }; done
       - run: go test ./...
       - name: go test -race
         if: github.event_name == 'push'

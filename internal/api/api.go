@@ -246,9 +246,9 @@ func (a *API) users(w http.ResponseWriter, r *http.Request, _ Principal) {
 	a.writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
 
-func (a *API) search(w http.ResponseWriter, r *http.Request, _ Principal) {
+func (a *API) search(w http.ResponseWriter, r *http.Request, p Principal) {
 	q := r.URL.Query().Get("q")
-	groups, err := search.Search(r.Context(), a.db, q, intParam(r, "limit", 0))
+	groups, err := search.Search(r.Context(), a.db, q, intParam(r, "limit", 0), a.Reader(p))
 	if err != nil {
 		a.serverError(w, r, err)
 		return
@@ -257,6 +257,19 @@ func (a *API) search(w http.ResponseWriter, r *http.Request, _ Principal) {
 		groups = []search.Group{}
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"query": q, "groups": groups})
+}
+
+// Reader is the workspace as this token's owner may read it: every proposition
+// for an owner, and the ones they are a member of for everybody else. A token
+// is never a way to read past what its owner may read.
+func (a *API) Reader(p Principal) search.Reader {
+	if p.User == nil {
+		return search.Reader{}
+	}
+	if p.User.Role == auth.RoleOwner {
+		return search.Everything()
+	}
+	return search.Member(p.User.ID)
 }
 
 type activityJSON struct {
@@ -285,6 +298,13 @@ const (
 // reads the log without these.
 const administration = `'setting', 'invitation', 'api_token'`
 
+// workspaceWide is every entity whose rows belong to the workspace rather than
+// to one proposition, and so are readable by anyone the scope allows. It is a
+// list of what to show rather than of what to hide: a proposition's own delete
+// is filed with no proposition so that it survives the cascade, and an entity
+// added later would otherwise be readable by everybody the day it appeared.
+const workspaceWide = `'setting', 'user', 'invitation', 'api_token', 'backup'`
+
 // activity is a cursor rather than a feed: it returns the rows after ?since= in
 // id order, so following the log is asking again with the last id you were
 // given. Ids are used and not timestamps because created_at is whole seconds
@@ -303,8 +323,23 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
 	if !p.Allowed(auth.ScopeAdmin) {
 		query += ` AND entity NOT IN (` + administration + `)`
 	}
+	args := []any{intParam(r, "since", 0)}
+	// A row about a proposition is readable the way the proposition is. Rows
+	// about the workspace itself are readable by anyone, but carrying no
+	// proposition is not enough to be one: a deleted proposition's row carries
+	// none either, and it holds the title, statement and members it took away.
+	if p.User == nil || p.User.Role != auth.RoleOwner {
+		query += ` AND ((proposition_id IS NULL AND entity IN (` + workspaceWide + `))
+			OR proposition_id IN
+			(SELECT proposition_id FROM proposition_members WHERE user_id = ?))`
+		var id int64
+		if p.User != nil {
+			id = p.User.ID
+		}
+		args = append(args, id)
+	}
 	rows, err := a.db.QueryContext(r.Context(), query+` ORDER BY id LIMIT ?`,
-		intParam(r, "since", 0), limit)
+		append(args, limit)...)
 	if err != nil {
 		a.serverError(w, r, err)
 		return

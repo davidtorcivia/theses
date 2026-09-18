@@ -426,7 +426,7 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := store.InsertActivity(r.Context(), tx, "user", itoa(id), "user", itoa(id), "create", "", ""); err != nil {
+	if err := store.InsertActivity(r.Context(), tx, "user", itoa(id), "", "user", itoa(id), "create", "", ""); err != nil {
 		s.fail(w, r, err)
 		return
 	}
