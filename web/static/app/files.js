@@ -6,6 +6,7 @@ import { state, user, emit, hold, canEdit, material } from './state.js';
 import { when, copy } from './links.js';
 import * as api from './api.js';
 import * as upload from './upload.js';
+import { driveButton } from './drive.js';
 
 // The folder a dropped file lands in when the pane is showing all of them.
 const DEFAULT_FOLDER = 'Documents';
@@ -66,6 +67,9 @@ function dropZone() {
       'or ',
       el('button', { class: 'lnk', type: 'button', text: 'choose', onclick: () => picker.click() }),
       ' · files go straight to the bucket, never through this app'),
+    el('span', { class: 'mono' },
+      driveButton((row) => { put(row); emit(); }),
+      ' · a file in Drive is copied through this app into the bucket'),
     picker);
   for (const name of ['dragenter', 'dragover']) {
     zone.addEventListener(name, (e) => { e.preventDefault(); zone.classList.add('over'); });

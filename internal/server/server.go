@@ -312,6 +312,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /settings/integrations/transistor/disconnect", s.requireOwner(s.postTransistorDisconnect))
 	mux.HandleFunc("POST /settings/test/drive", s.requireOwner(s.postTestDrive))
 	mux.HandleFunc("POST /settings/test/transistor", s.requireOwner(s.postTestTransistor))
+
+	// Add from Drive, in the files pane. More specific than the /app/ pattern
+	// the links and files routes are mounted on, so these win the match.
+	mux.HandleFunc("GET /app/drive", s.requireUser(s.getDriveList))
+	mux.HandleFunc("POST /app/drive/import", s.requireUser(s.postDriveImport))
 	return mux
 }
 

@@ -1,0 +1,165 @@
+package files
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/davidtorcivia/theses/internal/core"
+)
+
+// stream is a reader that is not a Seeker, which is what a body arriving from
+// another service is and what the import has to be able to write.
+func stream(body string) io.Reader {
+	return io.LimitReader(bytes.NewReader([]byte(body)), int64(len(body)))
+}
+
+func TestImportWritesTheObjectAndMarksTheFileReady(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	const body = "twelve bytes"
+
+	row, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, int64(len(body)), stream(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.Ready() {
+		t.Fatalf("the file is at %q", row.State)
+	}
+	if row.Size != int64(len(body)) {
+		t.Fatalf("the row says %d bytes", row.Size)
+	}
+	if row.UploadedBy == nil || *row.UploadedBy != f.who["editor"].ID {
+		t.Fatalf("the file is attributed to %v", row.UploadedBy)
+	}
+	// Recordings goes to the second bucket, like every other file in it.
+	read, err := f.second.Get(ctx, row.ObjectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer read.Close()
+	got, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Fatalf("the bucket holds %q", got)
+	}
+}
+
+func TestImportRefusesWhatTheUploadPathWouldRefuse(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		actor  core.Actor
+		prop   int64
+		file   string
+		folder string
+		size   int64
+		want   string
+	}{
+		{"a guest", f.who["guest"], f.prop, "a.wav", Recordings, 3, "forbidden"},
+		{"somebody who is not a member", f.who["outsider"], f.prop, "a.wav", Recordings, 3, "not found"},
+		{"a folder that is not one of ours", f.who["editor"], f.prop, "a.wav", "Elsewhere", 3, "kind"},
+		{"a size of zero", f.who["editor"], f.prop, "a.wav", Recordings, 0, "1 byte"},
+		{"a size past the single put limit", f.who["editor"], f.prop, "a.wav", Recordings, maxImport + 1, "1 byte"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := f.Import(ctx, c.actor, c.prop, c.file, c.folder, c.size, stream("abc"))
+			if err == nil {
+				t.Fatal("the import was allowed")
+			}
+			switch c.want {
+			case "forbidden":
+				if !errors.Is(err, core.ErrForbidden) {
+					t.Fatalf("gave %v", err)
+				}
+			case "not found":
+				if !errors.Is(err, core.ErrNotFound) {
+					t.Fatalf("gave %v", err)
+				}
+			case "kind":
+				if !errors.Is(err, ErrKind) {
+					t.Fatalf("gave %v", err)
+				}
+			default:
+				if !strings.Contains(err.Error(), c.want) {
+					t.Fatalf("gave %v", err)
+				}
+			}
+			// Nothing was recorded for any of them.
+			rows, err := f.ListFiles(ctx, f.who["owner"], f.prop)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 0 {
+				t.Fatalf("a refused import left %d rows", len(rows))
+			}
+		})
+	}
+}
+
+// A source that stops early leaves a row at uploading with no object behind
+// it, which is the state nothing can be done with. The import clears both.
+func TestImportLeavesNothingBehindWhenTheSourceStopsEarly(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	_, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 64, stream("only ten."))
+	if err == nil {
+		t.Fatal("a body that stopped early was accepted")
+	}
+	rows, err := f.ListFiles(ctx, f.who["owner"], f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a failed import left %+v", rows)
+	}
+}
+
+// And a source that is longer than it said is cut to the declared length, so
+// the object is always the size the row promises.
+func TestImportWritesNoMoreThanTheDeclaredSize(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+
+	row, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 5, stream("far more than five"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _, err := f.second.Head(ctx, row.ObjectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != 5 {
+		t.Fatalf("the object is %d bytes", stored)
+	}
+}
+
+// The same reader through the blob client on its own, which is the thing that
+// cannot be done with Put: it signs the payload and so has to rewind.
+func TestPutStreamTakesAReaderThatCannotRewind(t *testing.T) {
+	primary, _ := buckets(t)
+	ctx := context.Background()
+	const body = "not seekable"
+
+	if err := primary.Put(ctx, "a/seekable.bin", stream(body), int64(len(body)), ""); err == nil {
+		t.Fatal("Put took a reader it cannot rewind")
+	}
+	if err := primary.PutStream(ctx, "a/streamed.bin", stream(body), int64(len(body)), ""); err != nil {
+		t.Fatal(err)
+	}
+	n, _, err := primary.Head(ctx, "a/streamed.bin")
+	if err != nil || n != int64(len(body)) {
+		t.Fatalf("the object is %d bytes: %v", n, err)
+	}
+	if err := primary.PutStream(ctx, "a/empty.bin", stream(""), 0, ""); err == nil {
+		t.Fatal("an empty object was written through PutStream")
+	}
+}
