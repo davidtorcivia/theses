@@ -359,3 +359,103 @@ func TestResendingAnAcceptedInvitationIsRefused(t *testing.T) {
 		t.Errorf("%d resend activity rows for a resend that did not happen", logged)
 	}
 }
+
+// sendable is the one row the worker would take next, if there is exactly one.
+func (h *harness) sendable() string {
+	h.Helper()
+	rows, err := h.db.QueryContext(context.Background(), `SELECT body_text FROM mail_outbox
+		WHERE sent_at IS NULL AND (expires_at IS NULL OR expires_at > unixepoch())`)
+	if err != nil {
+		h.Fatal(err)
+	}
+	defer rows.Close()
+	var bodies []string
+	for rows.Next() {
+		var body string
+		if err := rows.Scan(&body); err != nil {
+			h.Fatal(err)
+		}
+		bodies = append(bodies, body)
+	}
+	if err := rows.Err(); err != nil {
+		h.Fatal(err)
+	}
+	if len(bodies) != 1 {
+		h.Fatalf("%d messages would be sent, want one", len(bodies))
+	}
+	return bodies[0]
+}
+
+func TestResendReplacesTheInvitationMailStillQueued(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+
+	_, page := h.post("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+	})
+	dead := inviteLinkRe.FindStringSubmatch(page)[1]
+
+	var id int64
+	if err := h.db.QueryRowContext(ctx, `SELECT id FROM invitations`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	_, page = h.post("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
+	live := inviteLinkRe.FindStringSubmatch(page)[1]
+	if live == dead {
+		t.Fatal("the resend handed out the same token")
+	}
+
+	// Both rows are there, but only the newer one would go out, and it is the
+	// one whose link the reissue left working.
+	if n := countOutbox(t, h); n != 2 {
+		t.Errorf("%d rows in the outbox, want the replaced one kept", n)
+	}
+	body := h.sendable()
+	if !strings.Contains(body, live) {
+		t.Errorf("the message that would be sent does not carry the live link:\n%s", body)
+	}
+	if strings.Contains(body, dead) {
+		t.Errorf("the message that would be sent carries the dead link:\n%s", body)
+	}
+	_, page = h.get("/settings")
+	if !strings.Contains(page, "1 waiting, 1 given up") {
+		t.Errorf("the panel does not account for the replaced message:\n%s", page)
+	}
+}
+
+func TestAskingForASecondResetReplacesTheFirstMail(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	h.signOut()
+
+	for i := 0; i < 2; i++ {
+		res, _ := h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"dt"}})
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("reset %d gave %d", i, res.StatusCode)
+		}
+	}
+	if n := countOutbox(t, h); n != 2 {
+		t.Errorf("%d rows in the outbox, want both kept", n)
+	}
+	// Only one would go out, and it is the newer token.
+	body := h.sendable()
+	var newest string
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT body_text FROM mail_outbox ORDER BY id DESC LIMIT 1`).Scan(&newest); err != nil {
+		t.Fatal(err)
+	}
+	if body != newest {
+		t.Error("the message that would be sent is not the newest one")
+	}
+}
+
+func countOutbox(t *testing.T, h *harness) int {
+	t.Helper()
+	var n int
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM mail_outbox`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}

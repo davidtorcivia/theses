@@ -29,6 +29,11 @@ const (
 // It is also what keeps the marking pass from rewriting the same rows.
 const expired = "the link it carries expired before it could be sent"
 
+// superseded is the error stored on a row a newer message for the same ref
+// replaced. Reissuing a token kills the link the older message carries, so
+// sending it would deliver a URL that opens nothing.
+const superseded = "replaced by a newer message for the same thing"
+
 // sendable is the part of the WHERE clause that says a row is still worth
 // trying. It takes now and the give up cutoff, in that order.
 //
@@ -39,12 +44,26 @@ const sendable = `(expires_at IS NULL OR expires_at > ?) AND (tried_at IS NULL O
 
 // Enqueue writes one row per recipient through q, which may be a transaction,
 // so that a message and whatever caused it commit together or not at all.
+//
 // expires is when the message stops being worth sending, which for the two
 // transactional messages is when the link inside them dies. A zero time means
 // it never expires.
-func Enqueue(ctx context.Context, q store.Querier, m Message, expires time.Time) error {
+//
+// ref names what the message is about, as "invitation:<id>" or
+// "reset:<user id>". Any message still unsent under the same ref is abandoned
+// here, because whatever produced this one reissued the token and killed the
+// link the older ones carry. An empty ref replaces nothing.
+func Enqueue(ctx context.Context, q store.Querier, m Message, expires time.Time, ref string) error {
 	if len(m.To) == 0 {
 		return errors.New("mail: no recipients")
+	}
+	if ref != "" {
+		// The expiry is what takes it out of the queue; the error says why.
+		if _, err := q.ExecContext(ctx, `UPDATE mail_outbox
+			SET expires_at = unixepoch() - 1, last_error = ?
+			WHERE sent_at IS NULL AND ref = ?`, superseded, ref); err != nil {
+			return fmt.Errorf("mail: supersede %s: %w", ref, err)
+		}
 	}
 	var expiresAt any
 	if !expires.IsZero() {
@@ -52,9 +71,9 @@ func Enqueue(ctx context.Context, q store.Querier, m Message, expires time.Time)
 	}
 	for _, to := range m.To {
 		if _, err := q.ExecContext(ctx, `INSERT INTO mail_outbox
-			(to_addr, subject, body_text, body_html, created_at, next_at, expires_at)
-			VALUES (?, ?, ?, ?, unixepoch(), unixepoch(), ?)`,
-			to, m.Subject, m.Text, m.HTML, expiresAt); err != nil {
+			(to_addr, subject, body_text, body_html, created_at, next_at, expires_at, ref)
+			VALUES (?, ?, ?, ?, unixepoch(), unixepoch(), ?, ?)`,
+			to, m.Subject, m.Text, m.HTML, expiresAt, ref); err != nil {
 			return fmt.Errorf("mail: enqueue: %w", err)
 		}
 	}
@@ -115,8 +134,9 @@ func (o *Outbox) once(ctx context.Context) error {
 	// A row whose link has run out says so, rather than keeping whatever error
 	// it last had or, if it was never tried, none at all.
 	if _, err := o.db.ExecContext(ctx, `UPDATE mail_outbox SET last_error = ?
-		WHERE sent_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ? AND last_error <> ?`,
-		expired, now.Unix(), expired); err != nil {
+		WHERE sent_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?
+			AND last_error <> ? AND last_error <> ?`,
+		expired, now.Unix(), expired, superseded); err != nil {
 		return fmt.Errorf("mail: expire: %w", err)
 	}
 	rows, err := o.db.QueryContext(ctx, `SELECT id, to_addr, subject, body_text, body_html, attempts

@@ -412,7 +412,7 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := r.PostFormValue("role")
-	token, err := s.auth.CreateInvitation(r.Context(), email, role, userOf(r).ID)
+	id, token, err := s.auth.CreateInvitation(r.Context(), email, role, userOf(r).ID)
 	if err != nil {
 		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
@@ -423,7 +423,7 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 	// store.Querier and pass this one when auth is next opened.
 	if err := s.write(r, "invitation", email, "create", "", role, func(q store.Querier) error {
 		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, email, role, token),
-			s.auth.Now().Add(auth.InviteValidity))
+			s.auth.Now().Add(auth.InviteValidity), inviteRef(id))
 	}); err != nil {
 		s.fail(w, r, err)
 		return
@@ -470,8 +470,10 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 	}
 	// ponytail: the reissued token is committed separately, as on create.
 	if err := s.write(r, "invitation", itoa(id), "resend", "", "", func(q store.Querier) error {
+		// The ref abandons the mail from the last time, whose link the reissue
+		// above has just killed.
 		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, inv.Email, inv.Role, token),
-			s.auth.Now().Add(auth.InviteValidity))
+			s.auth.Now().Add(auth.InviteValidity), inviteRef(id))
 	}); err != nil {
 		s.fail(w, r, err)
 		return
@@ -497,6 +499,10 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) inviteURL(token string) string { return s.cfg.BaseURL + "/invite/" + token }
+
+// inviteRef files a queued invitation mail under the invitation it came from,
+// so a resend can abandon the one it replaces.
+func inviteRef(id int64) string { return "invitation:" + itoa(id) }
 
 func (s *Server) inviteMessage(r *http.Request, email, role, token string) mail.Message {
 	return mail.Invite{

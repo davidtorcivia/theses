@@ -151,7 +151,7 @@ func TestEnqueueRollsBackWithItsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Enqueue(ctx, tx, msg, time.Time{}); err != nil {
+	if err := Enqueue(ctx, tx, msg, time.Time{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if n := countRows(t, db, `1=1`); n != 0 {
@@ -169,7 +169,7 @@ func TestEnqueueRollsBackWithItsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Enqueue(ctx, tx, msg, time.Time{}); err != nil {
+	if err := Enqueue(ctx, tx, msg, time.Time{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -187,7 +187,7 @@ func TestOutboxSendsAndMarksSent(t *testing.T) {
 	ctx := context.Background()
 
 	for _, to := range []string{"ana@example.com", "bo@example.com"} {
-		if err := Enqueue(ctx, db, Reset{To: to, URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
+		if err := Enqueue(ctx, db, Reset{To: to, URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour), ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -212,7 +212,7 @@ func TestOutboxRecordsFailureAndBacksOff(t *testing.T) {
 	configure(t, set, "127.0.0.1", deadPort(t))
 
 	ctx := context.Background()
-	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
+	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.once(ctx); err != nil {
@@ -286,7 +286,7 @@ func TestBackoffDoublesAndCaps(t *testing.T) {
 func TestOutboxLeavesRowsAloneWhileMailIsNotConfigured(t *testing.T) {
 	o, db, _ := newTestOutbox(t)
 	ctx := context.Background()
-	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
+	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.once(ctx); err != ErrNotConfigured {
@@ -326,7 +326,7 @@ func TestExpiredRowIsNeverSentEvenAfterRetryNow(t *testing.T) {
 
 	// A reset queued while the server was down, whose hour ran out meanwhile.
 	msg := Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message()
-	if err := Enqueue(ctx, db, msg, time.Now().Add(-time.Minute)); err != nil {
+	if err := Enqueue(ctx, db, msg, time.Now().Add(-time.Minute), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.once(ctx); err != nil {
@@ -370,7 +370,7 @@ func TestRowsQueuedBeforeConfigurationGoOutLater(t *testing.T) {
 	ctx := context.Background()
 
 	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
-	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour)); err != nil {
+	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.once(ctx); err != ErrNotConfigured {
@@ -401,7 +401,7 @@ func TestRowsQueuedBeforeConfigurationGoOutLater(t *testing.T) {
 func TestMarkSentSurvivesCancellation(t *testing.T) {
 	o, db, _ := newTestOutbox(t)
 	ctx := context.Background()
-	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
+	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	var id int64
@@ -426,7 +426,7 @@ func TestARowThatWaitedKeepsItsFullDayOnceItIsTried(t *testing.T) {
 	ctx := context.Background()
 
 	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
-	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour)); err != nil {
+	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	// Thirty hours of waiting for a server, which is longer than the day of
@@ -469,5 +469,88 @@ func TestARowThatWaitedKeepsItsFullDayOnceItIsTried(t *testing.T) {
 	}
 	if st.Pending != 1 || st.GivenUp != 0 {
 		t.Errorf("state = %+v, want the row still waiting", st)
+	}
+}
+
+func TestOnlyTheNewestMessageForARefIsDelivered(t *testing.T) {
+	f := startLoopingFake(t)
+	o, db, set := newTestOutbox(t)
+	ctx := context.Background()
+
+	// An invitation queued before the workspace had an SMTP server, then a
+	// resend, which reissues the token and kills the first link.
+	week := time.Now().Add(7 * 24 * time.Hour)
+	first := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/first", Expires: 7 * 24 * time.Hour}.Message()
+	if err := Enqueue(ctx, db, first, week, "invitation:7"); err != nil {
+		t.Fatal(err)
+	}
+	second := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/second", Expires: 7 * 24 * time.Hour}.Message()
+	if err := Enqueue(ctx, db, second, week, "invitation:7"); err != nil {
+		t.Fatal(err)
+	}
+
+	configure(t, set, "127.0.0.1", f.port)
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	to, data := f.delivered()
+	if len(to) != 1 {
+		t.Fatalf("%d messages delivered, want the newest one only: %v", len(to), to)
+	}
+	if !strings.Contains(data[0], "https://x/invite/second") {
+		t.Errorf("the delivered message does not carry the live link:\n%s", data[0])
+	}
+	if strings.Contains(data[0], "https://x/invite/first") {
+		t.Errorf("the dead link was delivered:\n%s", data[0])
+	}
+
+	var lastError string
+	if err := db.QueryRowContext(ctx,
+		`SELECT last_error FROM mail_outbox WHERE body_text LIKE '%invite/first%'`).Scan(&lastError); err != nil {
+		t.Fatal(err)
+	}
+	if lastError != superseded {
+		t.Errorf("last_error on the replaced row = %q", lastError)
+	}
+
+	// Another batch does not change its mind, and the panel counts the
+	// replaced row as given up rather than waiting.
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if to, _ := f.delivered(); len(to) != 1 {
+		t.Errorf("%d messages delivered after a second batch", len(to))
+	}
+	st, err := o.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending != 0 || st.GivenUp != 1 || st.LastError != superseded {
+		t.Errorf("state = %+v", st)
+	}
+}
+
+func TestARefOnlyReplacesItsOwn(t *testing.T) {
+	o, db, _ := newTestOutbox(t)
+	ctx := context.Background()
+	hour := time.Now().Add(time.Hour)
+	for _, ref := range []string{"reset:1", "reset:2", ""} {
+		if err := Enqueue(ctx, db, Reset{To: "a@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), hour, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Enqueue(ctx, db, Reset{To: "a@example.com", URL: "https://x/reset/u", Expires: time.Hour}.Message(), hour, "reset:1"); err != nil {
+		t.Fatal(err)
+	}
+	if n := countRows(t, db, `last_error = ?`, superseded); n != 1 {
+		t.Errorf("%d rows replaced, want only the earlier reset:1", n)
+	}
+	st, err := o.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending != 3 {
+		t.Errorf("pending = %d, want the two other rows and the new one", st.Pending)
 	}
 }

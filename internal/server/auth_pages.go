@@ -487,10 +487,24 @@ func (s *Server) postReset(w http.ResponseWriter, r *http.Request) {
 			}
 			// The message expires with the link it carries: an hour of retries
 			// is all a reset is worth, and a day of them would deliver a URL
-			// that had died long before it arrived.
-			if err := mail.Enqueue(r.Context(), s.db, mail.Reset{
+			// that had died long before it arrived. The ref abandons any reset
+			// mail for this account that has not gone out yet, so asking twice
+			// delivers one link rather than two. The two statements share a
+			// transaction so the older mail is never dropped without the newer
+			// one taking its place.
+			tx, err := s.db.BeginTx(r.Context(), nil)
+			if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			defer tx.Rollback()
+			if err := mail.Enqueue(r.Context(), tx, mail.Reset{
 				To: u.Email, URL: s.cfg.BaseURL + "/reset/" + token, Expires: auth.ResetValidity,
-			}.Message(), s.auth.Now().Add(auth.ResetValidity)); err != nil {
+			}.Message(), s.auth.Now().Add(auth.ResetValidity), "reset:"+itoa(u.ID)); err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			if err := tx.Commit(); err != nil {
 				s.fail(w, r, err)
 				return
 			}

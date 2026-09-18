@@ -273,7 +273,7 @@ func TestInvitationLifecycle(t *testing.T) {
 	f := newFixture(t)
 	owner := f.user(t, "dt", "a long enough password", "")
 
-	token, err := f.CreateInvitation(ctx, "mara@example.fm", RoleEditor, owner.ID)
+	_, token, err := f.CreateInvitation(ctx, "mara@example.fm", RoleEditor, owner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestInvitationLifecycle(t *testing.T) {
 	}
 
 	// Resending replaces the token, and the week runs out.
-	again, err := f.CreateInvitation(ctx, "mara@example.fm", RoleEditor, owner.ID)
+	_, again, err := f.CreateInvitation(ctx, "mara@example.fm", RoleEditor, owner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,10 +316,10 @@ func TestInvitationLifecycle(t *testing.T) {
 		t.Errorf("an eight day old invitation returned %v", err)
 	}
 
-	if _, err := f.CreateInvitation(ctx, "mara@example.fm", "admiral", owner.ID); err == nil {
+	if _, _, err := f.CreateInvitation(ctx, "mara@example.fm", "admiral", owner.ID); err == nil {
 		t.Error("an unknown role was accepted")
 	}
-	if _, err := f.CreateInvitation(ctx, "not-an-address", RoleEditor, owner.ID); err == nil {
+	if _, _, err := f.CreateInvitation(ctx, "not-an-address", RoleEditor, owner.ID); err == nil {
 		t.Error("an address without an @ was accepted")
 	}
 }
