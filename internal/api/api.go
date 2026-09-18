@@ -14,6 +14,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/docs"
+	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -26,6 +27,9 @@ type API struct {
 	log  *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
+	// Files is the links and files service, set the same way. Its routes live
+	// on this mux rather than the server's, so one mux owns /api/v1.
+	Files *files.Service
 }
 
 func New(db *store.DB, a *auth.Auth, set *settings.Settings, log *slog.Logger) *API {
@@ -203,6 +207,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings", a.scoped(auth.ScopeAdmin, a.getSettings))
 	mux.HandleFunc("PUT /api/v1/settings/{key}", a.scoped(auth.ScopeAdmin, a.putSetting))
 	a.documentRoutes(mux)
+	a.fileRoutes(mux)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})

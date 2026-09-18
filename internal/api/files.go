@@ -26,19 +26,14 @@ type handler func(http.ResponseWriter, *http.Request, core.Actor)
 // for before the handler runs.
 type wrapper func(scope string, h handler) http.HandlerFunc
 
-// FilesHandler is the links and files routes for a token. The caller mounts it
-// inside Authenticate, the same as the rest of /api/v1.
-func FilesHandler(a *API, svc *files.Service) http.Handler {
-	mux := http.NewServeMux()
-	mount(mux, "/api/v1", a, svc, func(scope string, h handler) http.HandlerFunc {
+// fileRoutes is the links and files routes for a token, registered on the API's
+// own mux beside the rest of /api/v1 so that one mux owns the prefix.
+func (a *API) fileRoutes(mux *http.ServeMux) {
+	mount(mux, "/api/v1", a, a.Files, func(scope string, h handler) http.HandlerFunc {
 		return a.scoped(scope, func(w http.ResponseWriter, r *http.Request, p Principal) {
-			h(w, r, core.Actor{
-				Kind: core.KindUser, ID: p.User.ID, Name: p.User.Name,
-				Via: TokenVia(p.Token.Name),
-			})
+			h(w, r, actorOf(p))
 		})
 	})
-	return mux
 }
 
 // SessionHandler is the same routes under /app for a browser. The caller

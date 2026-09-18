@@ -99,9 +99,10 @@ func newFileHarness(t *testing.T) *fileHarness {
 	t.Cleanup(page.Close)
 
 	api := New(h.db, h.auth, h.set, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	api.Files = svc
 	return &fileHarness{
 		T: t, db: h.db, auth: h.auth, svc: svc,
-		handler: api.Authenticate(FilesHandler(api, svc)),
+		handler: api.Handler(),
 		owner:   h.user, stranger: stranger, prop: e.EntityID, card: card.EntityID,
 		page: page.URL,
 	}
