@@ -15,6 +15,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/integrations"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -289,7 +290,10 @@ func (s *Server) publish(r *http.Request, p board.Proposition, chosen publishCho
 		}
 	}
 	if sendErr != nil {
-		return "", sendErr
+		// Transistor quotes back what it was sent, and one of the things it
+		// was sent is a signed link that reads the recording for a day. It is
+		// not a stored secret, so nothing else would take it out.
+		return "", errors.New(mail.Redact(sendErr.Error(), audio))
 	}
 	chosen.ShareURL = out.ShareURL
 	if err := s.savePublishChoice(ctx, p.ID, me.ID, chosen); err != nil {
