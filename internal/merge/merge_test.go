@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMerge(t *testing.T) {
@@ -182,5 +183,88 @@ func TestMergeRefusesAnEnormousLine(t *testing.T) {
 	}
 	if used := after.TotalAlloc - before.TotalAlloc; used > 8<<20 {
 		t.Errorf("merging a 5000 word line allocated %d bytes, want under 8 MB", used)
+	}
+}
+
+// versions builds a document where both sides rewrote every line, one at a
+// different word from the other, which is the shape that sends every line to
+// the word level.
+func versions(lines, words int) (base, ours, theirs string) {
+	b := make([]string, lines)
+	o := make([]string, lines)
+	th := make([]string, lines)
+	for i := range b {
+		parts := make([]string, words)
+		for j := range parts {
+			parts[j] = fmt.Sprintf("w%dx%d", i, j)
+		}
+		b[i] = strings.Join(parts, " ")
+		was := parts[1]
+		parts[1] = "ours"
+		o[i] = strings.Join(parts, " ")
+		parts[1] = was
+		parts[2] = "theirs"
+		th[i] = strings.Join(parts, " ")
+	}
+	return strings.Join(b, "\n"), strings.Join(o, "\n"), strings.Join(th, "\n")
+}
+
+// The budget belongs to the whole merge, not to one table. Both shapes below
+// stop: the first because its line table alone is too big, the second because
+// three hundred small word tables add up, which a per table cap would let
+// through at about ninety megabytes.
+func TestMergeBudgetCoversTheWholeCall(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines int
+		words int
+	}{
+		{"one huge table", 1024, 512},
+		{"many small tables", 300, 64},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base, ours, theirs := versions(tt.lines, tt.words)
+			var before, after runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&before)
+			start := time.Now()
+			got, conflict := Merge(base, ours, theirs)
+			elapsed := time.Since(start)
+			runtime.ReadMemStats(&after)
+
+			if !conflict {
+				t.Error("Merge conflict = false, want true")
+			}
+			if got != ours {
+				t.Error("Merge did not return ours unchanged")
+			}
+			if used := after.TotalAlloc - before.TotalAlloc; used > 16<<20 {
+				t.Errorf("merging %d lines of %d words allocated %d bytes, want under 16 MB", tt.lines, tt.words, used)
+			}
+			if elapsed > time.Second {
+				t.Errorf("merging %d lines of %d words took %v, want well under a second", tt.lines, tt.words, elapsed)
+			}
+		})
+	}
+}
+
+// The budget is large enough that documents of the size people write still
+// merge line by line and word by word.
+func TestMergeStillMergesANormalDocument(t *testing.T) {
+	lines := make([]string, 300)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("Line %d holds a short sentence about the thing.", i)
+	}
+	base := strings.Join(lines, "\n")
+	ours := strings.Replace(base, "Line 3 holds", "Line 3 now holds", 1)
+	theirs := strings.Replace(base, "Line 150 holds", "Line 150 also holds", 1)
+
+	got, conflict := Merge(base, ours, theirs)
+	if conflict {
+		t.Fatal("Merge conflict = true, want a clean merge")
+	}
+	if !strings.Contains(got, "Line 3 now holds") || !strings.Contains(got, "Line 150 also holds") {
+		t.Error("Merge lost one of the two edits")
 	}
 }

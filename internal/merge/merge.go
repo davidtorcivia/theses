@@ -24,7 +24,8 @@ func Merge(base, ours, theirs string) (result string, conflict bool) {
 	case b == t:
 		return o, false
 	}
-	lines, ok := merge3(strings.Split(b, "\n"), strings.Split(o, "\n"), strings.Split(t, "\n"), mergeLines)
+	budget := maxCells
+	lines, ok := merge3(&budget, strings.Split(b, "\n"), strings.Split(o, "\n"), strings.Split(t, "\n"), mergeLines)
 	if !ok {
 		return ours, true
 	}
@@ -38,23 +39,29 @@ func lf(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
 }
 
-// maxCells caps the LCS table, the one thing here that grows with the product
-// of the input sizes. Past it merge3 reports a conflict, which costs the
-// person one keep mine or take theirs on a block of about a thousand words on
-// a single line, and costs the server nothing.
+// maxCells is the budget for one whole Merge, counted in cells of the LCS
+// tables, the only thing here that grows with the product of the input sizes.
+// A million cells is about eight megabytes of tables and a few milliseconds of
+// work, and the line level pass and every word level pass under it draw on that
+// one allowance, so no single block.set can cost more than that whatever shape
+// it has. A merge that runs out of budget reports a conflict, and the person
+// chooses keep mine or take theirs.
 //
-// ponytail: a linear space LCS would merge those blocks too, at maybe eighty
-// more lines; worth it only if long single line blocks turn out to be common.
+// ponytail: a linear space LCS would merge the blocks that now conflict, at
+// maybe eighty more lines; worth it only if blocks that large turn out to be
+// common.
 const maxCells = 1 << 20
 
 // merge3 walks base, ours and theirs together. Runs that all three agree on
 // pass through; everything between them is a chunk that at least one side
 // changed, settled by whichever side left it alone or, when both changed it,
 // by refine.
-func merge3(base, ours, theirs []string, refine func(base, ours, theirs []string) ([]string, bool)) ([]string, bool) {
-	if len(base)*len(ours) > maxCells || len(base)*len(theirs) > maxCells {
+func merge3(budget *int, base, ours, theirs []string, refine refiner) ([]string, bool) {
+	cells := len(base)*len(ours) + len(base)*len(theirs)
+	if cells > *budget {
 		return nil, false
 	}
+	*budget -= cells
 	mo := match(base, ours)
 	mt := match(base, theirs)
 	var out []string
@@ -74,7 +81,7 @@ func merge3(base, ours, theirs []string, refine func(base, ours, theirs []string
 				break
 			}
 		}
-		chunk, ok := resolve(base[i:i2], ours[o:o2], theirs[t:t2], refine)
+		chunk, ok := resolve(budget, base[i:i2], ours[o:o2], theirs[t:t2], refine)
 		if !ok {
 			return nil, false
 		}
@@ -84,7 +91,10 @@ func merge3(base, ours, theirs []string, refine func(base, ours, theirs []string
 	return out, true
 }
 
-func resolve(base, ours, theirs []string, refine func(base, ours, theirs []string) ([]string, bool)) ([]string, bool) {
+// A refiner settles a chunk both sides rewrote, spending the same budget.
+type refiner func(budget *int, base, ours, theirs []string) ([]string, bool)
+
+func resolve(budget *int, base, ours, theirs []string, refine refiner) ([]string, bool) {
 	switch {
 	case slices.Equal(ours, theirs):
 		return ours, true
@@ -93,18 +103,18 @@ func resolve(base, ours, theirs []string, refine func(base, ours, theirs []strin
 	case slices.Equal(base, theirs):
 		return ours, true
 	}
-	return refine(base, ours, theirs)
+	return refine(budget, base, ours, theirs)
 }
 
 // mergeLines refines a chunk both sides rewrote by pairing the lines up, which
 // only means anything when neither side added or removed any.
-func mergeLines(base, ours, theirs []string) ([]string, bool) {
+func mergeLines(budget *int, base, ours, theirs []string) ([]string, bool) {
 	if len(base) != len(ours) || len(base) != len(theirs) {
 		return nil, false
 	}
 	out := make([]string, len(base))
 	for i := range base {
-		line, ok := mergeWords(base[i], ours[i], theirs[i])
+		line, ok := mergeWords(budget, base[i], ours[i], theirs[i])
 		if !ok {
 			return nil, false
 		}
@@ -116,7 +126,7 @@ func mergeLines(base, ours, theirs []string) ([]string, bool) {
 // mergeWords merges one line both sides changed. Two sides touching different
 // words in a sentence is the common case and merges; the same word changed two
 // ways conflicts.
-func mergeWords(base, ours, theirs string) (string, bool) {
+func mergeWords(budget *int, base, ours, theirs string) (string, bool) {
 	switch {
 	case ours == theirs:
 		return ours, true
@@ -125,14 +135,14 @@ func mergeWords(base, ours, theirs string) (string, bool) {
 	case base == theirs:
 		return ours, true
 	}
-	tokens, ok := merge3(words(base), words(ours), words(theirs), conflict)
+	tokens, ok := merge3(budget, words(base), words(ours), words(theirs), conflict)
 	if !ok {
 		return "", false
 	}
 	return strings.Join(tokens, ""), true
 }
 
-func conflict(base, ours, theirs []string) ([]string, bool) { return nil, false }
+func conflict(*int, []string, []string, []string) ([]string, bool) { return nil, false }
 
 // words splits at every boundary between whitespace and non-whitespace, so the
 // tokens joined back together are the original string.
@@ -158,8 +168,8 @@ func words(s string) []string {
 }
 
 // match pairs each element of a with the element of b it keeps in a longest
-// common subsequence, or -1 if b no longer has it. Callers keep the table
-// within maxCells.
+// common subsequence, or -1 if b no longer has it. Callers take the cells out
+// of the budget first.
 func match(a, b []string) []int {
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
