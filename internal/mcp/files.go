@@ -26,7 +26,7 @@ func Files(s *Server, svc *files.Service) {
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "add_link",
 		Description: "Saves a URL on one proposition, reading the page for its title, author, year and kind.",
-		Annotations: attaches("Add a link"),
+		Annotations: fetches("Add a link"),
 	}, f.addLink)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "list_files",
@@ -45,10 +45,10 @@ func Files(s *Server, svc *files.Service) {
 	}, f.attach)
 }
 
-// attaches is the hint for a tool that puts something there. It is not read
-// only and not destructive, and running it twice leaves the same one thing
+// attaches is the hint for hanging something off a card. It is not read only
+// and not destructive, and running it twice leaves the same one thing
 // attached, which is what idempotent means here. The documents tools carry an
-// adds of their own for a tool that makes a new thing on every call, which is
+// adds of their own, for a tool that makes a new thing on every call, which is
 // the other answer to the same question.
 func attaches(title string) *sdk.ToolAnnotations {
 	no := false
@@ -57,6 +57,19 @@ func attaches(title string) *sdk.ToolAnnotations {
 		DestructiveHint: &no,
 		IdempotentHint:  true,
 		OpenWorldHint:   &no,
+	}
+}
+
+// fetches is the hint for adding a link: two calls make two links, so it is not
+// idempotent, and it reads a page on the open web, which is what the open world
+// hint is for.
+func fetches(title string) *sdk.ToolAnnotations {
+	yes, no := true, false
+	return &sdk.ToolAnnotations{
+		Title:           title,
+		DestructiveHint: &no,
+		IdempotentHint:  false,
+		OpenWorldHint:   &yes,
 	}
 }
 

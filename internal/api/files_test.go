@@ -294,6 +294,49 @@ func TestUploadRoutes(t *testing.T) {
 	}
 }
 
+// A PATCH names the fields it changes. The command underneath takes the whole
+// set, because that is what a form posts, so a body with one field in it must
+// not arrive as five empty ones.
+func TestPatchLeavesWhatItDoesNotName(t *testing.T) {
+	h := newFileHarness(t)
+	all := h.token(h.owner, auth.ScopeRead, auth.ScopeWrite, auth.ScopeFiles)
+
+	w := h.do("POST", "/api/v1/links", all,
+		`{"proposition":`+strconv.FormatInt(h.prop, 10)+`,"url":"`+h.page+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /links: %d %s", w.Code, w.Body)
+	}
+	link := strconv.FormatInt(int64(decode(t, w)["id"].(float64)), 10)
+	if w = h.do("PATCH", "/api/v1/links/"+link, all, `{"note_md":"Chapter three."}`); w.Code != http.StatusOK {
+		t.Fatalf("PATCH /links: %d %s", w.Code, w.Body)
+	}
+	after := decode(t, w)
+	if after["title"] != "The tide tables" {
+		t.Fatalf("the title was cleared by a body that did not name it: %v", after["title"])
+	}
+	if after["note_md"] != "Chapter three." {
+		t.Fatalf("the note did not land: %v", after["note_md"])
+	}
+
+	w = h.do("POST", "/api/v1/files", all, `{"proposition":`+strconv.FormatInt(h.prop, 10)+
+		`,"name":"tides.md","folder":"Documents","size":4}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /files: %d %s", w.Code, w.Body)
+	}
+	var up files.Upload
+	if err := json.Unmarshal(w.Body.Bytes(), &up); err != nil {
+		t.Fatal(err)
+	}
+	if w = h.do("PATCH", "/api/v1/files/"+strconv.FormatInt(up.File.ID, 10), all,
+		`{"folder":"Reading"}`); w.Code != http.StatusOK {
+		t.Fatalf("PATCH /files: %d %s", w.Code, w.Body)
+	}
+	file := decode(t, w)["file"].(map[string]any)
+	if file["name"] != "tides.md" || file["folder"] != "Reading" {
+		t.Fatalf("a move should not rename: %v", file)
+	}
+}
+
 func TestAttachmentRoutes(t *testing.T) {
 	h := newFileHarness(t)
 	all := h.token(h.owner, auth.ScopeRead, auth.ScopeWrite)

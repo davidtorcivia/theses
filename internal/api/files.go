@@ -182,15 +182,30 @@ func (f *fileAPI) versions(w http.ResponseWriter, r *http.Request, a core.Actor)
 	f.writeJSON(w, http.StatusOK, map[string]any{"versions": rows})
 }
 
+// editFile renames or moves, and leaves the one the body does not name alone:
+// the command takes both, so a body with only a folder in it would otherwise
+// arrive as a rename to nothing.
 func (f *fileAPI) editFile(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	var in struct {
-		Name   string `json:"name"`
-		Folder string `json:"folder"`
+		Name   *string `json:"name"`
+		Folder *string `json:"folder"`
 	}
 	if !f.read(w, r, &in) {
 		return
 	}
-	e, err := f.svc.EditFile(r.Context(), a, path(r, "id"), in.Name, in.Folder)
+	was, err := f.svc.ReadFile(r.Context(), a, path(r, "id"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	name, folder := was.Name, was.Folder
+	if in.Name != nil {
+		name = *in.Name
+	}
+	if in.Folder != nil {
+		folder = *in.Folder
+	}
+	e, err := f.svc.EditFile(r.Context(), a, was.ID, name, folder)
 	if err != nil {
 		f.refuse(w, r, err)
 		return

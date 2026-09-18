@@ -59,27 +59,54 @@ func (f *fileAPI) addLink(w http.ResponseWriter, r *http.Request, a core.Actor) 
 	f.answerLink(w, r, a, e)
 }
 
+// editLink changes the fields the body names and leaves the rest as they were.
+// The command takes the whole set, because that is what a form posts, so the
+// row is read first and the body laid over it: a body naming one field is not a
+// way to clear the other five.
 func (f *fileAPI) editLink(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	var in struct {
-		Title    string `json:"title"`
-		Author   string `json:"author"`
-		Year     string `json:"year"`
-		Kind     string `json:"kind"`
-		Note     string `json:"note_md"`
-		Question string `json:"question"`
+		Title    *string `json:"title"`
+		Author   *string `json:"author"`
+		Year     *string `json:"year"`
+		Kind     *string `json:"kind"`
+		Note     *string `json:"note_md"`
+		Question *string `json:"question"`
 	}
 	if !f.read(w, r, &in) {
 		return
 	}
-	e, err := f.svc.EditLink(r.Context(), a, path(r, "id"), files.Edit{
-		Title: in.Title, Author: in.Author, Year: in.Year,
-		Kind: in.Kind, Note: in.Note, Question: in.Question,
-	})
+	was, err := f.svc.ReadLink(r.Context(), a, path(r, "id"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	edit := files.Edit{
+		Title: was.Title, Author: was.Author, Year: was.Year,
+		Kind: was.Kind, Note: was.Note, Question: some(was.Question),
+	}
+	for _, field := range []struct{ into, from *string }{
+		{&edit.Title, in.Title}, {&edit.Author, in.Author}, {&edit.Year, in.Year},
+		{&edit.Kind, in.Kind}, {&edit.Note, in.Note}, {&edit.Question, in.Question},
+	} {
+		if field.from != nil {
+			*field.into = *field.from
+		}
+	}
+	e, err := f.svc.EditLink(r.Context(), a, was.ID, edit)
 	if err != nil {
 		f.refuse(w, r, err)
 		return
 	}
 	f.answerLink(w, r, a, e)
+}
+
+// some is a nullable column as the command takes it: the empty string is how
+// "no question" is written.
+func some(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (f *fileAPI) refetchLink(w http.ResponseWriter, r *http.Request, a core.Actor) {

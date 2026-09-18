@@ -32,12 +32,20 @@ async function call(method, path, body) {
     throw new Refused('You are offline. That did not go through.', 0);
   }
   if (res.status === 204) return null;
+  // A session that has run out is a redirect to the sign-in page, which fetch
+  // follows and hands back as a successful page of HTML. Answering null to the
+  // caller would be a crash three lines later, so it is a refusal here.
+  if (!/json/i.test(res.headers.get('Content-Type') || '')) {
+    if (res.redirected || res.status === 200) {
+      throw new Refused('Your session has ended. Sign in again.', 401);
+    }
+    throw new Refused('That did not go through.', res.status);
+  }
   let payload = null;
   try {
     payload = await res.json();
   } catch {
-    // A refusal from outside the handlers, such as the CSRF guard, answers
-    // with a page rather than JSON.
+    throw new Refused('That did not go through.', res.status);
   }
   if (!res.ok) {
     throw new Refused((payload && payload.error) || 'That did not go through.', res.status);

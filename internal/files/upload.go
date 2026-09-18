@@ -21,11 +21,13 @@ import (
 
 // The two windows the upload flow runs on, and why they are different lengths.
 //
-// A presigned part URL lives an hour because the browser is uploading to it
-// right now; a resume after a reload or a dropped connection asks for the parts
-// still missing and is signed fresh URLs, so the short life costs nothing. The
-// upload as a whole lives 48 hours, which is what the sweep abandons it after,
-// and is what somebody who closed the laptop overnight has to come back inside.
+// A presigned part URL lives an hour, because a URL that leaks is a write into
+// the bucket for as long as it lives. A batch is not assumed to fit in that
+// hour: the client is told when its URLs stop working and asks for the next
+// batch before they do, so a slow connection re-signs rather than fails. The
+// upload as a whole lives 48 hours from the last time anybody asked for parts,
+// which is what the sweep abandons it after, so the window is 48 hours of
+// silence rather than of wall clock.
 const (
 	uploadTTL = time.Hour
 	abandonAt = 48 * time.Hour
@@ -60,9 +62,9 @@ type Part struct {
 }
 
 // partBatch is how many part URLs one request hands out. At 64 MiB a part that
-// is four gigabytes of signing per round trip, which is enough to keep a fast
-// connection busy and small enough that the URLs are still valid when the last
-// of them is reached.
+// is four gigabytes per round trip, which keeps a fast connection busy; a slow
+// one asks again before the hour is out and gets the rest of the same batch
+// signed afresh.
 const partBatch = 64
 
 // Create records a file and hands back the way to upload it. The row is written
@@ -176,17 +178,37 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 
 // Parts is the resume: the part numbers the bucket already holds and presigned
 // URLs for a batch of the ones it does not, starting after the part number the
-// client asks from. A client that reloaded knows only its upload id.
+// client asks from. A client that reloaded knows only its file id.
 func (s *Service) Parts(ctx context.Context, a core.Actor, id int64, after int) (Upload, error) {
 	row, err := s.readable(ctx, a, id)
 	if err != nil {
 		return Upload{}, err
 	}
+	// A part URL is a licence to write into the bucket, so this needs the same
+	// standing as the upload it belongs to. Without it a guest, who may read
+	// the list, could ask for one.
+	if err := s.mayWrite(ctx, a, row.Proposition); err != nil {
+		return Upload{}, err
+	}
 	if row.State != stateUploading {
 		return Upload{}, ErrState
 	}
+	// ponytail: a file small enough for one PUT has no uploads row, so this
+	// answers not found and the browser drops its note and waits for the sweep
+	// to clear the row. A resume for those is a second presigned PUT, which is
+	// a branch here and a branch in the client, for an upload that is by
+	// definition under 64 MiB.
 	uploadID, multipart, err := s.upload(ctx, row.ID)
 	if err != nil {
+		return Upload{}, err
+	}
+	// Asking for the next batch is the sign somebody is still uploading, so
+	// the deadline moves. The 48 hours the sweep counts are 48 hours of
+	// silence, not of wall clock: at a modest connection a very large object
+	// takes longer than that to send and would otherwise be swept mid-flight.
+	if _, err := s.DB.ExecContext(ctx,
+		`UPDATE uploads SET expires_at = ? WHERE id = ?`,
+		s.Now().Add(abandonAt).Unix(), uploadID); err != nil {
 		return Upload{}, err
 	}
 	bucket, err := s.bucket(ctx, row.Folder)
@@ -377,6 +399,13 @@ func (s *Service) Delete(ctx context.Context, a core.Actor, id int64) (core.Even
 	if err != nil {
 		return core.Event{}, err
 	}
+	// The multipart id is read before the row goes: the cascade takes the
+	// uploads row with it, and an upload that is never aborted leaves its parts
+	// in the bucket, billed and invisible, with nothing left to find them by.
+	_, multipart, err := s.upload(ctx, id)
+	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		return core.Event{}, err
+	}
 	event, err := s.file(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
 		return err
@@ -384,18 +413,23 @@ func (s *Service) Delete(ctx context.Context, a core.Actor, id int64) (core.Even
 	if err != nil {
 		return core.Event{}, err
 	}
-	s.forget(ctx, was)
+	s.forget(ctx, was, multipart)
 	return event, nil
 }
 
-// forget removes an object and its thumbnail, reporting nothing: the row is
-// already gone and the person who pressed delete has nothing to do about a
-// bucket that refused.
-func (s *Service) forget(ctx context.Context, row File) {
+// forget removes an object, its thumbnail and any multipart upload that was
+// still going, reporting nothing: the row is already gone and the person who
+// pressed delete has nothing to do about a bucket that refused.
+func (s *Service) forget(ctx context.Context, row File, multipart string) {
 	bucket, err := s.bucket(ctx, row.Folder)
 	if err != nil {
 		slog.Warn("file deleted but its object was left behind", "file", row.ID, "err", err)
 		return
+	}
+	if multipart != "" {
+		if err := bucket.AbortMultipart(ctx, row.ObjectKey, multipart); err != nil {
+			slog.Warn("file deleted but its parts were left behind", "key", row.ObjectKey, "err", err)
+		}
 	}
 	if err := bucket.Delete(ctx, row.ObjectKey); err != nil {
 		slog.Warn("file deleted but its object was left behind", "key", row.ObjectKey, "err", err)
@@ -534,11 +568,6 @@ func (s *Service) Sweep(ctx context.Context) error {
 		if n, _ := claimed.RowsAffected(); n == 0 && one.multipart != "" {
 			continue
 		}
-		if bucket, err := s.bucket(ctx, row.Folder); err == nil && one.multipart != "" {
-			if err := bucket.AbortMultipart(ctx, row.ObjectKey, one.multipart); err != nil {
-				slog.Warn("could not abort an abandoned upload", "file", one.id, "err", err)
-			}
-		}
 		if _, err := s.file(ctx, actor, one.id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
 			// The state is checked again inside the transaction: a completion
 			// that got through between the listing and here leaves a ready
@@ -558,7 +587,7 @@ func (s *Service) Sweep(ctx context.Context) error {
 			}
 			return err
 		}
-		s.forget(ctx, row)
+		s.forget(ctx, row, one.multipart)
 	}
 	return nil
 }

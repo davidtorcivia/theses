@@ -290,6 +290,107 @@ func TestSweepTakesAnUploadThatNeverStarted(t *testing.T) {
 	}
 }
 
+// A part URL writes into the bucket, so asking for one needs the standing to
+// upload, not the standing to read the list.
+func TestPartsNeedTheStandingToUpload(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, int64(blob.PartSize+8), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, who string
+		want      error
+	}{
+		{"an editor may", "editor", nil},
+		{"a researcher may", "researcher", nil},
+		{"a guest reads the list but does not upload", "guest", core.ErrForbidden},
+		{"a stranger is told nothing is there", "outsider", core.ErrNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := f.Parts(ctx, f.who[tc.who], up.File.ID, 0); !errors.Is(err, tc.want) {
+				t.Fatalf("Parts: %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// Asking for the next batch is the sign the upload is still going, so it puts
+// the sweep off. Without this a large object on a modest connection is swept
+// out from under the browser that is still sending it.
+func TestAskingForPartsPutsTheSweepOff(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, int64(blob.PartSize+8), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before int64
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT expires_at FROM uploads WHERE file_id = ?`, up.File.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+
+	later := time.Now().Add(40 * time.Hour)
+	f.Now = func() time.Time { return later }
+	if _, err := f.Parts(ctx, f.who["editor"], up.File.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	var after int64
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT expires_at FROM uploads WHERE file_id = ?`, up.File.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after <= before {
+		t.Fatalf("expires_at is %d, was %d; asking for parts should move it", after, before)
+	}
+
+	// Nine hours after that first deadline the upload is still going, so the
+	// sweep leaves it where it is.
+	f.Now = func() time.Time { return later.Add(time.Hour) }
+	if err := f.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GetFile(ctx, f.db, up.File.ID); err != nil {
+		t.Fatalf("the sweep took an upload that had just asked for parts: %v", err)
+	}
+}
+
+// Deleting a file that is still uploading has to abort its multipart upload as
+// well. The uploads row cascades away with it, so nothing would ever find the
+// parts again and the bucket would bill for them forever.
+func TestDeletingAnUploadAbortsItsParts(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, int64(blob.PartSize+8), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.Parts[0].URL, nil, bytes.Repeat([]byte("x"), blob.PartSize))
+	if parts, err := f.second.ListParts(ctx, up.File.ObjectKey, multipartOf(t, f, up.File.ID)); err != nil || len(parts) != 1 {
+		t.Fatalf("the part did not land: %v %+v", err, parts)
+	}
+	multipart := multipartOf(t, f, up.File.ID)
+
+	if _, err := f.Delete(ctx, f.who["editor"], up.File.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.second.ListParts(ctx, up.File.ObjectKey, multipart); err == nil {
+		t.Fatal("the multipart upload is still open after the file was deleted")
+	}
+}
+
+func multipartOf(t *testing.T, f *fixture, file int64) string {
+	t.Helper()
+	var id string
+	if err := f.db.QueryRowContext(context.Background(),
+		`SELECT multipart_id FROM uploads WHERE file_id = ?`, file).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func TestVersionsKeepTheOldFile(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()

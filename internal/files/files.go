@@ -125,6 +125,11 @@ type Link struct {
 // A File is one row of the files list. The object key is in it because the
 // drawer shows where a thing landed in the bucket, and knowing the key is not
 // a way to read the object: every download is a presigned GET.
+//
+// ponytail: the mockup draws a note field on a file and the table has no
+// column for one. The plan does not ask for it, so it is left out rather than
+// added to the schema; a note_md column beside the link's is the upgrade if
+// anybody misses it.
 type File struct {
 	ID          int64  `json:"id"`
 	Proposition int64  `json:"proposition_id"`
@@ -286,6 +291,11 @@ func (s *Service) Versions(ctx context.Context, a core.Actor, id int64) ([]File,
 		f = older
 	}
 	return out, nil
+}
+
+// ReadFile is one file, refusing a proposition the reader may not see.
+func (s *Service) ReadFile(ctx context.Context, a core.Actor, id int64) (File, error) {
+	return s.readable(ctx, a, id)
 }
 
 // readable reads one file and checks the reader may see its proposition.

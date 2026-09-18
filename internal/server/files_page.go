@@ -33,6 +33,12 @@ func newBuckets() *buckets {
 
 // bucketFor is what files.Service asks: the recordings bucket when one is
 // configured and the folder is Recordings, the primary one otherwise.
+//
+// ponytail: the mapping is the one folder rather than a setting per folder.
+// The plan says the bucket is chosen per folder, and the second bucket exists
+// so recordings can sit under a different lifecycle rule, which is the only
+// case there is. A setting per folder is a row in the settings table and a
+// select on the page, and it wants a second bucket in the wild first.
 func (s *Server) bucketFor(ctx context.Context, folder string) (*blob.Client, error) {
 	prefix := "storage.primary"
 	if folder == files.Recordings && settings.Get[string](s.settings, "storage.recordings.bucket") != "" {
