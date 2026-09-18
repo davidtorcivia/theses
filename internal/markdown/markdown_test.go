@@ -169,6 +169,8 @@ func TestPlain(t *testing.T) {
 		{"code span", "Run `go test ./...` first.", "Run go test ./... first."},
 		{"table cells", "| a | b |\n| --- | --- |\n| 1 | 2 |", "a\n\nb\n\n1\n\n2"},
 		{"raw html dropped", "<script>alert(1)</script>", ""},
+		{"fenced code block", "Prose.\n\n```go\nfmt.Println(1)\n```", "Prose.\n\nfmt.Println(1)"},
+		{"indented code block", "Prose.\n\n    go test ./...\n    go vet ./...", "Prose.\n\ngo test ./...\ngo vet ./..."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

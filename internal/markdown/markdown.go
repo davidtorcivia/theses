@@ -63,6 +63,12 @@ func Plain(source string) string {
 			case *note:
 				b.WriteString(n.body)
 				return ast.WalkSkipChildren, nil
+			case *ast.FencedCodeBlock:
+				// A code block keeps its text in line segments rather than in
+				// child nodes, so the walk would otherwise pass over it.
+				writeLines(&b, src, n.Lines())
+			case *ast.CodeBlock:
+				writeLines(&b, src, n.Lines())
 			case *ast.Text:
 				b.Write(n.Segment.Value(src))
 				if n.SoftLineBreak() || n.HardLineBreak() {
@@ -82,6 +88,13 @@ func Plain(source string) string {
 }
 
 var blankLines = regexp.MustCompile(`\n{3,}`)
+
+func writeLines(b *strings.Builder, src []byte, lines *text.Segments) {
+	for i := 0; i < lines.Len(); i++ {
+		line := lines.At(i)
+		b.Write(line.Value(src))
+	}
+}
 
 // A mention is @handle written outside a word.
 type mention struct {
