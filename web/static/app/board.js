@@ -2,7 +2,7 @@
 // inline form that assigns by account name, and the All, Mine and Open filter.
 
 import { $, $$, el, clear, initials, say, editable, handles, stripHandles } from './dom.js';
-import { state, user, emit, hold, columnCards } from './state.js';
+import { state, user, emit, hold, columnCards, canEdit } from './state.js';
 import { send } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { openCard } from './drawer.js';
@@ -33,7 +33,7 @@ function cardNode(card) {
   const mine = (card.assignees || []).includes(state.me);
   const who = el('div', { class: 'cw' });
   for (const id of card.assignees || []) who.append(initials(user(id)));
-  if (state.can.edit) {
+  if (canEdit()) {
     who.append(el('button', {
       class: 'asg', type: 'button', title: 'Assign someone', text: '+',
       onclick: (e) => { e.stopPropagation(); assign(card, e.currentTarget); },
@@ -46,10 +46,10 @@ function cardNode(card) {
   });
   const node = el('article', {
     class: 'card' + (card.done_at ? ' done' : '') + (mine ? ' mine' : ''),
-    draggable: state.can.edit ? 'true' : null, 'data-id': card.id,
+    draggable: canEdit() ? 'true' : null, 'data-id': card.id,
   }, who, el('div', { class: 'cb' },
     el('div', { class: 'ct', text: card.title }),
-    el('div', { class: 'cm' }, meta(card), state.can.edit && tick)));
+    el('div', { class: 'cm' }, meta(card), canEdit() && tick)));
 
   node.addEventListener('click', () => openCard(card.id));
   node.addEventListener('dragstart', (e) => {
@@ -85,7 +85,7 @@ function columnNode(column) {
   const done = all.filter((c) => c.done_at).length;
 
   const name = el('h3', { text: column.name, spellcheck: 'false' });
-  if (state.can.edit) {
+  if (canEdit()) {
     name.addEventListener('click', (e) => {
       e.stopPropagation();
       if (name.isContentEditable) return;
@@ -105,12 +105,12 @@ function columnNode(column) {
   const section = el('section', { class: 'col', 'data-col': column.id },
     el('header', {}, name, el('span', { class: 'mono cnt', text: all.length ? `${done}/${all.length}` : '—' })),
     cards,
-    state.can.edit && el('button', {
+    canEdit() && el('button', {
       class: 'add mono', type: 'button', text: '+ Card',
       onclick: () => inlineAdd(column, cards),
     }));
 
-  if (state.can.edit) dropZone(section, column, cards);
+  if (canEdit()) dropZone(section, column, cards);
   return section;
 }
 
@@ -174,7 +174,7 @@ function inlineAdd(column, cards) {
 export function renderBoard(into) {
   const board = clear(into);
   for (const column of state.columns) board.append(columnNode(column));
-  if (state.can.edit) {
+  if (canEdit()) {
     board.append(el('button', {
       class: 'addcol mono', id: 'addcol', type: 'button', text: '+ Column',
       onclick: () => send('column.create', { proposition: state.open, title: 'New column' })

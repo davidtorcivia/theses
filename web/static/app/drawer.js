@@ -3,7 +3,7 @@
 // the two text fields carry the version they started from.
 
 import { $, el, clear, add, initials, inline, say, editable } from './dom.js';
-import { state, user, byHandle, emit, hold } from './state.js';
+import { state, user, byHandle, emit, hold, canEdit } from './state.js';
 import { send, where, Conflict } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 
@@ -44,7 +44,7 @@ export function renderDrawer() {
     el('button', { class: 'x', type: 'button', text: 'Close', onclick: closeDrawer })));
 
   const heading = el('h2', { text: card.title, spellcheck: 'false' });
-  if (state.can.edit) {
+  if (canEdit()) {
     heading.addEventListener('click', () => {
       if (heading.isContentEditable) return;
       hold(true);
@@ -70,7 +70,7 @@ export function renderDrawer() {
 
   drawer.append(el('h4', { text: 'Activity' }));
   drawer.append(activity(card));
-  if (state.can.edit) drawer.append(noteForm(card));
+  if (canEdit()) drawer.append(noteForm(card));
   drawer.scrollTop = top;
 }
 
@@ -83,7 +83,7 @@ function props(card) {
       onclick: () => send('card.unassign', { card: card.id, user: id }).catch((e) => say(e.message)),
     }, initials(person)));
   }
-  if (state.can.edit) {
+  if (canEdit()) {
     who.append(el('button', {
       class: 'lnk', type: 'button', text: '+ assign',
       onclick: (e) => {
@@ -98,7 +98,7 @@ function props(card) {
   const due = el('button', { class: 'lnk plain', type: 'button' },
     card.due_date ? document.createTextNode(card.due_date) : el('span', { class: 'dim', text: 'set a date' }));
   due.addEventListener('click', () => {
-    if (!state.can.edit) return;
+    if (!canEdit()) return;
     const field = el('input', { class: 'inline', value: card.due_date || '', placeholder: 'e.g. 24 Sep' });
     due.replaceWith(field);
     hold(true);
@@ -119,7 +119,7 @@ function props(card) {
   });
 
   const question = el('select', {
-    disabled: !state.can.edit,
+    disabled: !canEdit(),
     onchange: (e) => send('card.question', { card: card.id, question: e.target.value }).catch((x) => say(x.message)),
   }, el('option', { value: '', text: 'none', selected: !card.question }));
   state.questions.forEach((q, i) => {
@@ -130,7 +130,7 @@ function props(card) {
   });
 
   const columns = el('select', {
-    disabled: !state.can.edit,
+    disabled: !canEdit(),
     onchange: (e) => send('card.move', { card: card.id, column: Number(e.target.value), after: 0 })
       .catch((x) => say(x.message)),
   });
@@ -143,19 +143,21 @@ function props(card) {
     el('dt', { text: 'Due' }), el('dd', {}, due),
     el('dt', { text: 'Question' }), el('dd', {}, question),
     el('dt', { text: 'Column' }), el('dd', {}, columns),
-    el('dt', { text: 'State' }), el('dd', {}, el('button', {
-      class: 'lnk plain', type: 'button', text: card.done_at ? 'Done · reopen' : 'Open · mark done',
-      onclick: () => send('card.done', { card: card.id, done: !card.done_at }).catch((e) => say(e.message)),
-    })));
+    el('dt', { text: 'State' }), el('dd', {}, canEdit()
+      ? el('button', {
+        class: 'lnk plain', type: 'button', text: card.done_at ? 'Done · reopen' : 'Open · mark done',
+        onclick: () => send('card.done', { card: card.id, done: !card.done_at }).catch((e) => say(e.message)),
+      })
+      : el('span', { text: card.done_at ? 'Done' : 'Open' })));
 }
 
 function description(card) {
   const node = el('p', {
     class: 'desc', 'data-ph': 'Add a description. @ mentions notify people.',
-    contenteditable: state.can.edit ? 'true' : null, spellcheck: 'false',
+    contenteditable: canEdit() ? 'true' : null, spellcheck: 'false',
   });
   add(node, [rendered(card.description_md || '')]);
-  if (!state.can.edit) return node;
+  if (!canEdit()) return node;
 
   mentionable(node);
   node.addEventListener('focus', () => {
@@ -202,17 +204,17 @@ function checklist(card) {
     list.append(el('li', { class: item.done ? 'd' : '' },
       el('label', {},
         el('input', {
-          type: 'checkbox', checked: item.done, disabled: !state.can.edit,
+          type: 'checkbox', checked: item.done, disabled: !canEdit(),
           onchange: (e) => send('checklist.toggle', { item: item.id, done: e.target.checked })
             .catch((x) => say(x.message)),
         }),
         ' ' + item.text),
-      state.can.edit && el('button', {
+      canEdit() && el('button', {
         class: 'lnk del quiet', type: 'button', text: 'remove',
         onclick: () => send('checklist.remove', { item: item.id }).catch((e) => say(e.message)),
       })));
   }
-  if (state.can.edit) {
+  if (canEdit()) {
     const field = el('input', { class: 'newitem', placeholder: '+ item' });
     field.addEventListener('focus', () => hold(true));
     field.addEventListener('blur', () => hold(false));
@@ -240,7 +242,7 @@ function activity(card) {
     add(body, [rendered(note.body_md)]);
     const line = el('div', {}, body,
       el('span', { class: 'mono when', text: when(note.created_at) }));
-    if (note.user_id === state.me) {
+    if (note.user_id === state.me && canEdit()) {
       line.append(' ', el('button', {
         class: 'lnk del quiet', type: 'button', text: 'delete',
         onclick: () => send('comment.delete', { comment: note.id }).catch((e) => say(e.message)),

@@ -2,7 +2,7 @@
 // and members, the four tabs, and the panes under them.
 
 import { $, el, clear, num, initials, say, editable } from './dom.js';
-import { state, user, open, emit, hold } from './state.js';
+import { state, user, open, emit, hold, canEdit, archived } from './state.js';
 import { send } from './net.js';
 import { renderBoard, boardSummary } from './board.js';
 
@@ -23,7 +23,7 @@ export function renderWork() {
 function head(p) {
   const title = el('h1', { id: 'wtitle', text: p.title, spellcheck: 'false' });
   const statement = el('p', { id: 'wstate', text: p.statement, spellcheck: 'false' });
-  if (state.can.edit) {
+  if (canEdit()) {
     editOnClick(title, () => p.title, (value) =>
       send('proposition.edit', { proposition: p.id, title: value, statement: p.statement, blurb: p.blurb }));
     editOnClick(statement, () => p.statement, (value) =>
@@ -47,6 +47,7 @@ function head(p) {
     statement,
     el('div', { class: 'wmeta' },
       el('span', { id: 'wstatus', class: 'status', 'data-s': p.status, text: p.status }),
+      archived() && el('span', { class: 'mono', text: 'Archived · read only' }),
       el('span', { id: 'wep', class: 'mono', text: schedule(p) }),
       members),
     tabs);

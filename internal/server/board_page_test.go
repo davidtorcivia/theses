@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -324,5 +325,41 @@ func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 	_, mine := h.payloadAs(h.client, "/")
 	if len(mine.Propositions) != 2 {
 		t.Errorf("the owner sees %d propositions, want 2", len(mine.Propositions))
+	}
+}
+
+// The page decides what to draw from the proposition's archived_at, because an
+// archived proposition is read only and drawing an add or a tick on one would
+// only offer a refusal. The payload has to carry it either way.
+func TestThePayloadSaysWhenAPropositionIsArchived(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/p/" + strconv.FormatInt(e.EntityID, 10)
+
+	state := h.payload(path)
+	if state.Propositions[0].ArchivedAt != nil {
+		t.Errorf("a live proposition carries archived_at %v", *state.Propositions[0].ArchivedAt)
+	}
+
+	if _, err := h.srv.board.ArchiveProposition(ctx, owner, e.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	state = h.payload(path)
+	if len(state.Propositions) != 1 || state.Propositions[0].ArchivedAt == nil {
+		t.Fatalf("an archived proposition is %+v", state.Propositions)
+	}
+	if state.Open != e.EntityID || state.Board == nil {
+		t.Errorf("an archived proposition no longer opens: %d", state.Open)
+	}
+	// It is readable, and only restore and delete still work on it.
+	if _, err := h.srv.board.SetStatus(ctx, owner, e.EntityID, "recording"); !errors.Is(err, board.ErrArchived) {
+		t.Errorf("the board took an edit on an archived proposition: %v", err)
 	}
 }

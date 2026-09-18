@@ -24,15 +24,16 @@ function groups() {
 }
 
 function entry(p) {
-  const tail = p.status === (state.statuses[state.statuses.length - 1] || 'released') && p.episode
-    ? 'ep ' + p.episode
-    : p.status;
+  const released = state.statuses[state.statuses.length - 1] || 'released';
+  let tail = p.status;
+  if (p.archived_at) tail = 'archived';
+  else if (p.status === released && p.episode) tail = 'ep ' + p.episode;
   const title = el('span', { class: 't', text: p.title + ' ' },
     el('span', { class: 'st', text: tail }));
   const menu = el('div', { class: 'menu', hidden: true });
   const li = el('li', {
-    class: 'ws' + (p.id === state.open ? ' on' : ''),
-    'data-n': p.id, 'data-status': p.status, draggable: 'true',
+    class: 'ws' + (p.archived_at ? ' arch' : '') + (p.id === state.open ? ' on' : ''),
+    'data-n': p.id, 'data-status': p.status, draggable: p.archived_at ? null : 'true',
   }, el('span', { class: 'no', text: num(p.number) }), title);
 
   if (state.can.edit) {
@@ -43,7 +44,10 @@ function entry(p) {
       for (const m of $$('#rail .menu')) m.hidden = true;
       menu.hidden = wasOpen;
     });
-    for (const [label, act] of [['Rename', 'rename'], ['Settings', 'settings'], [p.archived_at ? 'Restore' : 'Archive', 'archive'], ['Delete', 'delete']]) {
+    const menu_items = p.archived_at
+      ? [['Restore', 'archive'], ['Delete', 'delete']]
+      : [['Rename', 'rename'], ['Settings', 'settings'], ['Archive', 'archive'], ['Delete', 'delete']];
+    for (const [label, act] of menu_items) {
       if (act === 'delete' && !state.can.delete) continue;
       menu.append(el('button', {
         type: 'button', text: label,
@@ -57,13 +61,15 @@ function entry(p) {
     if (e.target.closest('.menu') || e.target.closest('.more') || title.isContentEditable) return;
     go(p.id);
   });
-  li.addEventListener('dragstart', (e) => {
-    li.classList.add('dragging');
-    hold(true);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(p.id));
-  });
-  li.addEventListener('dragend', () => { li.classList.remove('dragging'); hold(false); });
+  if (!p.archived_at) {
+    li.addEventListener('dragstart', (e) => {
+      li.classList.add('dragging');
+      hold(true);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(p.id));
+    });
+    li.addEventListener('dragend', () => { li.classList.remove('dragging'); hold(false); });
+  }
   return li;
 }
 
@@ -147,13 +153,11 @@ export function renderRail() {
   const archived = state.props.filter((p) => p.archived_at);
   if (archived.length) {
     const list = el('ul', { hidden: true });
-    for (const p of archived) {
-      list.append(el('li', { class: 'ws arch', 'data-n': p.id, onclick: () => go(p.id) },
-        el('span', { class: 'no', text: num(p.number) }),
-        el('span', { class: 't', text: p.title + ' ' }, el('span', { class: 'st', text: 'archived' }))));
-    }
+    // The same entry as any other, so an archived proposition still opens and
+    // still carries the two things its menu has left, restore and delete.
+    for (const p of archived) list.append(entry(p));
     const toggle = el('button', {
-      class: 'h4', type: 'button', text: 'Archived ',
+      id: 'archtoggle', class: 'h4', type: 'button', text: 'Archived ',
       onclick: () => { list.hidden = !list.hidden; toggle.classList.toggle('open', !list.hidden); },
     }, el('i', { text: String(archived.length) }));
     rail.append(el('div', { class: 'group', id: 'archived' }, toggle, list));

@@ -66,6 +66,20 @@ export function open() {
   return proposition(state.open);
 }
 
+// canEdit is what the board allows right now. The role has to allow it and
+// the open proposition has to not be archived, because an archived one is read
+// only: every command on it but restore and delete is refused, so drawing the
+// controls would only offer a refusal.
+export function canEdit() {
+  const p = open();
+  return Boolean(state.can.edit && p && !p.archived_at);
+}
+
+export function archived() {
+  const p = open();
+  return Boolean(p && p.archived_at);
+}
+
 export function columnCards(columnID) {
   return [...state.cards.values()]
     .filter((c) => c.column_id === columnID)
