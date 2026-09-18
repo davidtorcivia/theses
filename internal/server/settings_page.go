@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -276,15 +277,19 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
-	token, err := s.auth.CreateInvitation(r.Context(), email, r.PostFormValue("role"), userOf(r).ID)
+	role := r.PostFormValue("role")
+	token, err := s.auth.CreateInvitation(r.Context(), email, role, userOf(r).ID)
 	if err != nil {
 		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
-	if err := s.activity(r.Context(), userOf(r).ID, "invitation", email, "create", "", r.PostFormValue("role")); err != nil {
+	if err := s.write(r, "invitation", email, "create", "", role, func(q store.Querier) error {
+		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, email, role, token))
+	}); err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	s.mail.Nudge()
 	s.logInvite(email)
 	// Rendered rather than redirected, for the same reason as a new API token:
 	// this is the only time the link exists anywhere it can be read from.
@@ -301,15 +306,29 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
+	// Read before the reissue, because the mail needs the address and the role
+	// and neither comes back with the new token.
+	inv, err := store.InvitationByID(r.Context(), s.db, id)
+	if errors.Is(err, store.ErrNotFound) {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	token, err := s.auth.ReissueInvitation(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if err := s.activity(r.Context(), userOf(r).ID, "invitation", itoa(id), "resend", "", ""); err != nil {
+	if err := s.write(r, "invitation", itoa(id), "resend", "", "", func(q store.Querier) error {
+		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, inv.Email, inv.Role, token))
+	}); err != nil {
 		s.fail(w, r, err)
 		return
 	}
+	s.mail.Nudge()
 	s.logInvite("invitation " + itoa(id))
 	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewInvite": s.inviteURL(token)})
 }
@@ -331,9 +350,19 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) inviteURL(token string) string { return s.cfg.BaseURL + "/invite/" + token }
 
+func (s *Server) inviteMessage(r *http.Request, email, role, token string) mail.Message {
+	return mail.Invite{
+		To:      email,
+		Inviter: userOf(r).Name,
+		Role:    role,
+		URL:     s.inviteURL(token),
+		Expires: auth.InviteValidity,
+	}.Message()
+}
+
 // The link is deliberately not logged, because anything that can read the log
-// could accept the invitation with it. It is shown to the owner once, on the
-// page that made it, and mail will carry it once internal/mail lands.
+// could accept the invitation with it. The mail carries it, and the page that
+// made it shows it once so the owner can pass it on by hand as well.
 func (s *Server) logInvite(who string) {
 	s.log.Info("invitation issued", "to", who)
 }

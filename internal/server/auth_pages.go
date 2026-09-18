@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -452,7 +453,7 @@ func (s *Server) enrolRestart(r *http.Request) string {
 	}
 }
 
-// Password reset. The mail itself is wired later; for now the link is logged.
+// Password reset.
 
 func (s *Server) getReset(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "reset.html", s.page(r, "Reset", map[string]any{"ArtFrames": quietArt}))
@@ -470,14 +471,24 @@ func (s *Server) postReset(w http.ResponseWriter, r *http.Request) {
 		case err != nil:
 			s.fail(w, r, err)
 			return
+		case u.Email == "":
+			// An account can be made without an address, and there is nowhere to
+			// send the link. The answer is the same either way.
 		default:
-			// ponytail: the token row is written but nothing sends it until
-			// internal/mail lands. The link is deliberately not logged, because
-			// anything that can read the log could then use it.
-			if _, err := s.auth.CreatePasswordReset(r.Context(), u.ID); err != nil {
+			// The link is deliberately not logged, because anything that can
+			// read the log could then use it. Only the mail carries it.
+			token, err := s.auth.CreatePasswordReset(r.Context(), u.ID)
+			if err != nil {
 				s.fail(w, r, err)
 				return
 			}
+			if err := mail.Enqueue(r.Context(), s.db, mail.Reset{
+				To: u.Email, URL: s.cfg.BaseURL + "/reset/" + token, Expires: auth.ResetValidity,
+			}.Message()); err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			s.mail.Nudge()
 			s.log.Info("password reset requested", "handle", u.Handle)
 		}
 	}
