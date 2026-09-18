@@ -433,7 +433,12 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	if err := a.set.SetAs(r.Context(), def.Key, values, p.Actor()); err != nil {
 		// Set validates against the key's definition, so what it complains about
-		// is the client's fault and worth repeating word for word.
+		// is the client's fault and worth repeating word for word. A failure to
+		// store is not, and carries driver detail that says nothing to a client.
+		if errors.Is(err, settings.ErrStorage) {
+			a.serverError(w, r, err)
+			return
+		}
 		a.fail(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -599,3 +599,22 @@ func TestTheBearerSchemeIsNotCaseSensitive(t *testing.T) {
 		}
 	}
 }
+
+// A storage failure is the server's fault and must not come back as a 400 with
+// driver text in it. The settings table is dropped rather than the database
+// closed, so that the token still resolves and the write is the only thing that
+// fails.
+func TestASettingThatCannotBeStoredIsAServerError(t *testing.T) {
+	h := newHarness(t)
+	admin := h.token(auth.ScopeAdmin)
+	if _, err := h.db.ExecContext(context.Background(), `DROP TABLE settings`); err != nil {
+		t.Fatal(err)
+	}
+	w := h.do("PUT", "/api/v1/settings/workspace.name", admin, `{"value":"Debt Machine"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500 (%s)", w.Code, w.Body.String())
+	}
+	if got := decode(t, w)["error"]; got != "something went wrong here" {
+		t.Errorf("error = %v", got)
+	}
+}

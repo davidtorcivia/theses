@@ -147,6 +147,11 @@ func (s *Settings) IsSet(key string) bool {
 	return s.present[key]
 }
 
+// ErrStorage marks a setting that could not be stored, as against a value the
+// caller got wrong. Everything else SetAs returns is the caller's fault and can
+// be repeated to them; this one is the server's and cannot.
+var ErrStorage = errors.New("the setting could not be stored")
+
 // An Actor is who is making the change. An action taken with an API token or by
 // an MCP client is the action of the person the token belongs to, so Kind and
 // ID are theirs; Via names what carried it, "token:<name>" or "mcp:<client>",
@@ -196,14 +201,14 @@ func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor
 		}
 		nonce := make([]byte, s.aead.NonceSize())
 		if _, err := rand.Read(nonce); err != nil {
-			return err
+			return fmt.Errorf("%w: %w", ErrStorage, err)
 		}
 		stored = base64.StdEncoding.EncodeToString(s.aead.Seal(nonce, nonce, []byte(secret), []byte(key)))
 		after = `{"set":true}`
 	} else {
 		b, err := json.Marshal(parsed)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: %w", ErrStorage, err)
 		}
 		stored, after = string(b), string(b)
 	}
@@ -219,23 +224,23 @@ func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor
 			before = old.ValueJSON
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return err
+		return fmt.Errorf("%w: read %s: %w", ErrStorage, key, err)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 	defer tx.Rollback()
 	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actor.UserID); err != nil {
-		return fmt.Errorf("save %s: %w", key, err)
+		return fmt.Errorf("%w: save %s: %w", ErrStorage, key, err)
 	}
 	if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID,
 		"setting", key, "set", before, after); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 
 	s.mu.Lock()

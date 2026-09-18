@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -215,5 +216,23 @@ func TestSetAsRecordsThePersonBehindTheToken(t *testing.T) {
 	}
 	if want := strconv.FormatInt(id, 10); kind != "user" || actorID != want {
 		t.Errorf("activity actor = %s %s, want user %s", kind, actorID, want)
+	}
+}
+
+func TestAFailureToStoreIsMarked(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+	if _, err := db.ExecContext(ctx, `DROP TABLE settings`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Set(ctx, "workspace.name", []string{"Debt Machine"}, 0)
+	if !errors.Is(err, ErrStorage) {
+		t.Errorf("Set returned %v, want an ErrStorage", err)
+	}
+	// A value the caller got wrong is still the caller's, not storage.
+	if err := s.Set(ctx, "signin.session_days", []string{"soon"}, 0); errors.Is(err, ErrStorage) {
+		t.Errorf("a bad number returned %v", err)
 	}
 }

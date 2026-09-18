@@ -217,6 +217,9 @@ func (s *Server) setSetting(ctx context.Context, req *sdk.CallToolRequest, in se
 		return nil, api.SettingView{}, fmt.Errorf("there is no setting called %q", in.Key)
 	}
 	if err := s.set.SetAs(ctx, def.Key, []string{in.Value}, actor(req, p)); err != nil {
+		if errors.Is(err, settings.ErrStorage) {
+			return nil, api.SettingView{}, s.failed("save the setting", err)
+		}
 		return nil, api.SettingView{}, err
 	}
 	return nil, s.api.Describe(def), nil
