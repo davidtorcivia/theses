@@ -288,7 +288,11 @@ CREATE TABLE mail_outbox (
   last_error TEXT    NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   next_at    INTEGER NOT NULL,
-  sent_at    INTEGER
+  sent_at    INTEGER,
+  -- When the message stops being worth sending, because the link it carries
+  -- dies: an hour for a password reset, a week for an invitation. NULL never
+  -- expires.
+  expires_at INTEGER
 );
 CREATE INDEX mail_outbox_pending ON mail_outbox(sent_at, next_at);
 

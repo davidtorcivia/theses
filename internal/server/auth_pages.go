@@ -485,9 +485,12 @@ func (s *Server) postReset(w http.ResponseWriter, r *http.Request) {
 				s.fail(w, r, err)
 				return
 			}
+			// The message expires with the link it carries: an hour of retries
+			// is all a reset is worth, and a day of them would deliver a URL
+			// that had died long before it arrived.
 			if err := mail.Enqueue(r.Context(), s.db, mail.Reset{
 				To: u.Email, URL: s.cfg.BaseURL + "/reset/" + token, Expires: auth.ResetValidity,
-			}.Message()); err != nil {
+			}.Message(), s.auth.Now().Add(auth.ResetValidity)); err != nil {
 				s.fail(w, r, err)
 				return
 			}

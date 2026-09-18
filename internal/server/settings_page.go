@@ -422,7 +422,8 @@ func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 	// invitation with no mail; give CreateInvitation and ReissueInvitation a
 	// store.Querier and pass this one when auth is next opened.
 	if err := s.write(r, "invitation", email, "create", "", role, func(q store.Querier) error {
-		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, email, role, token))
+		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, email, role, token),
+			s.auth.Now().Add(auth.InviteValidity))
 	}); err != nil {
 		s.fail(w, r, err)
 		return
@@ -462,7 +463,8 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 	}
 	// ponytail: the reissued token is committed separately, as on create.
 	if err := s.write(r, "invitation", itoa(id), "resend", "", "", func(q store.Querier) error {
-		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, inv.Email, inv.Role, token))
+		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, inv.Email, inv.Role, token),
+			s.auth.Now().Add(auth.InviteValidity))
 	}); err != nil {
 		s.fail(w, r, err)
 		return

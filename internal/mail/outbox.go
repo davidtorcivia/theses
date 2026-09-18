@@ -25,17 +25,36 @@ const (
 	batchSize   = 20
 )
 
+// expired is the error stored on a row whose link ran out before it went out.
+// It is also what keeps the marking pass from rewriting the same rows.
+const expired = "the link it carries expired before it could be sent"
+
+// sendable is the part of the WHERE clause that says a row is still worth
+// trying. It takes now and the give up cutoff, in that order.
+//
+// The day is counted from the first attempt rather than from the enqueue, so a
+// message queued while the workspace had no SMTP server still goes out when one
+// is finally configured, however long that took.
+const sendable = `(expires_at IS NULL OR expires_at > ?) AND (attempts = 0 OR created_at > ?)`
+
 // Enqueue writes one row per recipient through q, which may be a transaction,
 // so that a message and whatever caused it commit together or not at all.
-func Enqueue(ctx context.Context, q store.Querier, m Message) error {
+// expires is when the message stops being worth sending, which for the two
+// transactional messages is when the link inside them dies. A zero time means
+// it never expires.
+func Enqueue(ctx context.Context, q store.Querier, m Message, expires time.Time) error {
 	if len(m.To) == 0 {
 		return errors.New("mail: no recipients")
 	}
+	var expiresAt any
+	if !expires.IsZero() {
+		expiresAt = expires.Unix()
+	}
 	for _, to := range m.To {
 		if _, err := q.ExecContext(ctx, `INSERT INTO mail_outbox
-			(to_addr, subject, body_text, body_html, created_at, next_at)
-			VALUES (?, ?, ?, ?, unixepoch(), unixepoch())`,
-			to, m.Subject, m.Text, m.HTML); err != nil {
+			(to_addr, subject, body_text, body_html, created_at, next_at, expires_at)
+			VALUES (?, ?, ?, ?, unixepoch(), unixepoch(), ?)`,
+			to, m.Subject, m.Text, m.HTML, expiresAt); err != nil {
 			return fmt.Errorf("mail: enqueue: %w", err)
 		}
 	}
@@ -89,14 +108,22 @@ type queued struct {
 }
 
 // once sends one batch. A configuration that is missing or unreadable stops the
-// batch before any row is touched, so nothing runs out its day while the owner
-// is still typing the fields in.
+// batch before any row is touched, so nothing is abandoned while the owner is
+// still typing the fields in.
 func (o *Outbox) once(ctx context.Context) error {
 	now := time.Now()
+	// A row whose link has run out says so, rather than keeping whatever error
+	// it last had or, if it was never tried, none at all.
+	if _, err := o.db.ExecContext(ctx, `UPDATE mail_outbox SET last_error = ?
+		WHERE sent_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ? AND last_error <> ?`,
+		expired, now.Unix(), expired); err != nil {
+		return fmt.Errorf("mail: expire: %w", err)
+	}
 	rows, err := o.db.QueryContext(ctx, `SELECT id, to_addr, subject, body_text, body_html, attempts
 		FROM mail_outbox
-		WHERE sent_at IS NULL AND next_at <= ? AND created_at > ?
-		ORDER BY next_at LIMIT ?`, now.Unix(), now.Add(-giveUpAfter).Unix(), batchSize)
+		WHERE sent_at IS NULL AND next_at <= ? AND `+sendable+`
+		ORDER BY next_at LIMIT ?`,
+		now.Unix(), now.Unix(), now.Add(-giveUpAfter).Unix(), batchSize)
 	if err != nil {
 		return fmt.Errorf("mail: read outbox: %w", err)
 	}
@@ -183,20 +210,21 @@ func (o *Outbox) Sender(ctx context.Context) (SMTP, error) {
 
 // State is what the settings page prints about the queue.
 type State struct {
-	Pending   int // unsent and still being retried
-	GivenUp   int // unsent, past the day, kept for inspection
+	Pending   int // unsent and still worth trying
+	GivenUp   int // unsent and no longer tried, kept for inspection
 	LastError string
 }
 
 func (o *Outbox) State(ctx context.Context) (State, error) {
+	now := time.Now().Unix()
 	cutoff := time.Now().Add(-giveUpAfter).Unix()
 	var st State
 	err := o.db.QueryRowContext(ctx, `SELECT
-		coalesce(sum(CASE WHEN created_at >  ? THEN 1 ELSE 0 END), 0),
-		coalesce(sum(CASE WHEN created_at <= ? THEN 1 ELSE 0 END), 0),
+		coalesce(sum(CASE WHEN `+sendable+` THEN 1 ELSE 0 END), 0),
+		coalesce(sum(CASE WHEN `+sendable+` THEN 0 ELSE 1 END), 0),
 		coalesce((SELECT last_error FROM mail_outbox
 			WHERE sent_at IS NULL AND last_error <> '' ORDER BY id DESC LIMIT 1), '')
-		FROM mail_outbox WHERE sent_at IS NULL`, cutoff, cutoff).
+		FROM mail_outbox WHERE sent_at IS NULL`, now, cutoff, now, cutoff).
 		Scan(&st.Pending, &st.GivenUp, &st.LastError)
 	if err != nil {
 		return State{}, fmt.Errorf("mail: outbox state: %w", err)
@@ -204,8 +232,10 @@ func (o *Outbox) State(ctx context.Context) (State, error) {
 	return st, nil
 }
 
-// RetryNow puts every unsent row back at the front of the queue. It restarts the
-// day as well, because a row that has run out of it is picked up by nothing.
+// RetryNow puts every unsent row that has not expired back at the front of the
+// queue. It restarts the day as well, because a row that has run out of it is
+// picked up by nothing. A row whose link has died is left where it is: sending
+// it would deliver a URL that no longer works.
 //
 // ponytail: restarting the day loses when the row was first queued, which is
 // half of what keeping it for inspection was for; a gave_up_at column would
@@ -213,7 +243,7 @@ func (o *Outbox) State(ctx context.Context) (State, error) {
 func (o *Outbox) RetryNow(ctx context.Context) error {
 	if _, err := o.db.ExecContext(ctx, `UPDATE mail_outbox
 		SET attempts = 0, next_at = unixepoch(), created_at = unixepoch()
-		WHERE sent_at IS NULL`); err != nil {
+		WHERE sent_at IS NULL AND (expires_at IS NULL OR expires_at > unixepoch())`); err != nil {
 		return fmt.Errorf("mail: retry: %w", err)
 	}
 	o.Nudge()

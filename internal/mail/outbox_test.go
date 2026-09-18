@@ -138,7 +138,7 @@ func TestEnqueueRollsBackWithItsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Enqueue(ctx, tx, msg); err != nil {
+	if err := Enqueue(ctx, tx, msg, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if n := countRows(t, db, `1=1`); n != 0 {
@@ -156,7 +156,7 @@ func TestEnqueueRollsBackWithItsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Enqueue(ctx, tx, msg); err != nil {
+	if err := Enqueue(ctx, tx, msg, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -174,7 +174,7 @@ func TestOutboxSendsAndMarksSent(t *testing.T) {
 	ctx := context.Background()
 
 	for _, to := range []string{"ana@example.com", "bo@example.com"} {
-		if err := Enqueue(ctx, db, Reset{To: to, URL: "https://x/reset/t", Expires: time.Hour}.Message()); err != nil {
+		if err := Enqueue(ctx, db, Reset{To: to, URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -207,7 +207,7 @@ func TestOutboxRecordsFailureAndBacksOff(t *testing.T) {
 	configure(t, set, "127.0.0.1", dead)
 
 	ctx := context.Background()
-	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message()); err != nil {
+	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.once(ctx); err != nil {
@@ -281,7 +281,7 @@ func TestBackoffDoublesAndCaps(t *testing.T) {
 func TestOutboxLeavesRowsAloneWhileMailIsNotConfigured(t *testing.T) {
 	o, db, _ := newTestOutbox(t)
 	ctx := context.Background()
-	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message()); err != nil {
+	if err := Enqueue(ctx, db, Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message(), time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := o.once(ctx); err != ErrNotConfigured {
@@ -310,5 +310,85 @@ func TestRedactLeavesTextWithoutASecretAlone(t *testing.T) {
 	}
 	if got := Redact("auth: 535 hunter2 rejected", "hunter2"); strings.Contains(got, "hunter2") {
 		t.Errorf("the secret survived: %q", got)
+	}
+}
+
+func TestExpiredRowIsNeverSentEvenAfterRetryNow(t *testing.T) {
+	f := startLoopingFake(t)
+	o, db, set := newTestOutbox(t)
+	configure(t, set, "127.0.0.1", f.port)
+	ctx := context.Background()
+
+	// A reset queued while the server was down, whose hour ran out meanwhile.
+	msg := Reset{To: "ana@example.com", URL: "https://x/reset/t", Expires: time.Hour}.Message()
+	if err := Enqueue(ctx, db, msg, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if to, _ := f.delivered(); len(to) != 0 {
+		t.Fatalf("a dead link was delivered to %v", to)
+	}
+	var lastError string
+	if err := db.QueryRowContext(ctx, `SELECT last_error FROM mail_outbox`).Scan(&lastError); err != nil {
+		t.Fatal(err)
+	}
+	if lastError != expired {
+		t.Errorf("last_error = %q, want the expiry note", lastError)
+	}
+
+	// Retry now does not resurrect it, and the next batch still leaves it.
+	if err := o.RetryNow(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if to, _ := f.delivered(); len(to) != 0 {
+		t.Fatalf("retry now delivered a dead link to %v", to)
+	}
+	if n := countRows(t, db, `sent_at IS NULL`); n != 1 {
+		t.Errorf("%d unsent rows, want the expired one kept", n)
+	}
+	st, err := o.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending != 0 || st.GivenUp != 1 {
+		t.Errorf("state = %+v, want the row counted as given up", st)
+	}
+}
+
+func TestRowsQueuedBeforeConfigurationGoOutLater(t *testing.T) {
+	o, db, set := newTestOutbox(t)
+	ctx := context.Background()
+
+	msg := Invite{To: "ana@example.com", Inviter: "DT", Role: "editor", URL: "https://x/invite/t", Expires: 7 * 24 * time.Hour}.Message()
+	if err := Enqueue(ctx, db, msg, time.Now().Add(7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.once(ctx); err != ErrNotConfigured {
+		t.Fatalf("once = %v, want ErrNotConfigured", err)
+	}
+
+	// Twenty five hours pass with nobody filling the fields in.
+	if _, err := db.ExecContext(ctx, `UPDATE mail_outbox
+		SET created_at = unixepoch() - ?, next_at = unixepoch() - ?`,
+		int64(25*time.Hour/time.Second), int64(25*time.Hour/time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	f := startLoopingFake(t)
+	configure(t, set, "127.0.0.1", f.port)
+	if err := o.once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	to, _ := f.delivered()
+	if len(to) != 1 || to[0] != "ana@example.com" {
+		t.Fatalf("a row that was never attempted was dropped: delivered %v", to)
+	}
+	if n := countRows(t, db, `sent_at IS NULL`); n != 0 {
+		t.Errorf("%d rows are still unsent", n)
 	}
 }
