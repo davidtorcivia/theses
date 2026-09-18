@@ -208,3 +208,22 @@ func (nodeRenderer) renderNote(w util.BufWriter, source []byte, n ast.Node, ente
 	}
 	return ast.WalkSkipChildren, nil
 }
+
+// Mentions returns the handles named in source, once each, in the order they
+// appear. It is the parser the renderer uses, so an @ inside a word or inside a
+// code fence is not a mention here either, and what notifies somebody is
+// exactly what the page shows as a mention.
+func Mentions(source string) []string {
+	src := []byte(source)
+	var out []string
+	seen := map[string]bool{}
+	doc := md.Parser().Parse(text.NewReader(src))
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if m, ok := n.(*mention); ok && entering && !seen[m.handle] {
+			seen[m.handle] = true
+			out = append(out, m.handle)
+		}
+		return ast.WalkContinue, nil
+	})
+	return out
+}
