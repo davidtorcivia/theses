@@ -510,7 +510,7 @@ func TestOnlyTheNewestMessageForARefIsDelivered(t *testing.T) {
 		`SELECT last_error FROM mail_outbox WHERE body_text LIKE '%invite/first%'`).Scan(&lastError); err != nil {
 		t.Fatal(err)
 	}
-	if lastError != superseded {
+	if lastError != Superseded {
 		t.Errorf("last_error on the replaced row = %q", lastError)
 	}
 
@@ -526,7 +526,7 @@ func TestOnlyTheNewestMessageForARefIsDelivered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Pending != 0 || st.GivenUp != 1 || st.LastError != superseded {
+	if st.Pending != 0 || st.GivenUp != 1 || st.LastError != Superseded {
 		t.Errorf("state = %+v", st)
 	}
 }
@@ -543,7 +543,7 @@ func TestARefOnlyReplacesItsOwn(t *testing.T) {
 	if err := Enqueue(ctx, db, Reset{To: "a@example.com", URL: "https://x/reset/u", Expires: time.Hour}.Message(), hour, "reset:1"); err != nil {
 		t.Fatal(err)
 	}
-	if n := countRows(t, db, `last_error = ?`, superseded); n != 1 {
+	if n := countRows(t, db, `last_error = ?`, Superseded); n != 1 {
 		t.Errorf("%d rows replaced, want only the earlier reset:1", n)
 	}
 	st, err := o.State(ctx)

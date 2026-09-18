@@ -10,6 +10,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/pquerna/otp/totp"
+
+	"github.com/davidtorcivia/theses/internal/mail"
 )
 
 // queued returns the one row in the outbox, or fails.
@@ -458,4 +463,124 @@ func countOutbox(t *testing.T, h *harness) int {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// drainUntil runs the real outbox worker until canary has been delivered, so
+// that asserting something else was not delivered says something: at least one
+// batch ran with both rows in the database.
+func (h *harness) drainUntil(f *fakeSMTP, canary string) {
+	h.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		h.srv.Mail().Run(ctx)
+	}()
+	h.srv.Mail().Nudge()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if strings.Contains(strings.Join(f.received(), ""), canary) {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-stopped
+			h.Fatalf("the worker never delivered the canary; it received %v", f.received())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-stopped
+}
+
+// inviteThenCanary creates an invitation with no SMTP server configured and
+// queues a password reset behind it, which is the message the worker is watched
+// for once a server exists. It returns the invitation's id and its link.
+func (h *harness) inviteThenCanary() (int64, string) {
+	h.Helper()
+	_, page := h.post("/settings/team/invite", url.Values{
+		"csrf": {h.csrf("/settings")}, "email": {"mara@example.fm"}, "role": {"editor"},
+	})
+	m := inviteLinkRe.FindStringSubmatch(page)
+	if m == nil {
+		h.Fatalf("no invitation link on the page:\n%s", page)
+	}
+	var id int64
+	if err := h.db.QueryRowContext(context.Background(), `SELECT id FROM invitations`).Scan(&id); err != nil {
+		h.Fatal(err)
+	}
+	// A reset for the owner, queued behind the invitation. /reset needs no
+	// session, so this works whoever is signed in.
+	h.post("/reset", url.Values{"csrf": {h.csrf("/reset")}, "who": {"dt"}})
+	return id, m[1]
+}
+
+func TestRevokingAnInvitationStopsTheMailStillQueued(t *testing.T) {
+	f := startFakeSMTP(t)
+	h := newHarness(t)
+	h.setupOwner()
+	id, link := h.inviteThenCanary()
+
+	res, _ := h.post("/settings/team/invite/"+itoa(id)+"/revoke", url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("revoke gave %d", res.StatusCode)
+	}
+	h.configureMail(f.port)
+	h.drainUntil(f, "/reset/")
+
+	if got := strings.Join(f.received(), ""); strings.Contains(got, link) {
+		t.Error("the revoked invitation went out with a link that opens nothing")
+	}
+	h.assertAbandoned(id, mail.Revoked)
+}
+
+func TestAcceptingAnInvitationStopsTheMailStillQueued(t *testing.T) {
+	f := startFakeSMTP(t)
+	h := newHarness(t)
+	h.setupOwner()
+	id, link := h.inviteThenCanary()
+	h.configureMail(f.port)
+	h.signOut()
+
+	// Accept it, which is what spends the token.
+	path := strings.TrimPrefix(link, h.srv.cfg.BaseURL)
+	_, page := h.get(path)
+	h.post(path, url.Values{
+		"csrf": {csrfRe.FindStringSubmatch(page)[1]}, "handle": {"mara"}, "name": {"Mara Okafor"},
+		"initials": {"MO"}, "colour": {Palette[2]}, "password": {"another long password"},
+	})
+	_, page = h.get(path + "/authenticator")
+	code, err := totp.GenerateCode(secretRe.FindStringSubmatch(page)[1], time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ := h.post(path+"/authenticator", url.Values{
+		"csrf": {csrfRe.FindStringSubmatch(page)[1]}, "code": {code},
+	})
+	if res.Header.Get("Location") != "/" {
+		t.Fatalf("acceptance gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+
+	h.drainUntil(f, "/reset/")
+	if got := strings.Join(f.received(), ""); strings.Contains(got, link) {
+		t.Error("the accepted invitation went out with a link that opens nothing")
+	}
+	h.assertAbandoned(id, mail.Accepted)
+}
+
+func (h *harness) assertAbandoned(id int64, why string) {
+	h.Helper()
+	var lastError string
+	var sentAt *int64
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT last_error, sent_at FROM mail_outbox WHERE ref = ?`, "invitation:"+itoa(id)).
+		Scan(&lastError, &sentAt); err != nil {
+		h.Fatal(err)
+	}
+	if sentAt != nil {
+		h.Error("the invitation message was sent")
+	}
+	if lastError != why {
+		h.Errorf("last_error = %q, want %q", lastError, why)
+	}
 }

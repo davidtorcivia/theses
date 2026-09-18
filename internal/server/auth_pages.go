@@ -419,6 +419,12 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			s.invitationGone(w, r)
 			return
 		}
+		// The invitation is spent, so its mail must not go out later with a
+		// link that now opens nothing.
+		if err := mail.Abandon(r.Context(), tx, inviteRef(p.InvitationID), mail.Accepted); err != nil {
+			s.fail(w, r, err)
+			return
+		}
 	}
 	if err := store.InsertActivity(r.Context(), tx, "user", itoa(id), "user", itoa(id), "create", "", ""); err != nil {
 		s.fail(w, r, err)

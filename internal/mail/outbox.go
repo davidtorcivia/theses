@@ -29,10 +29,14 @@ const (
 // It is also what keeps the marking pass from rewriting the same rows.
 const expired = "the link it carries expired before it could be sent"
 
-// superseded is the error stored on a row a newer message for the same ref
-// replaced. Reissuing a token kills the link the older message carries, so
-// sending it would deliver a URL that opens nothing.
-const superseded = "replaced by a newer message for the same thing"
+// Why a queued message was abandoned, as the settings page prints it. The
+// batch leaves these alone: an abandoned row is marked with expires_at 0, which
+// is what tells the expiry pass the row did not simply run out of time.
+const (
+	Superseded = "replaced by a newer message for the same thing"
+	Revoked    = "the invitation it carries was revoked"
+	Accepted   = "the invitation it carries had already been accepted"
+)
 
 // sendable is the part of the WHERE clause that says a row is still worth
 // trying. It takes now and the give up cutoff, in that order.
@@ -58,11 +62,8 @@ func Enqueue(ctx context.Context, q store.Querier, m Message, expires time.Time,
 		return errors.New("mail: no recipients")
 	}
 	if ref != "" {
-		// The expiry is what takes it out of the queue; the error says why.
-		if _, err := q.ExecContext(ctx, `UPDATE mail_outbox
-			SET expires_at = unixepoch() - 1, last_error = ?
-			WHERE sent_at IS NULL AND ref = ?`, superseded, ref); err != nil {
-			return fmt.Errorf("mail: supersede %s: %w", ref, err)
+		if err := Abandon(ctx, q, ref, Superseded); err != nil {
+			return err
 		}
 	}
 	var expiresAt any
@@ -76,6 +77,26 @@ func Enqueue(ctx context.Context, q store.Querier, m Message, expires time.Time,
 			to, m.Subject, m.Text, m.HTML, expiresAt, ref); err != nil {
 			return fmt.Errorf("mail: enqueue: %w", err)
 		}
+	}
+	return nil
+}
+
+// Abandon takes every message still queued under ref out of the queue, for the
+// reason why. It runs through q, so the caller can put it in the transaction
+// that killed the link those messages carry: reissuing, revoking or accepting
+// an invitation all leave queued mail pointing at a token that opens nothing.
+//
+// The expiry is what removes the row from the queue and why is what the
+// settings page shows. The expiry is set to zero rather than to a moment in the
+// past, so that the expiry pass can tell an abandoned row from one that merely
+// ran out of time and leaves this reason in place.
+func Abandon(ctx context.Context, q store.Querier, ref, why string) error {
+	if ref == "" {
+		return errors.New("mail: abandon needs a ref")
+	}
+	if _, err := q.ExecContext(ctx, `UPDATE mail_outbox SET expires_at = 0, last_error = ?
+		WHERE sent_at IS NULL AND ref = ?`, why, ref); err != nil {
+		return fmt.Errorf("mail: abandon %s: %w", ref, err)
 	}
 	return nil
 }
@@ -134,9 +155,8 @@ func (o *Outbox) once(ctx context.Context) error {
 	// A row whose link has run out says so, rather than keeping whatever error
 	// it last had or, if it was never tried, none at all.
 	if _, err := o.db.ExecContext(ctx, `UPDATE mail_outbox SET last_error = ?
-		WHERE sent_at IS NULL AND expires_at IS NOT NULL AND expires_at <= ?
-			AND last_error <> ? AND last_error <> ?`,
-		expired, now.Unix(), expired, superseded); err != nil {
+		WHERE sent_at IS NULL AND expires_at > 0 AND expires_at <= ? AND last_error <> ?`,
+		expired, now.Unix(), expired); err != nil {
 		return fmt.Errorf("mail: expire: %w", err)
 	}
 	rows, err := o.db.QueryContext(ctx, `SELECT id, to_addr, subject, body_text, body_html, attempts

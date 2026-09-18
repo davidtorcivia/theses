@@ -490,7 +490,11 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.write(r, "invitation", itoa(id), "revoke", "", "", func(q store.Querier) error {
-		return store.DeleteInvitation(r.Context(), q, id)
+		if err := store.DeleteInvitation(r.Context(), q, id); err != nil {
+			return err
+		}
+		// The token dies here, so the mail still carrying it dies with it.
+		return mail.Abandon(r.Context(), q, inviteRef(id), mail.Revoked)
 	}); err != nil {
 		s.fail(w, r, err)
 		return
