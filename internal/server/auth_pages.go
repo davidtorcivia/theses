@@ -103,11 +103,19 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.auth.ResetLimits(auth.BucketLogin, handle)
+	// The password, and the code where there was a secret to check it against,
+	// have both been accepted. An account this workspace requires an
+	// authenticator of and has none gets the enrolment page rather than a
+	// session, and signs in at the end of it.
+	if u.TOTPSecret == "" && s.needsAuthenticator(u.Role) {
+		s.startEnrolment(w, r, u)
+		return
+	}
 	if err := s.auth.StartSession(r.Context(), w, r, u, s.sessionDays()); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.auth.ResetLimits(auth.BucketLogin, handle)
 	if err := store.TouchUser(r.Context(), s.db, u.ID); err != nil {
 		s.fail(w, r, err)
 		return
@@ -338,6 +346,11 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			"ArtFrames": quietArt, "Action": r.URL.Path, "QR": template.URL(qr), "Secret": p.Secret,
 			"Error": "That code did not match. Check the clock on your phone and try the next one.",
 		}))
+		return
+	}
+
+	if p.Kind == "signin" {
+		s.finishEnrolment(w, r, p)
 		return
 	}
 

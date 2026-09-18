@@ -993,3 +993,8 @@ and the token's name is used instead.
 
 A write through MCP is recorded in the activity log as the person the token
 belongs to, with `mcp:<client>` in the log's `via` field.
+
+## What is not here
+
+Adding a file from Drive and publishing to Transistor are browser routes only.
+Neither has an API or MCP surface yet.

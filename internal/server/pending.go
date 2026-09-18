@@ -24,7 +24,7 @@ const pendingValidity = 15 * time.Minute
 // crash or an abandoned tab leaves no half-made user, and "no users yet" stays a
 // clean first-run check.
 type pending struct {
-	Kind         string `json:"k"` // setup, invite or reenrol
+	Kind         string `json:"k"` // setup, invite, signin or reenrol
 	UserID       int64  `json:"u,omitempty"`
 	InvitationID int64  `json:"i,omitempty"`
 	Handle       string `json:"h,omitempty"`

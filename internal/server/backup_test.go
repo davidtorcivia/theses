@@ -132,12 +132,24 @@ func TestBackUpNowThenListAndRestore(t *testing.T) {
 		t.Fatal("no archive appeared under the prefix")
 	}
 
-	_, body = h.get("/settings")
+	// The archive is in the bucket before the run is written down: the object
+	// goes up and the settings row saying when it went follows it. So the page
+	// is read the way the listing was, rather than once and at whichever moment
+	// the upload happened to finish.
+	recorded := false
+	for range 100 {
+		_, body = h.get("/settings")
+		if strings.Contains(body, "Last backup") {
+			recorded = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !recorded {
+		t.Error("the page does not say when the last backup was")
+	}
 	if !strings.Contains(body, "Restore") || !strings.Contains(body, "<dialog id=\"restore-0\">") {
 		t.Errorf("the listed backup has no confirmation dialog:\n%s", body)
-	}
-	if !strings.Contains(body, "Last backup") {
-		t.Error("the page does not say when the last backup was")
 	}
 
 	res, body = h.post("/settings/backups/restore", url.Values{

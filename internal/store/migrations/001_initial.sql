@@ -81,7 +81,10 @@ CREATE TABLE propositions (
   duration    INTEGER,
   position    TEXT    NOT NULL,
   created_at  INTEGER NOT NULL,
-  archived_at INTEGER
+  archived_at INTEGER,
+  -- The episode this proposition was published as, so a second publish
+  -- updates that one instead of making another.
+  transistor_episode_id TEXT
 );
 
 CREATE TABLE proposition_members (

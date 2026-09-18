@@ -14,6 +14,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `GET POST /setup` | First run only: create the owner. Every other route redirects here until one exists. |
 | `GET POST /setup/authenticator` | Scan the QR code and confirm a code. The account is written only when the code matches. |
 | `GET POST /login` | Account name, password and authenticator code, in one form. |
+| `GET POST /login/authenticator` | Enrol before signing in, for an account this workspace requires an authenticator of and that has none. The session starts when a code from the new secret comes back. |
 | `POST /logout` | End this browser's session. |
 | `GET POST /reset` | Ask for a reset link by account name or email. Always answers the same. |
 | `GET POST /reset/{token}` | Choose a new password. One use, one hour. |
@@ -46,6 +47,15 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /settings/integrations/webhook` | Add a workspace webhook or change it: its URL, its secret, the events it fires on and the column it watches. |
 | `POST /settings/integrations/webhook/{id}/test` | Send one message to it and mark it verified when it arrives. |
 | `POST /settings/integrations/webhook/{id}/delete` | Remove it. |
+| `POST /settings/integrations/drive/connect` | Start the Drive authorisation: a random value in a cookie, the same value as the state parameter, and a redirect to Google. |
+| `GET /settings/integrations/drive/callback` | Where Google sends the owner back. The code is exchanged only when the state matches this browser's cookie, which is spent either way. |
+| `POST /settings/integrations/drive/disconnect` | Throw the Drive token away and keep the client id. |
+| `POST /settings/integrations/transistor/disconnect` | Throw the Transistor key away. |
+| `POST /settings/test/drive` | List the root folder of the connected Drive. |
+| `POST /settings/test/transistor` | Fetch the show, or, with no show id saved, list the ones the key reaches. |
+| `POST /p/{id}/publish` | Save which document and which recording this proposition publishes with, and, with `do=publish`, send it to Transistor. |
+| `GET /app/drive` | One Drive folder's contents, or a search. For anybody who may edit. |
+| `POST /app/drive/import` | Copy one Drive file into the bucket as a file on a proposition. |
 | `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. |
 | `GET /offline` | What the service worker serves for a navigation the network refused that the shell cannot stand in for. |
 | `GET /sw.js` | The service worker, from the root so its scope is the whole site. The URL never moves; the bytes carry the asset hash, so a deploy installs a new worker and the old cache goes with it. |

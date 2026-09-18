@@ -84,22 +84,72 @@ const partBatch = 64
 // both.
 func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 	name, folder string, size, replace int64) (Upload, error) {
-	name, err := filename(name)
+	row, bucket, err := s.record(ctx, a, proposition, name, folder, size, replace)
 	if err != nil {
 		return Upload{}, err
 	}
+
+	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}
+	// The row's name, not the one that came in: filename trims and normalises,
+	// and a name ending in a dot or a space has no extension until it has been
+	// through that, so signing the type of the raw one would sign
+	// octet-stream for a file the list calls markdown.
+	kind := contentType(row.Name)
+	if size <= blob.PartSize {
+		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, kind, size, uploadTTL)
+		if err != nil {
+			return Upload{}, err
+		}
+		out.URL, out.Headers = url, headers
+		return out, nil
+	}
+
+	multipart, err := bucket.StartMultipart(ctx, row.ObjectKey, kind)
+	if err != nil {
+		return Upload{}, err
+	}
+	// The uploads row is bookkeeping for a transfer in flight, not an entity
+	// anything watches, so it is written on its own rather than through a
+	// command: no activity row records that a browser asked for part URLs.
+	res, err := s.DB.ExecContext(ctx, `INSERT INTO uploads
+		(file_id, multipart_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
+		row.ID, multipart, s.now(), s.Now().Add(abandonAt).Unix())
+	if err != nil {
+		return Upload{}, err
+	}
+	if out.UploadID, err = res.LastInsertId(); err != nil {
+		return Upload{}, err
+	}
+	out.PartSize = blob.PartSize
+	if out.Parts, out.Done, err = s.presign(ctx, bucket, row, multipart, 0); err != nil {
+		return Upload{}, err
+	}
+	return out, nil
+}
+
+// record is the database half of Create: the checks, the row at uploading and
+// the object key it will be written under, with the bucket that holds it. The
+// import path uses it too, because a file that arrives through the server is
+// the same row as one the browser sends; only the way the bytes get there is
+// different.
+func (s *Service) record(ctx context.Context, a core.Actor, proposition int64,
+	name, folder string, size, replace int64) (File, *blob.Client, error) {
+	name, err := filename(name)
+	if err != nil {
+		return File{}, nil, err
+	}
 	if size <= 0 || size > maxFileSize {
-		return Upload{}, ErrBadSize
+		return File{}, nil, ErrBadSize
 	}
 	if !known(folder, Folders) {
-		return Upload{}, ErrKind
+		return File{}, nil, ErrKind
 	}
 	if err := s.mayWrite(ctx, a, proposition); err != nil {
-		return Upload{}, err
+		return File{}, nil, err
 	}
 	bucket, err := s.bucket(ctx, folder)
 	if err != nil {
-		return Upload{}, err
+		return File{}, nil, err
 	}
 
 	var row File
@@ -146,41 +196,9 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 		}
 		return core.Change{Entity: "file", EntityID: id, Action: "create", After: row}, nil
 	}); err != nil {
-		return Upload{}, err
+		return File{}, nil, err
 	}
-
-	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}
-	kind := contentType(name)
-	if size <= blob.PartSize {
-		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, kind, size, uploadTTL)
-		if err != nil {
-			return Upload{}, err
-		}
-		out.URL, out.Headers = url, headers
-		return out, nil
-	}
-
-	multipart, err := bucket.StartMultipart(ctx, row.ObjectKey, kind)
-	if err != nil {
-		return Upload{}, err
-	}
-	// The uploads row is bookkeeping for a transfer in flight, not an entity
-	// anything watches, so it is written on its own rather than through a
-	// command: no activity row records that a browser asked for part URLs.
-	res, err := s.DB.ExecContext(ctx, `INSERT INTO uploads
-		(file_id, multipart_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
-		row.ID, multipart, s.now(), s.Now().Add(abandonAt).Unix())
-	if err != nil {
-		return Upload{}, err
-	}
-	if out.UploadID, err = res.LastInsertId(); err != nil {
-		return Upload{}, err
-	}
-	out.PartSize = blob.PartSize
-	if out.Parts, out.Done, err = s.presign(ctx, bucket, row, multipart, 0); err != nil {
-		return Upload{}, err
-	}
-	return out, nil
+	return row, bucket, nil
 }
 
 // Parts is the resume: the part numbers the bucket already holds and presigned

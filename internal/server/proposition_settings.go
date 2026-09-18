@@ -134,6 +134,7 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		"Doc":      doc,
 		"CanEdit":  auth.Can(me.Role, auth.CanEdit) && p.ArchivedAt == nil,
 		"CanDel":   auth.Can(me.Role, auth.CanDelete),
+		"Publish":  s.publishSection(ctx, p, me),
 	}, extra))
 	s.render(w, r, status, "prop_settings.html", data)
 }

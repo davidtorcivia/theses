@@ -194,6 +194,7 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 		"Outbox":      outbox,
 		"MailProblem": mailProblem,
 		"Backups":     s.backupSection(r, shown, isSet),
+		"Ints":        s.integrationsSection(),
 	}
 	notifications, err := s.notifySettings(r)
 	if err != nil {
