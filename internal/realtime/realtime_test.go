@@ -551,17 +551,92 @@ func TestSocketCapsTheFrameAndTheRate(t *testing.T) {
 	for i := 0; i < 400 && !limited; i++ {
 		send(t, ws, command{ID: int64(i + 1), Cmd: "no.such.command"})
 		answer := read(t, ws, "error")
-		if strings.Contains(answer.Error, "too many") {
-			limited = true
+		if !strings.Contains(answer.Error, "too many") {
+			continue
+		}
+		limited = true
+		// The refusal carries the number the tab gave the command, or the tab
+		// waits for an answer that never comes.
+		if answer.ID != int64(i+1) {
+			t.Errorf("the refusal came back under id %d, want %d", answer.ID, i+1)
 		}
 	}
 	if !limited {
 		t.Error("a tab sending four hundred commands was never held back")
 	}
 
-	// The limit is per tab as well as per person, so a second tab still works
-	// for a moment and the person's own allowance is what runs out.
-	if _, err := r.dial("ada"); err != nil {
-		t.Errorf("a second tab could not connect: %v", err)
+	// The allowance is counted against the person as well as the tab, so a
+	// second tab of the same account is already spent.
+	second := r.mustDial("grace")
+	read(t, second, "presence")
+	send(t, second, command{ID: 1, Cmd: "no.such.command"})
+	if answer := read(t, second, "error"); !strings.Contains(answer.Error, "too many") {
+		t.Errorf("a second tab of a spent account got %q", answer.Error)
+	}
+}
+
+// The fallback holds a request open until something happens, and it subscribes
+// before it queries, so an event that lands in the window between the two is
+// waiting rather than missed.
+func TestLongPollHoldsOpenAndMissesNothingInTheWindow(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.boards.CreateCard(ctx, r.actor("ada"), r.cols[0].ID, "Call the engineer", nil); err != nil {
+		t.Fatal(err)
+	}
+	var seq int64
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT max(id) FROM activity WHERE proposition_id = ?`, r.prop).Scan(&seq); err != nil {
+		t.Fatal(err)
+	}
+
+	type answer struct {
+		events []core.Event
+		err    error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		req, err := http.NewRequest("GET", r.http.URL+"/api/events?"+url.Values{
+			"proposition": {strconv.FormatInt(r.prop, 10)},
+			"since":       {strconv.FormatInt(seq, 10)},
+		}.Encode(), nil)
+		if err != nil {
+			done <- answer{err: err}
+			return
+		}
+		req.Header.Set("Cookie", r.cookie["ada"])
+		res, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+		if err != nil {
+			done <- answer{err: err}
+			return
+		}
+		defer res.Body.Close()
+		var body struct{ Events []core.Event }
+		err = json.NewDecoder(res.Body).Decode(&body)
+		done <- answer{events: body.Events, err: err}
+	}()
+
+	// Long enough that the request is inside its wait, short enough that the
+	// test is not waiting on the poll's own timeout.
+	time.Sleep(200 * time.Millisecond)
+	made, err := r.boards.CreateCard(ctx, r.actor("ada"), r.cols[0].ID, "Draft the opening", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if len(got.events) == 0 {
+			t.Fatal("the fallback answered with nothing after a change")
+		}
+		last := got.events[len(got.events)-1]
+		if last.Seq != made.Seq || last.Entity != "card" {
+			t.Errorf("the fallback answered with %+v, want the card that was just made", last)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the fallback never answered a change made while it waited")
 	}
 }

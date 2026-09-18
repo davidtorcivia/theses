@@ -217,13 +217,16 @@ func (h *Hub) serve(ws *websocket.Conn) {
 		if !h.stillSignedIn(c, r) {
 			return
 		}
-		if !h.auth.Allow(auth.BucketSocket, c.tab, strconv.FormatInt(c.user.ID, 10)) {
-			c.send(message{Type: "error", Error: "too many changes at once; wait a moment"})
-			continue
-		}
 		var cmd command
 		if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
 			c.send(message{Type: "error", Error: "that was not a command"})
+			continue
+		}
+		// After the parse, so the refusal comes back under the number the tab
+		// gave the command and the tab stops waiting for it. The frame was
+		// already capped before it was read, so parsing one costs nothing.
+		if !h.auth.Allow(auth.BucketSocket, c.tab, strconv.FormatInt(c.user.ID, 10)) {
+			c.send(message{Type: "error", ID: cmd.ID, Error: "too many changes at once; wait a moment"})
 			continue
 		}
 		h.dispatch(ctx, c, cmd)

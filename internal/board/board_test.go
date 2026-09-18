@@ -417,6 +417,10 @@ func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
 	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
 	owner := f.who["owner"]
 
+	edit, err := f.EditCardTitle(ctx, owner, card.ID, card.Version, "Call the surveyor")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.ArchiveProposition(ctx, owner, f.prop); err != nil {
 		t.Fatal(err)
 	}
@@ -433,6 +437,9 @@ func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
 		"rename a column": func() error { _, err := f.RenameColumn(ctx, owner, f.cols[0].ID, "Other"); return err },
 		"post a note":     func() error { _, err := f.PostComment(ctx, owner, card.ID, "hello"); return err },
 		"add a member":    func() error { _, err := f.AddMember(ctx, owner, f.prop, f.who["outsider"].ID); return err },
+		// An undo is a write like any other, and it does not go through the
+		// command shape, so it carries the rule itself.
+		"undo an edit": func() error { _, err := f.Undo(ctx, owner, edit.Seq); return err },
 	} {
 		if err := run(); !errors.Is(err, ErrArchived) {
 			t.Errorf("%s on an archived proposition gave %v, want ErrArchived", name, err)

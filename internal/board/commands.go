@@ -139,6 +139,33 @@ const (
 	commentScope   = `SELECT c.proposition_id FROM comments m JOIN cards c ON c.id = m.card_id WHERE m.id = ?`
 )
 
+// Undo is core's undo with the board's one extra rule: an archived
+// proposition is read only, and an undo is a write like any other. core cannot
+// check that itself, because the rule belongs to the board.
+func (s *Service) Undo(ctx context.Context, a core.Actor, activityID int64) (core.Event, error) {
+	var proposition sql.NullInt64
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT proposition_id FROM activity WHERE id = ?`, activityID).Scan(&proposition)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.Event{}, core.ErrNotFound
+	}
+	if err != nil {
+		return core.Event{}, err
+	}
+	if proposition.Valid {
+		var at sql.NullInt64
+		err := s.DB.QueryRowContext(ctx,
+			`SELECT archived_at FROM propositions WHERE id = ?`, proposition.Int64).Scan(&at)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return core.Event{}, err
+		}
+		if at.Valid {
+			return core.Event{}, ErrArchived
+		}
+	}
+	return s.Service.Undo(ctx, a, activityID)
+}
+
 // Propositions.
 
 // CreateProposition takes the next number, the columns the settings name and
