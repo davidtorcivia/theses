@@ -398,8 +398,12 @@ func ListAPITokens(ctx context.Context, q Querier) ([]*APIToken, error) {
 	return out, rows.Err()
 }
 
+// TouchAPIToken records that a token was used, at most once a minute. The
+// column says when a token was last seen, which one write a minute answers, and
+// a busy agent should not cost a write per request to keep it current.
 func TouchAPIToken(ctx context.Context, q Querier, id int64) error {
-	_, err := q.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = unixepoch() WHERE id = ?`, id)
+	_, err := q.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = unixepoch()
+		WHERE id = ? AND (last_used_at IS NULL OR last_used_at < unixepoch() - 60)`, id)
 	return err
 }
 

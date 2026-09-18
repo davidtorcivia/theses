@@ -508,3 +508,69 @@ func TestActivityHidesAdministrationFromAReadToken(t *testing.T) {
 		t.Errorf("an admin token saw %d of 4 rows", len(got))
 	}
 }
+
+// lastUsed is the token's last_used_at, or nil when it has never been recorded.
+func (h *harness) lastUsed() *int64 {
+	h.Helper()
+	var at *int64
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT last_used_at FROM api_tokens`).Scan(&at); err != nil {
+		h.Fatal(err)
+	}
+	return at
+}
+
+func (h *harness) setLastUsed(sql string) {
+	h.Helper()
+	if _, err := h.db.ExecContext(context.Background(),
+		`UPDATE api_tokens SET last_used_at = `+sql); err != nil {
+		h.Fatal(err)
+	}
+}
+
+func TestARefusedRequestRecordsNothing(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead)
+	for range 300 {
+		h.do("GET", "/api/v1/me", token, "")
+	}
+	h.setLastUsed("NULL")
+
+	w := h.do("GET", "/api/v1/me", token, "")
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429", w.Code)
+	}
+	if at := h.lastUsed(); at != nil {
+		t.Errorf("a refused request wrote last_used_at = %d", *at)
+	}
+}
+
+func TestTheUseIsRecordedAtMostOnceAMinute(t *testing.T) {
+	h := newHarness(t)
+	token := h.token(auth.ScopeRead)
+
+	if w := h.do("GET", "/api/v1/me", token, ""); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if h.lastUsed() == nil {
+		t.Fatal("the first use was not recorded")
+	}
+
+	h.setLastUsed("unixepoch() - 5")
+	recent := *h.lastUsed()
+	if w := h.do("GET", "/api/v1/me", token, ""); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if at := *h.lastUsed(); at != recent {
+		t.Errorf("a use five seconds after the last one rewrote %d as %d", recent, at)
+	}
+
+	h.setLastUsed("unixepoch() - 120")
+	stale := *h.lastUsed()
+	if w := h.do("GET", "/api/v1/me", token, ""); w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if at := *h.lastUsed(); at == stale {
+		t.Errorf("a use two minutes after the last one did not record %d", at)
+	}
+}

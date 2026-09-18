@@ -154,6 +154,25 @@ func (a *Auth) CreateAPIToken(ctx context.Context, userID int64, name string, sc
 
 // APIToken resolves a bearer token to its user and records the use.
 func (a *Auth) APIToken(ctx context.Context, clear string) (*store.APIToken, *store.User, error) {
+	t, u, err := a.LookupAPIToken(ctx, clear)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := a.TouchAPIToken(ctx, t.ID); err != nil {
+		return nil, nil, err
+	}
+	return t, u, nil
+}
+
+// TouchAPIToken records the use, which TouchAPIToken in store does at most once
+// a minute.
+func (a *Auth) TouchAPIToken(ctx context.Context, id int64) error {
+	return store.TouchAPIToken(ctx, a.db, id)
+}
+
+// LookupAPIToken resolves a bearer token without recording the use, so a caller
+// that rate limits can refuse a request before it writes anything.
+func (a *Auth) LookupAPIToken(ctx context.Context, clear string) (*store.APIToken, *store.User, error) {
 	if !strings.HasPrefix(clear, APITokenPrefix) {
 		return nil, nil, ErrTokenInvalid
 	}
@@ -166,9 +185,6 @@ func (a *Auth) APIToken(ctx context.Context, clear string) (*store.APIToken, *st
 	}
 	u, err := store.UserByID(ctx, a.db, t.UserID)
 	if err != nil {
-		return nil, nil, err
-	}
-	if err := store.TouchAPIToken(ctx, a.db, t.ID); err != nil {
 		return nil, nil, err
 	}
 	return t, u, nil

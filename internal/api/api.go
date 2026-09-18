@@ -139,7 +139,7 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 			a.unauthorized(w, "send an API token as Authorization: Bearer")
 			return
 		}
-		token, user, err := a.auth.APIToken(r.Context(), presented)
+		token, user, err := a.auth.LookupAPIToken(r.Context(), presented)
 		if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, store.ErrNotFound) {
 			a.unauthorized(w, "that token is not valid")
 			return
@@ -148,12 +148,14 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 			a.serverError(w, r, err)
 			return
 		}
-		// ponytail: the limit is keyed by token id, which needs the lookup, and
-		// the lookup records the use, so a token that floods still costs one
-		// write each time. Upgrade path: split APIToken into a lookup and a
-		// touch, and touch after this passes.
+		// The limit is checked before the use is recorded, so a token that
+		// floods is refused without costing a write each time.
 		if !a.auth.Allow(auth.BucketAPI, "token:"+strconv.FormatInt(token.ID, 10)) {
 			a.fail(w, http.StatusTooManyRequests, "too many requests for this token; wait a minute")
+			return
+		}
+		if err := a.auth.TouchAPIToken(r.Context(), token.ID); err != nil {
+			a.serverError(w, r, err)
 			return
 		}
 		ctx := WithPrincipal(r.Context(), Principal{Token: token, User: user})
