@@ -91,6 +91,11 @@ type Service struct {
 	Now func() time.Time
 	// Read is how undo reads back the entity it restored.
 	Read Reader
+	// Allow is a rule core cannot know, asked inside the transaction before
+	// anything is written. board uses it to refuse every change to an archived
+	// proposition but the two that still mean something on one. Undo asks it;
+	// board's own commands ask the same function directly.
+	Allow func(ctx context.Context, tx *sql.Tx, proposition int64, entity, action string) error
 }
 
 func New(db *store.DB, bus *Bus) *Service {

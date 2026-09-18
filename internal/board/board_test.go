@@ -421,6 +421,11 @@ func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	added, err := f.AddChecklistItem(ctx, owner, card.ID, "find her number")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := added.EntityID
 	if _, err := f.ArchiveProposition(ctx, owner, f.prop); err != nil {
 		t.Fatal(err)
 	}
@@ -437,6 +442,11 @@ func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
 		"rename a column": func() error { _, err := f.RenameColumn(ctx, owner, f.cols[0].ID, "Other"); return err },
 		"post a note":     func() error { _, err := f.PostComment(ctx, owner, card.ID, "hello"); return err },
 		"add a member":    func() error { _, err := f.AddMember(ctx, owner, f.prop, f.who["outsider"].ID); return err },
+		// These three name their action "delete", which is what the guard used
+		// to exempt, so each of them wrote to an archived proposition.
+		"delete a card":           func() error { _, err := f.DeleteCard(ctx, owner, card.ID); return err },
+		"delete a column":         func() error { _, err := f.DeleteColumn(ctx, owner, f.cols[2].ID); return err },
+		"remove a checklist item": func() error { _, err := f.RemoveChecklistItem(ctx, owner, item); return err },
 		// An undo is a write like any other, and it does not go through the
 		// command shape, so it carries the rule itself.
 		"undo an edit": func() error { _, err := f.Undo(ctx, owner, edit.Seq); return err },
@@ -444,6 +454,19 @@ func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
 		if err := run(); !errors.Is(err, ErrArchived) {
 			t.Errorf("%s on an archived proposition gave %v, want ErrArchived", name, err)
 		}
+	}
+
+	// Nothing got through: the card, the column and the checklist item are all
+	// still there.
+	if _, err := GetCard(ctx, f.db, card.ID); err != nil {
+		t.Errorf("the card went anyway: %v", err)
+	}
+	cols, err := ListColumns(ctx, f.db, f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cols) != 3 {
+		t.Errorf("%d columns left, want 3", len(cols))
 	}
 
 	if _, err := f.RestoreProposition(ctx, owner, f.prop); err != nil {

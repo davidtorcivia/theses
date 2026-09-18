@@ -73,6 +73,15 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 	}
 
 	return s.Do(ctx, a, proposition.Int64, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+		// An undo is a write, so whatever rule the layer above has about
+		// writing to this proposition applies to it, asked here rather than
+		// before the transaction so the answer cannot go stale between.
+		if s.Allow != nil {
+			if err := s.Allow(ctx, tx, proposition.Int64, entity, "undo"); err != nil {
+				return Change{}, err
+			}
+		}
+
 		// The row has to still hold what the change left, or putting the
 		// before back would throw away whatever came after it and, for a
 		// position, put two rows on one ordering key. This is the same refusal

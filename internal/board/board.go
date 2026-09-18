@@ -33,6 +33,7 @@ type Service struct {
 
 func New(c *core.Service, defaults func() Defaults) *Service {
 	c.Read = readEntity
+	c.Allow = archived
 	return &Service{Service: c, Defaults: defaults}
 }
 

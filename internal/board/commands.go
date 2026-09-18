@@ -54,25 +54,37 @@ func field(value string, most int) (string, error) {
 	return value, nil
 }
 
-// do is core.Do with the one rule core does not know about: an archived
-// proposition is read only, so every command but restore and delete refuses
-// while archived_at is set.
-func (s *Service) do(ctx context.Context, a core.Actor, proposition int64, need, action string,
+// archived is the rule core cannot know: a proposition that has been put away
+// is read only. Restoring it and deleting it are the two things that still
+// mean something on one, and they are named by entity as well as action: on
+// action alone a card delete, a column delete and a checklist item's removal
+// all let themselves through, and archiving refused itself.
+func archived(ctx context.Context, tx *sql.Tx, proposition int64, entity, action string) error {
+	if proposition == 0 || (entity == "proposition" && (action == "restore" || action == "delete")) {
+		return nil
+	}
+	var at sql.NullInt64
+	err := tx.QueryRowContext(ctx,
+		`SELECT archived_at FROM propositions WHERE id = ?`, proposition).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return core.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if at.Valid {
+		return ErrArchived
+	}
+	return nil
+}
+
+// do is core.Do with that rule asked first, so a command that would write to an
+// archived proposition never runs at all.
+func (s *Service) do(ctx context.Context, a core.Actor, proposition int64, need, entity, action string,
 	apply func(context.Context, *sql.Tx) (core.Change, error)) (core.Event, error) {
 	return s.Do(ctx, a, proposition, need, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
-		if proposition != 0 && action != "restore" && action != "delete" {
-			var at sql.NullInt64
-			err := tx.QueryRowContext(ctx,
-				`SELECT archived_at FROM propositions WHERE id = ?`, proposition).Scan(&at)
-			if errors.Is(err, sql.ErrNoRows) {
-				return core.Change{}, core.ErrNotFound
-			}
-			if err != nil {
-				return core.Change{}, err
-			}
-			if at.Valid {
-				return core.Change{}, ErrArchived
-			}
+		if err := archived(ctx, tx, proposition, entity, action); err != nil {
+			return core.Change{}, err
 		}
 		return apply(ctx, tx)
 	})
@@ -139,33 +151,6 @@ const (
 	commentScope   = `SELECT c.proposition_id FROM comments m JOIN cards c ON c.id = m.card_id WHERE m.id = ?`
 )
 
-// Undo is core's undo with the board's one extra rule: an archived
-// proposition is read only, and an undo is a write like any other. core cannot
-// check that itself, because the rule belongs to the board.
-func (s *Service) Undo(ctx context.Context, a core.Actor, activityID int64) (core.Event, error) {
-	var proposition sql.NullInt64
-	err := s.DB.QueryRowContext(ctx,
-		`SELECT proposition_id FROM activity WHERE id = ?`, activityID).Scan(&proposition)
-	if errors.Is(err, sql.ErrNoRows) {
-		return core.Event{}, core.ErrNotFound
-	}
-	if err != nil {
-		return core.Event{}, err
-	}
-	if proposition.Valid {
-		var at sql.NullInt64
-		err := s.DB.QueryRowContext(ctx,
-			`SELECT archived_at FROM propositions WHERE id = ?`, proposition.Int64).Scan(&at)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return core.Event{}, err
-		}
-		if at.Valid {
-			return core.Event{}, ErrArchived
-		}
-	}
-	return s.Service.Undo(ctx, a, activityID)
-}
-
 // Propositions.
 
 // CreateProposition takes the next number, the columns the settings name and
@@ -179,7 +164,7 @@ func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title str
 		return core.Event{}, ErrEmpty
 	}
 	defaults := s.Defaults()
-	return s.do(ctx, a, 0, auth.CanEdit, "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, 0, auth.CanEdit, "proposition", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		var number int64
 		if err := tx.QueryRowContext(ctx,
 			`SELECT coalesce(max(number), 0) + 1 FROM propositions`).Scan(&number); err != nil {
@@ -231,7 +216,7 @@ func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title str
 // read it again, and hand core the two snapshots.
 func (s *Service) proposition(ctx context.Context, a core.Actor, id int64, need, action string,
 	apply func(context.Context, *sql.Tx, Proposition) error) (core.Event, error) {
-	return s.do(ctx, a, id, need, action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, id, need, "proposition", action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		was, err := GetProposition(ctx, tx, id)
 		if err != nil {
 			return core.Change{}, err
@@ -347,7 +332,7 @@ func (s *Service) RemoveMember(ctx context.Context, a core.Actor, proposition, u
 }
 
 func (s *Service) member(ctx context.Context, a core.Actor, proposition, user int64, action string) (core.Event, error) {
-	return s.do(ctx, a, proposition, auth.CanEdit, action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "member", action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		row := map[string]any{"proposition_id": proposition, "user_id": user}
 		if action == "add" {
 			var exists int
@@ -390,7 +375,7 @@ func (s *Service) CreateColumn(ctx context.Context, a core.Actor, proposition in
 	if name == "" {
 		return core.Event{}, ErrEmpty
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "column", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		position, err := last(ctx, tx, "columns", "proposition_id", proposition)
 		if err != nil {
 			return core.Change{}, err
@@ -416,7 +401,7 @@ func (s *Service) column(ctx context.Context, a core.Actor, id int64, need, acti
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, need, action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, need, "column", action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		was, err := readColumn(ctx, tx, id)
 		if err != nil {
 			return core.Change{}, err
@@ -505,7 +490,7 @@ func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, ti
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "card", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		position, err := last(ctx, tx, "cards", "column_id", column)
 		if err != nil {
 			return core.Change{}, err
@@ -546,7 +531,7 @@ func (s *Service) card(ctx context.Context, a core.Actor, id int64, need, action
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, need, action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, need, "card", action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		was, err := GetCard(ctx, tx, id)
 		if err != nil {
 			return core.Change{}, err
@@ -715,7 +700,7 @@ func (s *Service) AddChecklistItem(ctx context.Context, a core.Actor, card int64
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "checklist_item", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		position, err := last(ctx, tx, "checklist_items", "card_id", card)
 		if err != nil {
 			return core.Change{}, err
@@ -755,7 +740,7 @@ func (s *Service) checklistItem(ctx context.Context, a core.Actor, id int64, act
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "checklist_item", action, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		was, err := readChecklistItem(ctx, tx, id)
 		if err != nil {
 			return core.Change{}, err
@@ -799,7 +784,7 @@ func (s *Service) PostComment(ctx context.Context, a core.Actor, card int64, bod
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "comment", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		var by any
 		if a.Kind == core.KindUser && a.ID != 0 {
 			by = a.ID
@@ -831,7 +816,7 @@ func (s *Service) DeleteComment(ctx context.Context, a core.Actor, id int64) (co
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, "delete_own", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "comment", "delete", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		var was Comment
 		var user sql.NullInt64
 		err := tx.QueryRowContext(ctx,
@@ -884,7 +869,7 @@ func GetDocumentSettings(ctx context.Context, q store.Querier, proposition int64
 }
 
 func (s *Service) SetDocumentSettings(ctx context.Context, a core.Actor, proposition int64, d DocumentSettings) (core.Event, error) {
-	return s.do(ctx, a, proposition, auth.CanEdit, "edit", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	return s.do(ctx, a, proposition, auth.CanEdit, "document_settings", "edit", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		was, err := GetDocumentSettings(ctx, tx, proposition)
 		if err != nil {
 			return core.Change{}, err
