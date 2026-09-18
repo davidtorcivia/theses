@@ -12,11 +12,6 @@ import (
 	"time"
 )
 
-// event names what the payload reports.
-// ponytail: one name for every notification, the outbox passes the typed event
-// through once core emits it.
-const event = "notification"
-
 // Webhook posts a JSON notification to an owner configured URL and signs it
 // with Secret when one is set.
 type Webhook struct {
@@ -32,13 +27,20 @@ func (w Webhook) Send(ctx context.Context, n Note) error {
 	if err != nil {
 		return err
 	}
+	event := n.Event
+	if event == "" {
+		event = "notification"
+	}
 	body, err := json.Marshal(struct {
-		Event  string    `json:"event"`
-		Title  string    `json:"title"`
-		Body   string    `json:"body"`
-		URL    string    `json:"url"`
-		SentAt time.Time `json:"sent_at"`
-	}{event, n.Title, n.Body, n.URL, time.Now().UTC()})
+		Event    string    `json:"event"`
+		Title    string    `json:"title"`
+		Body     string    `json:"body"`
+		URL      string    `json:"url"`
+		Actor    string    `json:"actor,omitempty"`
+		Entity   string    `json:"entity,omitempty"`
+		EntityID int64     `json:"entity_id,omitempty"`
+		SentAt   time.Time `json:"sent_at"`
+	}{event, n.Title, n.Body, n.URL, n.Actor, n.Entity, n.EntityID, time.Now().UTC()})
 	if err != nil {
 		return fmt.Errorf("webhook: %w", err)
 	}

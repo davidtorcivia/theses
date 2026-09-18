@@ -15,12 +15,19 @@ import (
 
 const timeout = 10 * time.Second
 
-// Note is one notification. Priority is -1 low, 0 normal, 1 high.
+// Note is one notification. Priority is -1 low, 0 normal, 1 high. Event,
+// Actor, Entity and EntityID say what happened and to what, which is what a
+// webhook carries and what a person reads off the title everywhere else.
 type Note struct {
 	Title    string
 	Body     string
 	URL      string
 	Priority int
+	Event    string
+	Actor    string
+	Entity   string
+	EntityID int64
+	Tags     []string
 }
 
 // resolve is the name lookup, replaced in tests.
