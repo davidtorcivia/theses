@@ -3,15 +3,20 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/store"
 )
 
 var payloadRe = regexp.MustCompile(`(?s)<script type="application/json" id="payload">(.*?)</script>`)
@@ -202,5 +207,116 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 	}
 	if doc.OpenEditing || doc.History || !doc.Publish {
 		t.Errorf("document settings are %+v", doc)
+	}
+}
+
+// as returns a client signed in as another account. The session is minted
+// directly rather than through the invite flow, which its own tests cover.
+func (h *harness) as(handle, name, role string) *http.Client {
+	h.Helper()
+	ctx := context.Background()
+	id, err := store.CreateUser(ctx, h.db, &store.User{
+		Handle: handle, Email: handle + "@example.com", Name: name,
+		Initials: strings.ToUpper(handle[:2]), Colour: Palette[2], Role: role, PasswordHash: "x",
+	})
+	if err != nil {
+		h.Fatal(err)
+	}
+	user, err := store.UserByID(ctx, h.db, id)
+	if err != nil {
+		h.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := h.srv.auth.StartSession(ctx, rec, httptest.NewRequest("GET", "/", nil), user, 1); err != nil {
+		h.Fatal(err)
+	}
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		h.Fatal(err)
+	}
+	base, err := url.Parse(h.http.URL)
+	if err != nil {
+		h.Fatal(err)
+	}
+	jar.SetCookies(base, rec.Result().Cookies())
+	return &http.Client{Jar: jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+func (h *harness) payloadAs(client *http.Client, path string) (int, shell) {
+	h.Helper()
+	res, err := client.Get(h.http.URL + path)
+	if err != nil {
+		h.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return res.StatusCode, shell{}
+	}
+	m := payloadRe.FindStringSubmatch(string(body))
+	if m == nil {
+		h.Fatalf("%s carries no payload", path)
+	}
+	var state shell
+	if err := json.Unmarshal([]byte(m[1]), &state); err != nil {
+		h.Fatal(err)
+	}
+	return res.StatusCode, state
+}
+
+// A proposition is readable through membership, for everybody but an owner. An
+// editor who is a member of nothing gets an empty workspace rather than a 403
+// on somebody else's board, and the rail never names what they cannot read.
+func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	owner := h.owner()
+
+	first, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.srv.board.CreateProposition(ctx, owner, "Tide Tables")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	editor := h.as("ada", "Ada Lovelace", auth.RoleEditor)
+	status, state := h.payloadAs(editor, "/")
+	if status != http.StatusOK {
+		t.Fatalf("an editor who is a member of nothing got %d on /", status)
+	}
+	if state.Open != 0 || len(state.Propositions) != 0 {
+		t.Errorf("the rail showed %d propositions and opened %d", len(state.Propositions), state.Open)
+	}
+	if status, _ := h.payloadAs(editor, "/p/"+strconv.FormatInt(first.EntityID, 10)); status != http.StatusForbidden {
+		t.Errorf("reading a proposition they are not a member of gave %d", status)
+	}
+
+	var ada int64
+	if err := h.db.QueryRowContext(ctx, `SELECT id FROM users WHERE handle = 'ada'`).Scan(&ada); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.srv.board.AddMember(ctx, owner, second.EntityID, ada); err != nil {
+		t.Fatal(err)
+	}
+
+	status, state = h.payloadAs(editor, "/")
+	if status != http.StatusOK {
+		t.Fatalf("/ gave %d once they were a member", status)
+	}
+	if state.Open != second.EntityID {
+		t.Errorf("/ opened %d, want the one they are a member of, %d", state.Open, second.EntityID)
+	}
+	if len(state.Propositions) != 1 || state.Propositions[0].ID != second.EntityID {
+		t.Errorf("the rail is %+v, want only the proposition they are a member of", state.Propositions)
+	}
+
+	// The owner still sees both.
+	_, mine := h.payloadAs(h.client, "/")
+	if len(mine.Propositions) != 2 {
+		t.Errorf("the owner sees %d propositions, want 2", len(mine.Propositions))
 	}
 }

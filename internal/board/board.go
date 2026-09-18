@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -359,4 +360,49 @@ func fillCards(ctx context.Context, q store.Querier, where string, arg any, card
 		}
 	}
 	return notes.Err()
+}
+
+// Readable is the one visibility test in the app: an owner reads every
+// proposition, everybody else reads the ones they are a member of. The rail,
+// the page, the socket, the settings page and the fallback all ask it, so a
+// person who is not a member is not told a proposition exists.
+func Readable(ctx context.Context, q store.Querier, u *store.User, proposition int64) (bool, error) {
+	if u == nil || proposition == 0 {
+		return false, nil
+	}
+	if u.Role == auth.RoleOwner {
+		var n int
+		err := q.QueryRowContext(ctx,
+			`SELECT count(*) FROM propositions WHERE id = ?`, proposition).Scan(&n)
+		return n == 1, err
+	}
+	var one int
+	err := q.QueryRowContext(ctx,
+		`SELECT 1 FROM proposition_members WHERE proposition_id = ? AND user_id = ?`,
+		proposition, u.ID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Memberships is the same test for a whole rail in one query: every
+// proposition this person is a member of. An owner is a member of everything
+// whether or not a row says so, so callers check the role as well.
+func Memberships(ctx context.Context, q store.Querier, userID int64) (map[int64]bool, error) {
+	rows, err := q.QueryContext(ctx,
+		`SELECT proposition_id FROM proposition_members WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }

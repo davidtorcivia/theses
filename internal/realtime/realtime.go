@@ -5,8 +5,6 @@
 package realtime
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -106,8 +104,10 @@ type client struct {
 	done        chan struct{}
 	closeOnce   sync.Once
 
-	mu    sync.Mutex
-	where string
+	mu     sync.Mutex
+	where  string
+	member map[int64]bool
+	owner  bool
 }
 
 // Handler is the websocket endpoint. Everything is refused in the handshake
@@ -141,7 +141,7 @@ func (h *Hub) handshake(config *websocket.Config, r *http.Request) error {
 	if proposition == 0 {
 		return nil
 	}
-	ok, err := CanRead(r.Context(), h.board.DB, user, proposition)
+	ok, err := board.Readable(r.Context(), h.board.DB, user, proposition)
 	if err != nil {
 		return err
 	}
@@ -164,8 +164,13 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	}
 	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
 
+	member, err := board.Memberships(ctx, h.board.DB, user.ID)
+	if err != nil {
+		return
+	}
 	c := &client{hub: h, ws: ws, user: user, proposition: proposition,
-		out: make(chan []byte, outBuffer), done: make(chan struct{})}
+		out: make(chan []byte, outBuffer), done: make(chan struct{}),
+		member: member, owner: user.Role == auth.RoleOwner}
 	defer c.close()
 	go c.write()
 
@@ -175,6 +180,7 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	defer sub.Close()
 	go func() {
 		for e := range sub.C {
+			c.membership(e)
 			if c.wants(e) {
 				c.send(message{Type: "event", Event: &e})
 			}
@@ -204,16 +210,43 @@ func (h *Hub) serve(ws *websocket.Conn) {
 }
 
 // wants is what this tab may see: everything on the proposition it has open,
-// plus the rail entries themselves for anyone whose role reaches every
-// proposition. A guest reading one proposition sees only that one.
+// plus the rail entries for the other propositions it may read. A person who
+// is not a member of a proposition is not told it exists, let alone edited.
 func (c *client) wants(e core.Event) bool {
-	if e.Proposition == c.proposition {
-		return true
-	}
-	if e.Entity != "proposition" && e.Entity != "member" {
+	if e.Entity != "proposition" && e.Entity != "member" && e.Proposition != c.proposition {
 		return false
 	}
-	return c.user.Role == auth.RoleOwner || c.user.Role == auth.RoleEditor
+	return c.canRead(e.Proposition)
+}
+
+// membership keeps the set of propositions this tab may read in step with the
+// member commands as they happen, and closes the socket when this person is
+// removed from the one they have open, so a removed member stops receiving on
+// the same command that removed them.
+func (c *client) membership(e core.Event) {
+	if e.Entity != "member" || e.EntityID != c.user.ID {
+		return
+	}
+	added := len(e.After) > 0
+	c.mu.Lock()
+	if added {
+		c.member[e.Proposition] = true
+	} else {
+		delete(c.member, e.Proposition)
+	}
+	c.mu.Unlock()
+	if !added && !c.owner && e.Proposition == c.proposition {
+		c.close()
+	}
+}
+
+func (c *client) canRead(proposition int64) bool {
+	if proposition == 0 {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.owner || c.member[proposition]
 }
 
 func (c *client) write() {
@@ -317,27 +350,6 @@ func (h *Hub) announce(proposition int64) {
 	}
 }
 
-// CanRead is the read side of the same rule core enforces on writes: an owner
-// sees every proposition, everybody else sees the ones they are a member of.
-func CanRead(ctx context.Context, q store.Querier, u *store.User, proposition int64) (bool, error) {
-	if u == nil || proposition == 0 {
-		return false, nil
-	}
-	if u.Role == auth.RoleOwner {
-		var exists int
-		err := q.QueryRowContext(ctx, `SELECT count(*) FROM propositions WHERE id = ?`, proposition).Scan(&exists)
-		return exists == 1, err
-	}
-	var one int
-	err := q.QueryRowContext(ctx,
-		`SELECT 1 FROM proposition_members WHERE proposition_id = ? AND user_id = ?`,
-		proposition, u.ID).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 // Events is the fallback for a network that will not hold a socket: the same
 // stream, read out of the activity table, one request at a time.
 func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +360,7 @@ func (h *Hub) Events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proposition, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
-	if ok, err := CanRead(ctx, h.board.DB, user, proposition); err != nil || !ok {
+	if ok, err := board.Readable(ctx, h.board.DB, user, proposition); err != nil || !ok {
 		http.Error(w, "no access", http.StatusForbidden)
 		return
 	}

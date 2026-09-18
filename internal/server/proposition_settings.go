@@ -9,7 +9,6 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
-	"github.com/davidtorcivia/theses/internal/realtime"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -42,7 +41,7 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		s.errorPage(w, r, http.StatusNotFound)
 		return
 	}
-	readable, err := realtime.CanRead(ctx, s.db, me, id)
+	readable, err := board.Readable(ctx, s.db, me, id)
 	if err != nil {
 		s.fail(w, r, err)
 		return

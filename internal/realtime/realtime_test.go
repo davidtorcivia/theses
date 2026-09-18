@@ -144,6 +144,26 @@ func read(t *testing.T, ws *websocket.Conn, want string) message {
 	}
 }
 
+// readNothing fails if any applied event reaches this tab before the deadline.
+// Presence frames are ignored: they are this tab's own arrival.
+func readNothing(t *testing.T, ws *websocket.Conn) {
+	t.Helper()
+	ws.SetReadDeadline(time.Now().Add(600 * time.Millisecond))
+	for {
+		var raw string
+		if err := websocket.Message.Receive(ws, &raw); err != nil {
+			return
+		}
+		var m message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Type == "event" {
+			t.Fatalf("an event reached a tab that may not read it: %+v", m.Event)
+		}
+	}
+}
+
 func send(t *testing.T, ws *websocket.Conn, cmd command) {
 	t.Helper()
 	b, err := json.Marshal(cmd)
@@ -290,6 +310,49 @@ func TestSocketOnAnEmptyWorkspaceCanCreateTheFirstProposition(t *testing.T) {
 	}
 	if p.Title != "Tide Tables" {
 		t.Errorf("the proposition is %+v", p)
+	}
+}
+
+// A person who is not a member is not told a proposition exists, so no edit to
+// it reaches their socket, not even the rail entry.
+func TestSocketSendsNoEventsForAPropositionTheTabCannotRead(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+
+	stranger, err := r.dialProposition("stranger", 0)
+	if err != nil {
+		t.Fatalf("a tab with nothing open could not connect: %v", err)
+	}
+	defer stranger.Close()
+
+	if _, err := r.boards.EditProposition(ctx, r.actor("ada"), r.prop, "Renamed", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.boards.CreateCard(ctx, r.actor("ada"), r.cols[0].ID, "Call the engineer", nil); err != nil {
+		t.Fatal(err)
+	}
+	readNothing(t, stranger)
+
+	// Once they are a member, the rail entry reaches them.
+	if _, err := r.boards.AddMember(ctx, r.actor("ada"), r.prop, r.users["stranger"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.boards.EditProposition(ctx, r.actor("ada"), r.prop, "Renamed again", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		e := read(t, stranger, "event")
+		if e.Event.Entity != "proposition" {
+			continue
+		}
+		var p board.Proposition
+		if err := json.Unmarshal(e.Event.After, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Title != "Renamed again" {
+			t.Errorf("the rail entry a new member saw is %+v", p)
+		}
+		break
 	}
 }
 

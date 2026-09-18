@@ -133,7 +133,11 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 	if err != nil {
 		return nil, err
 	}
-	state.Propositions = visibleTo(me, all)
+	member, err := board.Memberships(ctx, s.db, me.ID)
+	if err != nil {
+		return nil, err
+	}
+	state.Propositions = visibleTo(me, member, all)
 
 	if open == 0 {
 		state.Open = firstOpen(state.Propositions)
@@ -147,7 +151,7 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 		return state, nil
 	}
 
-	ok, err := realtime.CanRead(ctx, s.db, me, state.Open)
+	ok, err := board.Readable(ctx, s.db, me, state.Open)
 	if err != nil {
 		return nil, err
 	}
@@ -176,19 +180,17 @@ func (s *Server) shellState(r *http.Request, open int64) (*shell, error) {
 	return state, nil
 }
 
-// visibleTo is the rail. A guest reads the propositions they are a member of
-// and is not told the others exist; everybody else sees the whole show.
-func visibleTo(me *store.User, all []board.Proposition) []board.Proposition {
-	if me.Role != auth.RoleGuest {
+// visibleTo is the rail, and it is the same test the socket and the settings
+// page use: an owner reads every proposition, everybody else reads the ones
+// they are a member of and is not told the others exist.
+func visibleTo(me *store.User, member map[int64]bool, all []board.Proposition) []board.Proposition {
+	if me.Role == auth.RoleOwner {
 		return all
 	}
 	out := []board.Proposition{}
 	for _, p := range all {
-		for _, m := range p.Members {
-			if m == me.ID {
-				out = append(out, p)
-				break
-			}
+		if member[p.ID] {
+			out = append(out, p)
 		}
 	}
 	return out
