@@ -261,9 +261,19 @@ CREATE INDEX activity_proposition ON activity(proposition_id, id);
 
 CREATE TABLE notification_channels (
   id          INTEGER PRIMARY KEY,
-  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- NULL is a workspace channel: the webhooks under Integrations fire on what
+  -- happened rather than on who it happened to, so they belong to nobody and
+  -- carry the events they want in their config instead of in the rules table.
+  user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
   kind        TEXT    NOT NULL CHECK (kind IN ('email','pushover','ntfy','webhook')),
   config_json TEXT    NOT NULL,
+  -- Quiet hours as 'HH:MM', both empty for none. An end before the start
+  -- crosses midnight, which is what a night looks like.
+  quiet_from  TEXT    NOT NULL DEFAULT '',
+  quiet_to    TEXT    NOT NULL DEFAULT '',
+  -- 1 collects this channel's notifications into the daily digest instead of
+  -- sending each one as it happens.
+  digest      INTEGER NOT NULL DEFAULT 0,
   created_at  INTEGER NOT NULL,
   verified_at INTEGER
 );
@@ -285,7 +295,17 @@ CREATE TABLE notification_outbox (
   last_error   TEXT    NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
   next_at      INTEGER NOT NULL,
-  sent_at      INTEGER
+  sent_at      INTEGER,
+  -- Which rule put the row here, so the worker knows how to render it.
+  event        TEXT    NOT NULL DEFAULT '',
+  -- Rows sharing a key while they both still wait merge into one message: five
+  -- card moves in a minute are one line, and a day of a digest channel's
+  -- notifications is one mail. Empty merges with nothing.
+  collapse     TEXT    NOT NULL DEFAULT '',
+  -- When delivery was first attempted. The day of retries runs from here, not
+  -- from created_at, so a row queued before the channel worked still gets its
+  -- full day once it does. NULL means never tried.
+  tried_at     INTEGER
 );
 CREATE INDEX notification_outbox_pending ON notification_outbox(sent_at, next_at);
 
