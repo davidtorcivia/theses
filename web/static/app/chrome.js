@@ -34,7 +34,7 @@ export function start(renderRest) {
     if (e.key !== 'Escape') return;
     if ($('#picker')) { closePicker(); return; }
     if (!$('#palette').hidden) { closePalette(); return; }
-    if (state.openCard) closeDrawer();
+    if (state.openCard || state.openLink || state.openFile) closeDrawer();
   });
 
   // The offline line. Nothing modal, as the plan asks.

@@ -3,12 +3,15 @@
 // the two text fields carry the version they started from.
 
 import { $, el, clear, add, initials, inline, say, editable } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit } from './state.js';
+import { state, user, byHandle, emit, hold, canEdit, material } from './state.js';
 import { send, where, Conflict } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
+import { renderLinkDrawer, attachedLinks, host } from './links.js';
+import { renderFileDrawer, attachedFiles, bytes } from './files.js';
+import * as api from './api.js';
 
 export function closeDrawer() {
-  state.openCard = null;
+  state.openCard = state.openLink = state.openFile = null;
   $('#drawer').hidden = true;
   document.body.classList.remove('has-drawer');
   where('');
@@ -20,7 +23,98 @@ export function openCard(id) {
     state.openCard = id;
     where('card:' + id);
   }
+  state.openLink = state.openFile = null;
   emit();
+}
+
+// linked is the links and files hanging off this card, with a picker to add
+// one. It is the same join the links and files drawers show from their side.
+function linked(card) {
+  // The card drawer opens on the board, where neither pane has been shown, so
+  // the links and files are read here too. material only ever reads them once.
+  material().catch(() => {});
+  const list = el('ul', { class: 'linked' });
+  for (const link of attachedLinks(card.id)) {
+    list.append(el('li', {},
+      el('a', { href: link.url, target: '_blank', rel: 'noopener noreferrer',
+        text: link.title || host(link.url) }),
+      el('span', { class: 'mono dim', text: ' ' + (link.kind || 'link') + ' · ' }),
+      canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
+        onclick: () => detach('links', card.id, link.id) }) : null));
+  }
+  for (const file of attachedFiles(card.id)) {
+    list.append(el('li', {},
+      el('span', { text: file.name }),
+      el('span', { class: 'mono dim', text: ' ' + bytes(file.size) + ' · ' }),
+      canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
+        onclick: () => detach('files', card.id, file.id) }) : null));
+  }
+  if (!list.childElementCount) {
+    list.append(el('li', { class: 'dim', text: 'Nothing linked yet.' }));
+  }
+  if (canEdit()) {
+    list.append(el('li', {}, el('button', {
+      class: 'lnk', type: 'button', text: '+ attach a link or a file',
+      onclick: (e) => { e.stopPropagation(); attachDialog(card); },
+    })));
+  }
+  return list;
+}
+
+async function detach(what, card, id) {
+  try {
+    await api.del('/cards/' + card + '/' + what + '/' + id);
+  } catch (err) {
+    say(err.message);
+  }
+}
+
+// attachDialog is the picker: everything on this proposition that is not on
+// this card already. A real dialog, as the rest of the app uses.
+function attachDialog(card) {
+  const onCard = new Set([
+    ...attachedLinks(card.id).map((l) => 'links/' + l.id),
+    ...attachedFiles(card.id).map((f) => 'files/' + f.id),
+  ]);
+  // The dialog is outside the drawer, so it takes the plain list class rather
+  // than the drawer's own, which is where the bullets are turned off.
+  const list = el('ul', { class: 'list' });
+  const offer = [
+    ...state.links.map((l) => ({ what: 'links', id: l.id, label: l.title || host(l.url), kind: l.kind || 'link' })),
+    ...state.files.filter((f) => f.state === 'ready')
+      .map((f) => ({ what: 'files', id: f.id, label: f.name, kind: f.kind || 'file' })),
+  ].filter((row) => !onCard.has(row.what + '/' + row.id));
+
+  const dialog = el('dialog', {},
+    el('h3', { text: 'Attach to ' + card.title }),
+    list,
+    el('div', { class: 'acts' },
+      el('button', { class: 'lnk plain', type: 'button', text: 'Done', onclick: () => dialog.close() })));
+
+  if (!offer.length) {
+    list.append(el('li', { class: 'dim', text: 'Nothing left to attach. Add a link or a file first.' }));
+  }
+  for (const row of offer) {
+    list.append(el('li', {}, el('button', {
+      class: 'lnk', type: 'button',
+      onclick: async (e) => {
+        // The button is taken before the first await: currentTarget is null
+        // once the event has finished being dispatched.
+        const button = e.currentTarget;
+        button.disabled = true;
+        try {
+          await api.post('/cards/' + card.id + '/' + row.what + '/' + row.id);
+          button.closest('li').remove();
+        } catch (err) {
+          say(err.message);
+          button.disabled = false;
+        }
+      },
+    }, el('span', { class: 'k mono', text: row.kind }), ' ' + row.label)));
+  }
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
 }
 
 const rendered = (text) => inline(text, byHandle);
@@ -28,7 +122,9 @@ const rendered = (text) => inline(text, byHandle);
 export function renderDrawer() {
   const drawer = $('#drawer');
   const card = state.cards.get(state.openCard);
-  if (!card) {
+  // One drawer, three things it can hold. A link or a file takes it over, which
+  // is what clicking a row in either pane does.
+  if (!card && !state.openLink && !state.openFile) {
     drawer.hidden = true;
     document.body.classList.remove('has-drawer');
     return;
@@ -37,6 +133,20 @@ export function renderDrawer() {
   clear(drawer);
   drawer.hidden = false;
   document.body.classList.add('has-drawer');
+
+  if (state.openLink) {
+    if (renderLinkDrawer(drawer)) { drawer.scrollTop = top; return; }
+    state.openLink = null;
+  }
+  if (state.openFile) {
+    if (renderFileDrawer(drawer)) { drawer.scrollTop = top; return; }
+    state.openFile = null;
+  }
+  if (!card) {
+    drawer.hidden = true;
+    document.body.classList.remove('has-drawer');
+    return;
+  }
 
   const column = state.columns.find((c) => c.id === card.column_id);
   drawer.append(el('div', { class: 'dh' },
@@ -65,8 +175,7 @@ export function renderDrawer() {
   drawer.append(checklist(card));
 
   drawer.append(el('h4', { text: 'Linked material' }));
-  drawer.append(el('ul', { class: 'linked' },
-    el('li', { class: 'dim', text: 'Nothing linked yet. Links and files arrive in the next step.' })));
+  drawer.append(linked(card));
 
   drawer.append(el('h4', { text: 'Activity' }));
   drawer.append(activity(card));

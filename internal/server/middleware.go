@@ -15,8 +15,29 @@ import (
 
 // The CSP the plan asks for. Nothing is inline: no script tags with bodies, no
 // event handlers, no style attributes, no third party anything.
+//
+// The bucket is the one exception, and it is not a relaxation of the rest: the
+// browser uploads to object storage directly and reads images and audio back
+// from it, so the configured endpoints are named in the three directives it
+// reaches them through and nowhere else. A workspace with no storage
+// configured gets this policy unchanged.
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; " +
-	"img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"
+	"img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; " +
+	"frame-ancestors 'none'; form-action 'self'"
+
+// policy is the CSP this process sends, with the storage origins folded in.
+func (s *Server) policy() string {
+	origins := s.storageOrigins()
+	if len(origins) == 0 {
+		return contentSecurityPolicy
+	}
+	where := " " + strings.Join(origins, " ")
+	p := contentSecurityPolicy
+	for _, directive := range []string{"img-src 'self' data:", "connect-src 'self'", "media-src 'self'"} {
+		p = strings.Replace(p, directive, directive+where, 1)
+	}
+	return p
+}
 
 type ctxKey int
 
@@ -87,7 +108,7 @@ func (s *Server) logAndRecover(next http.Handler) http.Handler {
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("Content-Security-Policy", s.policy())
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
@@ -190,23 +211,38 @@ func (s *Server) writeGate(next http.Handler) http.Handler {
 const maxFormBytes = 64 << 10
 
 // csrfGuard parses every form and checks its token against this browser's seed.
+// Every method that is not safe goes through it, not only POST: the links and
+// files routes under /app are JSON and use PATCH and DELETE, and a check that
+// named one verb would let the others past.
 func (s *Server) csrfGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || machinePath(r.URL.Path) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			next.ServeHTTP(w, r)
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
-		if err := r.ParseForm(); err != nil {
-			var tooBig *http.MaxBytesError
-			if errors.As(err, &tooBig) {
-				s.errorPage(w, r, http.StatusRequestEntityTooLarge)
-				return
-			}
-			s.errorPage(w, r, http.StatusForbidden)
+		if machinePath(r.URL.Path) {
+			next.ServeHTTP(w, r)
 			return
 		}
-		if !s.auth.CheckCSRF(seedOf(r), r.PostFormValue("csrf")) {
+		// A JSON request carries the token in a header, because it has no form
+		// to put a field in. ParseForm leaves a body that is not a form alone,
+		// so the handler still reads it.
+		token := r.Header.Get(auth.CSRFHeader)
+		if token == "" {
+			r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+			if err := r.ParseForm(); err != nil {
+				var tooBig *http.MaxBytesError
+				if errors.As(err, &tooBig) {
+					s.errorPage(w, r, http.StatusRequestEntityTooLarge)
+					return
+				}
+				s.errorPage(w, r, http.StatusForbidden)
+				return
+			}
+			token = r.PostFormValue("csrf")
+		}
+		if !s.auth.CheckCSRF(seedOf(r), token) {
 			s.log.Warn("csrf token rejected", "path", r.URL.Path, "addr", s.auth.ClientIP(r))
 			s.errorPage(w, r, http.StatusForbidden)
 			return

@@ -96,6 +96,14 @@ func run() error {
 		srv.Docs().Run(ctx)
 	}()
 
+	// The upload sweep, on the same terms: an upload it was half way through
+	// abandoning is found again on the next start, because the rows say so.
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		srv.SweepUploads(ctx)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:    cfg.Bind,
 		Handler: srv,
@@ -131,6 +139,7 @@ func run() error {
 		<-mailDone
 		<-backupDone
 		<-docsDone
+		<-sweepDone
 		return <-done
 	}
 }

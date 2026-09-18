@@ -38,6 +38,10 @@ type Meta struct {
 	// fields come from a scan of its tags instead, so the caller knows the
 	// metadata may be short of what the page holds.
 	Partial bool
+	// Text is the page's readable text, for a search index. It is not an
+	// archive of the page: the tags are gone, every run of whitespace is one
+	// space, and it stops at maxText.
+	Text string
 }
 
 // maxBody is what Fetch will read from a page. Metadata lives in the head, so
@@ -103,7 +107,8 @@ func Extract(finalURL string, body []byte, contentType string) Meta {
 	host, path := hostAndPath(finalURL)
 	var p page
 	var partial bool
-	if isHTML(contentType, body) {
+	markup := isHTML(contentType, body)
+	if markup {
 		p, partial = parse(body)
 	}
 	ld := p.linkedData()
@@ -120,7 +125,59 @@ func Extract(finalURL string, body []byte, contentType string) Meta {
 		Partial: partial,
 	}
 	m.Kind, m.KindGuessed = kind(host, path, hasCitation, p.one("og:type"), ld.kind)
+	if markup {
+		m.Text = readable(body)
+	}
 	return m
+}
+
+// maxText is how much readable text one page contributes to a search index.
+// Past this the words are repeating themselves and the row is only getting
+// larger.
+const maxText = 64 << 10
+
+// readable is the page with its markup taken off: the text of every element
+// but script and style, whitespace collapsed. It runs over the tokenizer
+// rather than the parsed document so that a page the parser gave up on still
+// yields its text.
+func readable(body []byte) string {
+	var b strings.Builder
+	z := html.NewTokenizer(bytes.NewReader(body))
+	hidden := 0
+	for b.Len() < maxText {
+		switch z.Next() {
+		case html.ErrorToken:
+			return b.String()
+		case html.StartTagToken:
+			if quiet(z) {
+				hidden++
+			}
+		case html.EndTagToken:
+			if quiet(z) && hidden > 0 {
+				hidden--
+			}
+		case html.TextToken:
+			if hidden > 0 {
+				continue
+			}
+			for _, word := range strings.Fields(string(z.Text())) {
+				if b.Len() >= maxText {
+					break
+				}
+				if b.Len() > 0 {
+					b.WriteByte(' ')
+				}
+				b.WriteString(word)
+			}
+		}
+	}
+	return b.String()
+}
+
+// quiet is an element whose text is code rather than reading.
+func quiet(z *html.Tokenizer) bool {
+	name, _ := z.TagName()
+	return string(name) == "script" || string(name) == "style"
 }
 
 // Citation formats the fields the way the drawer copies them, leaving out

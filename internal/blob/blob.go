@@ -162,6 +162,10 @@ func New(cfg Config) (*Client, error) {
 	return &Client{s3: api, presign: s3.NewPresignClient(api), bucket: cfg.Bucket}, nil
 }
 
+// Bucket is the bucket this client writes to, for a caller deciding whether two
+// of its folders land in the same one.
+func (c *Client) Bucket() string { return c.bucket }
+
 // PresignPut returns a URL the browser PUTs the whole object to, and the
 // headers that were signed into it. The signature pins the content type and
 // the length, so an upload of a different size is rejected by the bucket. The

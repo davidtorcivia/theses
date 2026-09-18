@@ -6,6 +6,8 @@ import { state, user, open, emit, hold, canEdit, archived } from './state.js';
 import { send } from './net.js';
 import { renderBoard, boardSummary } from './board.js';
 import { renderDocument } from './docs.js';
+import { renderLinks } from './links.js';
+import { renderFiles } from './files.js';
 
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
@@ -75,14 +77,14 @@ function editOnClick(node, read, save) {
 
 function pane(p) {
   if (state.tab === 'links') {
-    return el('section', { class: 'pane', id: 'pane-links' },
-      el('div', { class: 'ph' }, el('h2', { text: 'Links' })),
-      el('p', { class: 'empty', text: 'Links arrive in step four, with the metadata fetch and the citations.' }));
+    const links = el('section', { class: 'pane', id: 'pane-links' });
+    renderLinks(links);
+    return links;
   }
   if (state.tab === 'files') {
-    return el('section', { class: 'pane', id: 'pane-files' },
-      el('div', { class: 'ph' }, el('h2', { text: 'Files' })),
-      el('p', { class: 'empty', text: 'Files arrive in step four, with the presigned uploads and the versions.' }));
+    const files = el('section', { class: 'pane', id: 'pane-files' });
+    renderFiles(files);
+    return files;
   }
 
   const filters = el('div', { id: 'bfilter', class: 'facets' });

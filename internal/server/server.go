@@ -21,9 +21,11 @@ import (
 	"github.com/davidtorcivia/theses/internal/config"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
+	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
 	"github.com/davidtorcivia/theses/internal/realtime"
+	"github.com/davidtorcivia/theses/internal/safehttp"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 	"github.com/davidtorcivia/theses/web"
@@ -63,6 +65,9 @@ type Server struct {
 
 	api *api.API
 	mcp *mcp.Server
+
+	files *files.Service
+	blobs *buckets
 }
 
 func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Logger, version string) (*Server, error) {
@@ -119,6 +124,14 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return settings.Get[string](set, "defaults.document_template")
 	}, log)
 	s.api.Docs, s.hub.Docs = s.docs, s.docs
+
+	// Links and files hang off the same command service, registered after the
+	// board because they chain onto the reader it set and share its rule about
+	// an archived proposition. Metadata is fetched through the SSRF-safe
+	// client, which is the only outbound fetch the app makes.
+	s.blobs = newBuckets()
+	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
+	mcp.Files(s.mcp, s.files)
 
 	s.AddCheck(Check{Name: "database", Run: func(ctx context.Context) error {
 		var n int
@@ -232,6 +245,23 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.errorPage(w, r, http.StatusNotFound)
 	})
+
+	// Links and files. The same handlers twice: under /api/v1 for a bearer
+	// token, more specific than the API's own pattern so they win the match,
+	// and under /app for the browser, which has a session instead. The browser
+	// cannot use the first, because /api/ carries no CSRF check.
+	machine := s.api.Authenticate(api.FilesHandler(s.api, s.files))
+	// The card patterns name the two paths attachments use rather than the
+	// whole of /api/v1/cards/, which would shadow the board's own resources
+	// when they land: the outer mux wins on specificity, so a wider pattern
+	// here would take them.
+	for _, pattern := range []string{"/api/v1/links", "/api/v1/links/", "/api/v1/files",
+		"/api/v1/files/", "/api/v1/attachments",
+		"/api/v1/cards/{card}/links/", "/api/v1/cards/{card}/files/"} {
+		mux.Handle(pattern, machine)
+	}
+	mux.Handle("/app/", s.requireUser(api.SessionHandler(s.api, s.files, userOf).ServeHTTP))
+	mux.HandleFunc("POST /settings/test/cors", s.requireOwner(s.postTestCORS))
 	return mux
 }
 
