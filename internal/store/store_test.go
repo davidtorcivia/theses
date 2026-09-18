@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestMigrateFreshAndIdempotent(t *testing.T) {
@@ -202,5 +204,118 @@ func TestSwapPutsTheOldFileBackWhenTheNewOneWillNotOpen(t *testing.T) {
 	var n int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatalf("the original database is not back: %v", err)
+	}
+}
+
+func TestSwapLeavesAWorkingPoolWhenAConnectionNeverComesBack(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	restored := filepath.Join(dir, "restored.db")
+	other, err := Open(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Close()
+
+	// Rows hold the connection they were read on until they are closed, and a
+	// closed pool does not take it back by itself.
+	rows, err := db.QueryContext(ctx, `SELECT name FROM schema_migrations`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainWait = 50 * time.Millisecond
+	t.Cleanup(func() { drainWait = 10 * time.Second })
+
+	if err := db.Swap(ctx, restored, filepath.Join(dir, "app.db.aside")); err == nil {
+		t.Fatal("the file was moved while a connection was still checked out")
+	}
+	rows.Close()
+
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
+		t.Fatalf("the pool was left closed after a failed swap: %v", err)
+	}
+	if _, err := os.Stat(restored); err != nil {
+		t.Errorf("the file to swap in was moved anyway: %v", err)
+	}
+}
+
+func TestSwapTakesNoForeignWriteAheadLogWithIt(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `INSERT INTO settings (key, value_json, updated_at)
+		VALUES ('workspace.name', '"before"', 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A file that will not open, with the log and shared memory files a real
+	// one would have beside it.
+	junk := filepath.Join(dir, "junk.db")
+	for _, name := range []string{junk, junk + "-wal", junk + "-shm"} {
+		if err := os.WriteFile(name, []byte("foreign"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aside := filepath.Join(dir, "app.db.aside")
+	if err := db.Swap(ctx, junk, aside); err == nil {
+		t.Fatal("a file that is not a database was swapped in")
+	}
+
+	// The reopened database makes its own log and shared memory files again;
+	// what must not be there is the ones that came in with the other file.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if body, err := os.ReadFile(path + suffix); err == nil && strings.Contains(string(body), "foreign") {
+			t.Errorf("%s was left beside the database it does not belong to", suffix)
+		}
+	}
+	if _, err := os.Stat(aside); err == nil {
+		t.Error("the database was left aside as well as back in place")
+	}
+	var name string
+	if err := db.QueryRowContext(ctx,
+		`SELECT value_json FROM settings WHERE key = 'workspace.name'`).Scan(&name); err != nil {
+		t.Fatalf("the original database is not back: %v", err)
+	}
+	if name != `"before"` {
+		t.Errorf("the original database reads %s", name)
+	}
+}
+
+func TestSidecarsMoveWithTheirDatabaseAndAreRemovedWithIt(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "a.db"), filepath.Join(dir, "b.db")
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.WriteFile(from+suffix, []byte(suffix), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	moveSidecars(from, to)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(from + suffix); err == nil {
+			t.Errorf("%s stayed behind", suffix)
+		}
+		body, err := os.ReadFile(to + suffix)
+		if err != nil || string(body) != suffix {
+			t.Errorf("%s did not arrive: %q, %v", suffix, body, err)
+		}
+	}
+	removeSidecars(to)
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(to + suffix); err == nil {
+			t.Errorf("%s survived", suffix)
+		}
 	}
 }

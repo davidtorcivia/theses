@@ -120,13 +120,22 @@ func (db *DB) Close() error {
 // drainWait is how long Swap gives connections that were checked out when the
 // pool closed. Closing a pool does not wait for them, and Windows refuses to
 // rename a file another handle still has open.
-const drainWait = 10 * time.Second
+//
+// It is a variable so that the test for a connection that never comes back does
+// not take ten seconds to make its point.
+var drainWait = 10 * time.Second
 
-// Swap replaces the database file with the one at from and opens it. Nothing
-// else may write during it: the caller stops accepting writes first, and the
-// old file is moved to aside rather than removed, so a bad restore is one
-// rename away from being undone. A failure to open the new file puts the old
-// one back, because a process with no database can do nothing at all.
+// Swap replaces the database file with the one at from and opens it. The old
+// file is moved to aside rather than removed, so a bad restore is one rename
+// away from being undone, and every failure puts back what it found: a process
+// with no database can do nothing at all.
+//
+// Nothing can hold a connection across the rename. The write lock keeps any new
+// query from starting, because every call in this file takes the read side, and
+// the drain below refuses to move anything while a connection checked out
+// before that is still in use. A Rows or a Tx that outlives the drain therefore
+// fails the swap rather than having the file moved underneath it, which is why
+// reads are left alone while a restore runs: they cannot be caught halfway.
 func (db *DB) Swap(ctx context.Context, from, aside string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -135,28 +144,27 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 		return fmt.Errorf("close the pool: %w", err)
 	}
 	if err := drain(db.db); err != nil {
+		db.reopen()
 		return err
 	}
 	// A clean close checkpoints the write-ahead log and removes it. Anything
 	// left goes with the file it belongs to rather than being deleted, because
 	// the copy moved aside is the one thing that can undo a bad restore.
-	for _, suffix := range []string{"-wal", "-shm"} {
-		os.Rename(db.path+suffix, aside+suffix)
-	}
+	moveSidecars(db.path, aside)
 	if err := os.Rename(db.path, aside); err != nil {
+		moveSidecars(aside, db.path)
 		db.reopen()
 		return fmt.Errorf("move the database aside: %w", err)
 	}
 	if err := os.Rename(from, db.path); err != nil {
 		os.Rename(aside, db.path)
+		moveSidecars(aside, db.path)
 		db.reopen()
 		return fmt.Errorf("move the restored database in: %w", err)
 	}
 	// Whatever the new file brought with it comes too, so that a write-ahead
 	// log left by whoever wrote it is replayed rather than orphaned.
-	for _, suffix := range []string{"-wal", "-shm"} {
-		os.Rename(from+suffix, db.path+suffix)
-	}
+	moveSidecars(from, db.path)
 	fresh, err := open(db.path)
 	if err == nil {
 		err = migrate(ctx, fresh)
@@ -165,13 +173,33 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 		}
 	}
 	if err != nil {
+		// The restored file and the log it came with both go, or the old
+		// database would be reopened beside a stranger's write-ahead log and
+		// replay it.
 		os.Remove(db.path)
+		removeSidecars(db.path)
 		os.Rename(aside, db.path)
+		moveSidecars(aside, db.path)
 		db.reopen()
 		return fmt.Errorf("open the restored database: %w", err)
 	}
 	db.db = fresh
 	return nil
+}
+
+// moveSidecars takes the write-ahead log and the shared memory file wherever
+// the database file they belong to is going. Both are absent after a clean
+// close, so both renames usually do nothing.
+func moveSidecars(from, to string) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Rename(from+suffix, to+suffix)
+	}
+}
+
+func removeSidecars(of string) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Remove(of + suffix)
+	}
 }
 
 // reopen puts a pool back on the current path after a failed swap. It is best
