@@ -501,3 +501,14 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
 .tabs .tab.on i{color:var(--k)}
 .list .row.pending{cursor:default;color:var(--dim)}
 #drawer .linked li p{margin:.15rem 0}
+
+/* Findings 2 and 5. The palette shows what the server found, so a row carries a
+   snippet beside its title and a bare URL can arrive as one; and a link with no
+   title of its own is the widest thing in the links pane. Both break anywhere
+   rather than pushing the page sideways. The selected row is the hovered row,
+   because Enter and the pointer open the same thing. */
+.list .t{overflow-wrap:anywhere}
+#palette li a,#palette li.flat span{overflow-wrap:anywhere}
+#palette li.flat>span{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:1rem;align-items:baseline;padding:.5rem 1rem;border-bottom:1px solid var(--hair);color:var(--dim)}
+#palette li a.on{background:var(--y);color:var(--k)}
+#palette li a.on .k,#palette li a.on .dim,#palette li a:hover .dim{color:rgba(0,0,0,.6)}

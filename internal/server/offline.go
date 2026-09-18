@@ -10,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -169,4 +171,24 @@ func (s *Server) getActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"activity": out})
+}
+
+// getSearch is the palette's read. It is the same query as GET /api/v1/search,
+// and it is here for the same reason the activity panel is: a browser carries a
+// session rather than a bearer token, and /api/ has no CSRF check to reach
+// through. What the person may read is the rule the API uses, so an owner
+// searches the whole workspace and everybody else the propositions they are a
+// member of.
+func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	groups, err := search.Search(r.Context(), s.db, q, limit, s.api.Reader(api.Principal{User: userOf(r)}))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if groups == nil {
+		groups = []search.Group{}
+	}
+	writeJSON(w, map[string]any{"query": q, "groups": groups})
 }

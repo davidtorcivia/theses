@@ -1,55 +1,53 @@
-// The palette over propositions and cards. It searches what this tab already
-// holds, which at four people and thirty propositions is everything.
+// The palette. It asks the server as you type, which is the one search in this
+// app that reads everything: cards, document blocks, links, files, comments,
+// propositions and people, grouped and with a line of the matching text. The
+// propositions this tab already holds and the handful of things the palette
+// does are listed from here, so it is never empty and never waits.
 
-import { $, el, clear, num } from './dom.js';
-import { state, material } from './state.js';
+import { $, $$, el, clear, num, say } from './dom.js';
+import { state, emit } from './state.js';
 import { openCard } from './drawer.js';
-import { openLink, host } from './links.js';
+import { openLink } from './links.js';
 import { openFile } from './files.js';
+import * as api from './api.js';
+
+// How long a key press waits for the next one. Long enough that typing a word
+// is one query rather than five, short enough that the list is there by the
+// time the eye is.
+const pause = 150;
+
+// Per kind. Seven kinds of ten is a page of results; a palette shows a handful.
+const perKind = 5;
+
+// The request being drawn. A reply that is not the newest is thrown away,
+// because two queries in flight come back in whatever order they like.
+let asked = 0;
+let timer = 0;
 
 export function openPalette() {
-  // The links and files are two requests away and the palette searches them,
-  // so opening it loads them if the tab has not been on either pane yet.
-  material().then(() => list($('#palette input').value)).catch(() => {});
   const palette = $('#palette');
   palette.hidden = false;
   const field = palette.querySelector('input');
   field.value = '';
   field.focus();
-  list('');
+  list('', []);
 }
 
 export function closePalette() {
+  clearTimeout(timer);
+  asked++;
   $('#palette').hidden = true;
 }
 
-function items() {
+// The rows this tab can offer without asking anybody: the propositions it knows
+// of, and what the palette does.
+function local() {
   const rows = state.props.map((p) => ({
-    kind: 'proposition', label: num(p.number) + ' ' + p.title, go: () => { location.href = '/p/' + p.id; },
+    kind: 'proposition', label: num(p.number) + ' ' + p.title,
+    go: () => { location.href = '/p/' + p.id; },
   }));
-  for (const card of state.cards.values()) {
-    // On a page with no drawer, a card is a reason to go back to the board.
-    rows.push({ kind: 'card', label: card.title, go: () => {
-      if (!$('#drawer')) { location.href = '/p/' + state.open; return; }
-      closePalette();
-      openCard(card.id);
-    } });
-  }
-  for (const link of state.links) {
-    rows.push({ kind: link.kind || 'link', label: link.title || host(link.url), go: () => {
-      if (!$('#drawer')) { location.href = '/p/' + state.open + '#links'; return; }
-      closePalette();
-      location.hash = 'links';
-      openLink(link.id);
-    } });
-  }
-  for (const file of state.files) {
-    rows.push({ kind: 'file', label: file.name, go: () => {
-      if (!$('#drawer')) { location.href = '/p/' + state.open + '#files'; return; }
-      closePalette();
-      location.hash = 'files';
-      openFile(file.id);
-    } });
+  if (state.can.edit) {
+    rows.push({ kind: 'go', label: 'New proposition', go: newProposition });
   }
   if (state.can.settings) {
     rows.push({ kind: 'go', label: 'Workspace settings', go: () => { location.href = '/settings'; } });
@@ -61,27 +59,128 @@ function items() {
   return rows;
 }
 
-function list(query) {
+// The rail's own form is where a proposition is made, so the palette opens that
+// rather than owning a second way to make one. A page with no rail on it goes
+// to the board, which has one.
+function newProposition() {
+  closePalette();
+  const button = $('#newprop');
+  if (button) button.click(); else location.href = '/';
+}
+
+// remote turns a hit into a row. Everything but a proposition and a person
+// belongs to one proposition, and reaching it from another proposition's page
+// is a navigation rather than a drawer.
+function remote(hit) {
+  const row = { kind: hit.kind, label: hit.title, snippet: hit.snippet, go: null };
+  // A drawer to open it in is the other half of being on the right page: the
+  // per proposition settings page carries the palette and none of the panes.
+  const here = hit.proposition_id === state.open && Boolean($('#drawer'));
+  if (hit.kind === 'proposition') row.go = () => { location.href = '/p/' + hit.id; };
+  // A person is somebody to know is here. The Team table is the only page about
+  // them and only the owner may open it, so for everybody else the row says
+  // what it found and goes nowhere.
+  else if (hit.kind === 'user') row.go = state.can.settings ? () => { location.href = '/settings'; } : null;
+  else if (!here) row.go = () => { location.href = '/p/' + hit.proposition_id; };
+  else if (hit.kind === 'card') row.go = () => { closePalette(); openCard(hit.id); };
+  else if (hit.kind === 'link') row.go = () => { closePalette(); location.hash = 'links'; openLink(hit.id); };
+  else if (hit.kind === 'file') row.go = () => { closePalette(); location.hash = 'files'; openFile(hit.id); };
+  else if (hit.kind === 'block') row.go = () => openBlock(hit.id);
+  // A comment's card is not in the hit, so the board is as close as this gets.
+  else row.go = () => { closePalette(); location.hash = ''; };
+  return row;
+}
+
+// openBlock opens the document holding a block and puts it on the screen. The
+// payload carries every document of this proposition with its blocks, so which
+// one it is in is already here.
+function openBlock(id) {
+  const doc = state.documents.find((d) => (d.blocks || []).some((b) => b.id === id));
+  closePalette();
+  if (!doc) return;
+  state.document = doc.id;
+  state.docSource = false;
+  state.tab = 'board';
+  emit();
+  requestAnimationFrame(() => $(`#doc .blk[data-b="${id}"]`)?.scrollIntoView({ block: 'center' }));
+}
+
+// list draws the rows: what this tab knows, filtered the way it always was,
+// then what the server found, in the order its groups come back in.
+function list(query, groups) {
   const q = query.toLowerCase();
+  // A proposition this tab already lists is not offered twice.
+  const known = new Set(state.props.map((p) => p.id));
+  const rows = [
+    ...local().filter((r) => !q || r.label.toLowerCase().includes(q)),
+    ...groups.flatMap((g) => g.hits || [])
+      .filter((h) => !(h.kind === 'proposition' && known.has(h.id)))
+      .map(remote),
+  ];
+
   const results = clear($('#palette ul'));
-  const hits = items().filter((r) => !q || r.label.toLowerCase().includes(q)).slice(0, 12);
-  if (!hits.length) {
+  if (!rows.length) {
     results.append(el('li', { class: 'none', text: 'No matches.' }));
     return;
   }
-  for (const hit of hits) {
-    results.append(el('li', {}, el('a', {
-      href: '#', onclick: (e) => { e.preventDefault(); hit.go(); },
-    }, el('span', { class: 'k mono', text: hit.kind }), hit.label)));
+  for (const row of rows) {
+    const line = row.go
+      ? el('a', { href: '#', onclick: (e) => { e.preventDefault(); row.go(); } })
+      : el('span', {});
+    line.append(
+      el('span', { class: 'k mono', text: row.kind }),
+      el('span', {}, row.label,
+        row.snippet ? el('span', { class: 'dim', text: ' · ' + row.snippet }) : null));
+    results.append(el('li', { class: row.go ? null : 'flat' }, line));
   }
+  select($('#palette ul a'));
 }
 
-$('#palette input').addEventListener('input', (e) => list(e.target.value));
+// select marks the row Enter opens.
+function select(line) {
+  for (const a of $$('#palette ul a')) a.classList.toggle('on', a === line);
+  if (line) line.scrollIntoView({ block: 'nearest' });
+}
+
+// search asks the server once the typing has stopped, and draws the local rows
+// straight away so the list never goes blank while it waits. An empty query
+// asks nobody: there is nothing to match on.
+function search(query) {
+  clearTimeout(timer);
+  const mine = ++asked;
+  list(query, []);
+  if (!query.trim()) return;
+  timer = setTimeout(async () => {
+    let groups = [];
+    try {
+      const answer = await api.get(`/search?q=${encodeURIComponent(query)}&limit=${perKind}`);
+      groups = answer.groups || [];
+    } catch (err) {
+      // Offline, or a session that has ended. The local rows are still there,
+      // and a line on every key press would be the app shouting.
+      if (err.status === 401) say(err.message);
+    }
+    if (mine !== asked || $('#palette').hidden) return;
+    list(query, groups);
+  }, pause);
+}
+
+$('#palette input').addEventListener('input', (e) => search(e.target.value));
 $('#palette').addEventListener('click', (e) => {
   if (e.target.id === 'palette') closePalette();
 });
 $('#palette input').addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter') return;
-  const first = $('#palette ul a');
-  if (first) first.click();
+  const lines = $$('#palette ul a');
+  if (!lines.length) return;
+  const at = lines.findIndex((a) => a.classList.contains('on'));
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    select(lines[Math.min(at + 1, lines.length - 1)]);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    select(lines[Math.max(at - 1, 0)]);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    (lines[at] || lines[0]).click();
+  }
 });
