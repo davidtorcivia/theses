@@ -12,6 +12,9 @@ import (
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -86,6 +89,15 @@ func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 		t.Errorf("Content-Type = %q", ct)
 	}
 	return out
+}
+
+// into decodes a response into a typed value, where decode returns the loose
+// map most of these tests read one field out of.
+func into(t *testing.T, w *httptest.ResponseRecorder, out any) {
+	t.Helper()
+	if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+		t.Fatalf("body %q is not JSON: %v", w.Body.String(), err)
+	}
 }
 
 func TestTokenIsRequiredAndScoped(t *testing.T) {
@@ -616,5 +628,97 @@ func TestASettingThatCannotBeStoredIsAServerError(t *testing.T) {
 	}
 	if got := decode(t, w)["error"]; got != "something went wrong here" {
 		t.Errorf("error = %v", got)
+	}
+}
+
+// A token reads what its owner reads. Somebody who is a member of nothing sees
+// no proposition's cards in search and no proposition's rows in the log,
+// whatever the token's scopes say. Rows about the workspace itself carry no
+// proposition and are unaffected.
+func TestSearchAndActivityShowOnlyWhatMembershipAllows(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
+		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+	})
+	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boards.CreateCard(ctx, owner, cols[0].ID, "Tidal survey notes", nil); err != nil {
+		t.Fatal(err)
+	}
+	// A row about the workspace and not about a proposition. Not a setting,
+	// because a token without the admin scope does not read those either and
+	// the two filters would be indistinguishable.
+	if err := store.InsertActivity(ctx, h.db, "user", "1", "", "user", "1", "create", "", `{}`); err != nil {
+		t.Fatal(err)
+	}
+
+	read := h.token(auth.ScopeRead)
+	hits := func() []search.Hit {
+		t.Helper()
+		var body struct {
+			Groups []search.Group `json:"groups"`
+		}
+		into(t, h.do("GET", "/api/v1/search?q=tidal", read, ""), &body)
+		var all []search.Hit
+		for _, g := range body.Groups {
+			all = append(all, g.Hits...)
+		}
+		return all
+	}
+	rows := func() []activityJSON {
+		t.Helper()
+		var body struct {
+			Activity []activityJSON `json:"activity"`
+		}
+		into(t, h.do("GET", "/api/v1/activity", read, ""), &body)
+		return body.Activity
+	}
+
+	if len(hits()) == 0 {
+		t.Fatal("the owner found nothing")
+	}
+	propositionRows := 0
+	for _, row := range rows() {
+		if row.PropositionID != 0 {
+			propositionRows++
+		}
+	}
+	if propositionRows == 0 {
+		t.Fatal("the owner's log holds no proposition rows")
+	}
+
+	// The same token, once its owner reads only through membership and has
+	// none.
+	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = 'guest' WHERE id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `DELETE FROM proposition_members WHERE user_id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, hit := range hits() {
+		if hit.PropositionID != 0 {
+			t.Errorf("a member of nothing was shown %s %q of proposition %d",
+				hit.Kind, hit.Title, hit.PropositionID)
+		}
+	}
+	workspaceRows := 0
+	for _, row := range rows() {
+		if row.PropositionID != 0 {
+			t.Errorf("a member of nothing was shown activity on proposition %d", row.PropositionID)
+		} else {
+			workspaceRows++
+		}
+	}
+	if workspaceRows == 0 {
+		t.Error("the rows that belong to no proposition went away too")
 	}
 }

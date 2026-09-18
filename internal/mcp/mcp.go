@@ -187,10 +187,15 @@ type searchOut struct {
 }
 
 func (s *Server) search(ctx context.Context, req *sdk.CallToolRequest, in searchArgs) (*sdk.CallToolResult, searchOut, error) {
-	if _, err := principal(ctx, auth.ScopeRead); err != nil {
+	p, err := principal(ctx, auth.ScopeRead)
+	if err != nil {
 		return nil, searchOut{}, err
 	}
-	groups, err := search.Search(ctx, s.db, in.Query, in.Limit)
+	visible, err := s.api.Visible(ctx, p)
+	if err != nil {
+		return nil, searchOut{}, s.failed("search", err)
+	}
+	groups, err := search.Search(ctx, s.db, in.Query, in.Limit, visible)
 	if err != nil {
 		return nil, searchOut{}, s.failed("search", err)
 	}

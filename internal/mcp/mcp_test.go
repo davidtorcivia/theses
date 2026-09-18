@@ -13,6 +13,8 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -341,6 +343,54 @@ func TestToolsCarryTheirHints(t *testing.T) {
 		}
 		if !a.ReadOnlyHint {
 			t.Errorf("%s is not marked read only", tool.Name)
+		}
+	}
+}
+
+// A token reads what its owner reads and no more. Somebody who is a member of
+// nothing searches the workspace and finds nothing of any proposition, however
+// wide their scopes.
+func TestSearchShowsOnlyThePropositionsTheOwnerIsAMemberOf(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	boards := board.New(core.New(h.db, core.NewBus()), func() board.Defaults {
+		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+	})
+	owner := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	e, err := boards.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := board.ListColumns(ctx, h.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := boards.CreateCard(ctx, owner, cols[0].ID, "Tidal survey notes", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var out searchOut
+	h.call(h.connect(auth.ScopeRead), "search", searchArgs{Query: "tidal"}, &out)
+	if len(out.Groups) == 0 {
+		t.Fatal("the owner found nothing")
+	}
+
+	// The same token, once its owner is no longer somebody who reads
+	// everything and is a member of nothing.
+	if _, err := h.db.ExecContext(ctx, `UPDATE users SET role = 'guest' WHERE id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `DELETE FROM proposition_members WHERE user_id = ?`, h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	out = searchOut{}
+	h.call(h.connect(auth.ScopeRead), "search", searchArgs{Query: "tidal"}, &out)
+	for _, g := range out.Groups {
+		for _, hit := range g.Hits {
+			if hit.PropositionID != 0 {
+				t.Errorf("a member of nothing was shown %s %q of proposition %d",
+					hit.Kind, hit.Title, hit.PropositionID)
+			}
 		}
 	}
 }

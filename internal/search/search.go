@@ -39,6 +39,26 @@ type Group struct {
 	Hits []Hit  `json:"hits"`
 }
 
+// Visible reports whether the rows of one proposition may be shown to whoever
+// is searching. A hit with no proposition of its own, a person, is shown to
+// anybody who may search at all. Callers build it from the same rule the rest
+// of the app uses: an owner reads everything, everybody else reads the
+// propositions they are a member of.
+type Visible func(proposition int64) bool
+
+// Everything is the Visible for a caller who may read the whole workspace.
+func Everything(int64) bool { return true }
+
+// overFetch is how much wider each query reaches when hits are going to be
+// filtered, so that a page of somebody else's matches does not crowd out the
+// reader's own.
+//
+// ponytail: the filter runs over the rows rather than inside the six queries,
+// which at four people and thirty propositions always has room to spare. A
+// membership join per query is the fix if a workspace ever grows enough for a
+// whole widened page to come back unreadable.
+const overFetch = 5
+
 // DefaultLimit is how many hits a kind returns when the caller does not say.
 const DefaultLimit = 10
 
@@ -92,12 +112,15 @@ var searches = []struct {
 // Search runs every kind for one query and returns the groups that matched. A
 // query with nothing searchable left in it, once the FTS syntax is stripped
 // out, returns no groups rather than an error.
-func Search(ctx context.Context, q store.Querier, query string, limit int) ([]Group, error) {
+func Search(ctx context.Context, q store.Querier, query string, limit int, visible Visible) ([]Group, error) {
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
 	if limit > MaxLimit {
 		limit = MaxLimit
+	}
+	if visible == nil {
+		visible = func(int64) bool { return false }
 	}
 	match := ftsQuery(query)
 	if match == "" {
@@ -111,15 +134,31 @@ func Search(ctx context.Context, q store.Querier, query string, limit int) ([]Gr
 		if s.like {
 			arg = like
 		}
-		hits, err := run(ctx, q, s.kind, s.query, arg, limit)
+		hits, err := run(ctx, q, s.kind, s.query, arg, limit*overFetch)
 		if err != nil {
 			return nil, err
 		}
+		hits = readable(hits, visible, limit)
 		if len(hits) > 0 {
 			groups = append(groups, Group{Kind: s.kind, Hits: hits})
 		}
 	}
 	return groups, nil
+}
+
+// readable keeps the hits whose proposition the reader may see, up to the limit
+// they asked for.
+func readable(hits []Hit, visible Visible, limit int) []Hit {
+	out := hits[:0]
+	for _, h := range hits {
+		if len(out) == limit {
+			break
+		}
+		if h.PropositionID == 0 || visible(h.PropositionID) {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func run(ctx context.Context, q store.Querier, kind, query, arg string, limit int) ([]Hit, error) {

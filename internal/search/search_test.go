@@ -50,7 +50,7 @@ func TestSearchMatchesABackslash(t *testing.T) {
 		VALUES (1, 'dos', 'dos@example.com', 'C:\ Drive', 'CD', '#fff', 'guest', 'x', 1)`); err != nil {
 		t.Fatal(err)
 	}
-	groups, err := Search(context.Background(), db, `C:\ Dri`, 0)
+	groups, err := Search(context.Background(), db, `C:\ Dri`, 0, Everything)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestSearchGroupsEveryKind(t *testing.T) {
 	db := store.OpenTemp(t)
 	seed(t, db)
 
-	groups, err := Search(context.Background(), db, "debt", 0)
+	groups, err := Search(context.Background(), db, "debt", 0, Everything)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestSearchMatchesUsersByName(t *testing.T) {
 
 	// A name is matched anywhere inside it and nowhere else: "nora" is in no FTS
 	// table and in no proposition title.
-	groups, err := Search(context.Background(), db, "ora Stud", 0)
+	groups, err := Search(context.Background(), db, "ora Stud", 0, Everything)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestSearchSurvivesFTSSyntax(t *testing.T) {
 	seed(t, db)
 
 	for _, q := range []string{`"debt`, `debt*`, `debt NEAR crisis`, `debt AND (`, `^debt`, `debt OR OR`} {
-		if _, err := Search(context.Background(), db, q, 0); err != nil {
+		if _, err := Search(context.Background(), db, q, 0, Everything); err != nil {
 			t.Errorf("Search(%q): %v", q, err)
 		}
 	}
@@ -156,7 +156,7 @@ func TestSearchOfPunctuationIsEmpty(t *testing.T) {
 	db := store.OpenTemp(t)
 	seed(t, db)
 
-	groups, err := Search(context.Background(), db, `*"()^ -`, 0)
+	groups, err := Search(context.Background(), db, `*"()^ -`, 0, Everything)
 	if err != nil {
 		t.Fatal(err)
 	}
