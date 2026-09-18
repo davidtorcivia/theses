@@ -152,6 +152,403 @@ client when one carried the change.
 The browser does not use this path: it holds a websocket at `/ws`, and falls
 back to `/api/events` with the session cookie it already has.
 
+## `GET /api/v1/propositions/{id}/documents`
+
+Scope `read`, and the proposition has to be one the token's owner is a member
+of; any other answers `404`. Every document of that proposition with the
+blocks still in it, in the order the tabs above the document area stand.
+
+```json
+{"documents": [
+  {"id": 4, "proposition_id": 10, "name": "Script", "slug": "script",
+   "position": 1, "created_by": 1, "created_at": 1758067200, "revision": 12,
+   "blocks": [
+     {"id": 31, "document_id": 4, "position": "V", "text": "## Cold open",
+      "version": 3, "updated_by": 1, "updated_at": 1758067200,
+      "deleted_at": null}]}
+]}
+```
+
+## `POST /api/v1/propositions/{id}/documents`
+
+Scope `write`. The body is JSON with a `name`. The first document of a
+proposition starts from the workspace's document template, with the
+proposition's own statement in place of the placeholder; every one after it
+starts from its own title. An empty name is `400`, as is a fifty first
+document; a name another document there already has is given a numbered slug
+rather than refused, and an archived proposition is `409`.
+
+```
+POST /api/v1/propositions/10/documents
+{"name": "Interviews"}
+```
+
+The answer is the applied command, in the shape the event stream carries it, so
+a client need not read the document back:
+
+```json
+{"event": {"seq": 88, "proposition": 10, "entity": "document", "entity_id": 7,
+           "action": "create", "at": 1758067200,
+           "actor": {"kind": "user", "id": 1, "name": "Ada Lovelace"},
+           "after": {"id": 7, "proposition_id": 10, "name": "Interviews",
+                     "slug": "interviews", "position": 2, "created_by": 1,
+                     "created_at": 1758067200, "revision": 0}}}
+```
+
+Every document and block write below answers the same way.
+
+## `GET /api/v1/documents/{id}`
+
+Scope `read`. One document, the blocks that are still in it, and `rendered`:
+those blocks as the HTML the page draws.
+
+```json
+{"document": {"id": 4, "proposition_id": 10, "name": "Script",
+  "slug": "script", "position": 1, "created_by": 1,
+  "created_at": 1758067200, "revision": 12,
+  "blocks": [{"id": 31, "document_id": 4, "position": "V",
+              "text": "## Cold open", "version": 3, "updated_by": 1,
+              "updated_at": 1758067200, "deleted_at": null}],
+  "rendered": "<h2>Cold open</h2>"}}
+```
+
+## `PATCH /api/v1/documents/{id}`
+
+Scope `write`. Renames it: the body is JSON with a `name`. An empty one is
+`400`.
+
+## `DELETE /api/v1/documents/{id}`
+
+Scope `write`, and the standing to delete, which a researcher does not have. A
+token whose owner may not delete is answered `404`, the same as one asking
+about a document that is not there. The blocks and the revisions go with it.
+
+## `GET /api/v1/documents/{id}/revisions`
+
+Scope `read`. The snapshots kept of one document, newest first, fifty at most,
+each the whole document as markdown. `reason` is `manual` for one somebody
+asked for, `periodic` for the ten minute timer that runs while a document is
+being edited, and `pre-import` for the one the markdown watcher takes before it
+applies a hand edit.
+
+```json
+{"revisions": [
+  {"id": 9, "document_id": 4, "markdown": "## Cold open\n\nTape first.",
+   "created_by": 1, "created_at": 1758067200, "reason": "manual"}]}
+```
+
+## `POST /api/v1/documents/{id}/revisions`
+
+Scope `write`. Keeps one now. The body may carry a `reason`, which is `manual`,
+`periodic` or `pre-import`; an empty one is `manual`, and anything else is
+`400`.
+
+## `POST /api/v1/documents/{id}/blocks`
+
+Scope `write`. Inserts a block after the one `after` names, or at the head when
+`after` is `0` or absent. Text with a blank line in it arrives as one block per
+paragraph, in order, and the answer is the command that made the first of them.
+
+```
+POST /api/v1/documents/4/blocks
+{"after": 31, "text": "Tape from the hearing, then the number."}
+```
+
+## `PUT /api/v1/blocks/{id}`
+
+Scope `write`. Replaces one block's text. `base_version` is the version the
+block was at when it was read, and what somebody else wrote since is merged
+against it, so two people editing one block keep both edits. It is not
+optional: a body without one is version zero, which no block is ever at, and
+the answer is the conflict below.
+
+A merge that cannot be made, and a `base_version` whose text this server no
+longer holds, are both `409`:
+
+```json
+{"error": "that changed while you were editing it",
+ "conflict": {"entity": "block", "entity_id": 31, "field": "text",
+              "version": 5, "current": "The sea is a flywheel."}}
+```
+
+`current` is what the block holds now and `version` is the version it is at, so
+the next attempt is that text with yours worked into it and that number as
+`base_version`. Text longer than a block may hold is `400`.
+
+## `POST /api/v1/blocks/{id}/move`
+
+Scope `write`. Puts the block after the one `after` names, or at the head when
+it is `0` or absent. A move never conflicts with an edit: the two write
+different columns, and the version guards only the text.
+
+## `DELETE /api/v1/blocks/{id}`
+
+Scope `write`, and the standing to delete. The block is tombstoned rather than
+removed: the row keeps its text and its ordering key, so an undo is a column
+put back.
+
+## The browser's own mount
+
+The links, files and attachment routes below are mounted twice: under `/api/v1`
+for a bearer token, and under `/app` for the browser, which carries a session
+cookie and no token. `/app/links`, `/app/files/{id}/parts` and the rest are the
+same handlers, the same bodies and the same statuses. A session has no scope,
+so what a browser may do is the role of the person signed in, which every
+command checks either way. The document and notification routes have no `/app`
+twin: the browser writes documents over the websocket and reads their history
+from `GET /documents/{id}/revisions`.
+
+## `GET /api/v1/links?proposition=`
+
+Scope `read`. The links saved on one proposition, newest first, each with the
+citation built from its fields, and the kinds a link may be.
+
+```json
+{"links": [
+  {"id": 12, "proposition_id": 10, "url": "https://example.com/report",
+   "canonical_url": "https://example.com/report", "title": "The report",
+   "author": "Ada Lovelace", "year": "2026", "kind": "paper",
+   "note_md": "The table on page nine.", "question": "II", "added_by": 1,
+   "created_at": 1758067200, "fetched_at": 1758067200,
+   "citation": "Ada Lovelace (2026). The report. example.com"}],
+ "kinds": ["article", "paper", "book", "essay", "video", "project",
+           "dataset", "thread"]}
+```
+
+## `POST /api/v1/links`
+
+Scope `write`. The body is JSON with a `proposition` and a `url`. The page is
+read before the answer comes back, so the row already carries its title,
+author, year and kind. Anything that is not an http or an https address is
+`422`. The answer is the link row, as the list reports one.
+
+```
+POST /api/v1/links
+{"proposition": 10, "url": "https://example.com/report"}
+```
+
+## `GET PATCH DELETE /api/v1/links/{id}`
+
+Scope `read` to read one, `write` to change or remove it. A PATCH changes the
+fields it names, `title`, `author`, `year`, `kind`, `note_md` and `question`,
+and leaves the rest as they were. A kind outside the list, and a question that
+is not `I`, `II`, `III`, `IV` or empty, are `422`. A DELETE answers
+`{"deleted": true}`.
+
+## `POST /api/v1/links/{id}/refetch`
+
+Scope `write`. Reads the page again and answers with the link as it then
+stands. What the fetch finds replaces what is on the row, which is why this is
+a button and not a background job.
+
+## `GET /api/v1/files?proposition=`
+
+Scope `read`. The files of one proposition, newest first, and the folders a
+file may be filed under. `state` is `uploading` until the object is in the
+bucket and verified, and `ready` after that.
+
+```json
+{"files": [
+  {"id": 8, "proposition_id": 10, "name": "hearing.wav",
+   "folder": "Recordings", "kind": "wav", "size": 734003200,
+   "object_key": "10-student-debt/8-hearing.wav", "version_of": null,
+   "duration_ms": 5400000, "width": null, "height": null, "uploaded_by": 1,
+   "state": "ready", "created_at": 1758067200}],
+ "folders": ["Documents", "Reading", "Recordings", "Art"]}
+```
+
+## `POST /api/v1/files`
+
+Scope `files`. Records a file and hands back the way to put the object in the
+bucket: the app never receives the bytes. The body names the `proposition`, the
+`name`, the `folder`, the `size` in bytes, and optionally `replace`, the id of
+a file this one is a new version of.
+
+Up to 64 MiB the answer carries one presigned PUT and the headers to send with
+it:
+
+```json
+{"file": {"id": 9, "proposition_id": 10, "name": "tides.md",
+          "folder": "Documents", "kind": "md", "size": 12,
+          "object_key": "10-student-debt/9-tides.md", "version_of": null,
+          "duration_ms": null, "width": null, "height": null,
+          "uploaded_by": 1, "state": "uploading", "created_at": 1758067200},
+ "url": "https://example.com/bucket/10-student-debt/9-tides.md?...",
+ "headers": {"Content-Type": "text/markdown; charset=utf-8"},
+ "expires_at": 1758070800, "ttl_seconds": 3600}
+```
+
+Anything larger is a multipart upload, with an `upload_id`, the `part_size`,
+and a batch of sixty four presigned part URLs:
+
+```json
+{"file": {"id": 8, "name": "hearing.wav", "size": 734003200,
+          "state": "uploading"},
+ "upload_id": 3, "part_size": 67108864,
+ "parts": [{"number": 1, "url": "https://example.com/bucket/...&partNumber=1"}],
+ "done": [], "expires_at": 1758070800, "ttl_seconds": 3600}
+```
+
+`expires_at` is when those URLs stop working by this server's clock, and
+`ttl_seconds` is how long they last from the moment the answer arrives, which
+is what a client counts from, since its own clock may be minutes out. A folder
+that is not one of the four, and a name that is empty once it has been cleaned
+of paths and control characters, are `422`; object storage nobody has set up
+yet is `503`. An object is ten thousand parts of 64 MiB at most.
+
+## `GET /api/v1/files/{id}/parts?after=`
+
+Scope `files`. The resume, for a client that reloaded and knows only its file
+id. It answers with the part numbers the bucket already holds, in `done`, and
+freshly signed URLs for the next batch of the ones it does not, starting after
+`after`. Asking is also the sign that somebody is still uploading: the 48 hours
+the sweep abandons an upload after are 48 hours of silence, and every batch
+pushes them out again.
+
+A part number past the end of the upload is `422`, and so is a file that is
+already `ready`, because the upload is over. A negative one is the beginning. A
+file small enough to have gone in one PUT has no multipart upload to resume and
+is `404`.
+
+## `POST /api/v1/files/{id}/complete`
+
+Scope `files`. Called once the last byte is in the bucket. The server assembles
+the parts, checks the object is there and is exactly the size the upload
+declared, renders a thumbnail if it is an image it reads, and only then marks
+the file `ready`. The body may carry `duration_ms`, `width` and `height` as the
+client measured them; an image the server rendered a thumbnail for reports its
+own dimensions instead.
+
+```json
+{"file": {"id": 9, "name": "tides.md", "state": "ready", "size": 12}}
+```
+
+A completion sent before every part arrived, a second completion, and one for
+an upload the sweep has already abandoned are all `422`. So is an object that
+is not the size the upload declared, and that one is thrown away with its row,
+so the same file can be added again rather than sitting at `uploading` forever.
+
+## `GET /api/v1/files/{id}/download`
+
+Scope `read`. A presigned GET that lasts fifteen minutes, with the file's
+current name on it so a browser saves it under that rather than under its
+object key. A file that is not `ready` is `422`.
+
+```json
+{"url": "https://example.com/bucket/10-student-debt/9-tides.md?..."}
+```
+
+## `GET /api/v1/files/{id}/thumb`
+
+Scope `read`. The same for the thumbnail rendered beside the original when the
+file was completed. A file that has none is `404`.
+
+## `GET /api/v1/files/{id}/versions`
+
+Scope `read`. The chain under one file, newest first: what it replaced, what
+that replaced, and so on. The file itself is not in the list, and a file that
+replaced nothing answers an empty one.
+
+```json
+{"versions": [{"id": 6, "proposition_id": 10, "name": "tides.md",
+               "folder": "Documents", "kind": "md", "size": 11,
+               "object_key": "10-student-debt/6-tides.md", "version_of": null,
+               "duration_ms": null, "width": null, "height": null,
+               "uploaded_by": 1, "state": "ready",
+               "created_at": 1757980800}]}
+```
+
+## `PATCH /api/v1/files/{id}`
+
+Scope `write`. Renames a file or moves it to another folder, whichever of
+`name` and `folder` the body carries, and leaves the other as it was. The
+object keeps the key it was written under, so a link already handed out goes on
+working. A move between folders that live in different buckets is `422`:
+download it and upload it again.
+
+## `DELETE /api/v1/files/{id}`
+
+Scope `files`. Removes the row, then the object, its thumbnail and any
+multipart upload still in flight. Answers `{"deleted": true}`.
+
+## `GET /api/v1/attachments?proposition=`
+
+Scope `read`. What hangs off the cards of one proposition, which is what the
+board draws on the cards themselves.
+
+```json
+{"links": [{"card_id": 7, "link_id": 12}],
+ "files": [{"card_id": 7, "file_id": 8}]}
+```
+
+## `POST DELETE /api/v1/cards/{card}/links/{id}`
+
+Scope `write`. Attaches a link to a card, or takes it off again. The card and
+the link have to be on the same proposition; anything else is `404`. Attaching
+twice leaves one attachment.
+
+```json
+{"card": 7, "action": "attach"}
+```
+
+## `POST DELETE /api/v1/cards/{card}/files/{id}`
+
+Scope `write`. The same for a file.
+
+## `GET /api/v1/me/notifications`
+
+Scope `read`. The channels the token's owner has, every event they can be told
+about, and which channels are ticked for each one. No secret is in it: a
+Pushover user key and a webhook secret are reported as set, an ntfy token as
+`token_set`, and a channel's label carries the last four characters of a key,
+which is what tells two of them apart and nothing else.
+
+```json
+{"channels": [
+  {"id": 2, "kind": "ntfy", "label": "ntfy.sh/ada-theses", "verified": true,
+   "quiet_from": "23:00", "quiet_to": "07:00", "digest": false,
+   "server": "https://ntfy.sh", "topic": "ada-theses", "token_set": true}],
+ "events": [{"key": "assigned", "label": "Assigned to a card"},
+            {"key": "mentioned",
+             "label": "Mentioned in a note, a description or a document"}],
+ "rules": {"mentioned": [2]}}
+```
+
+## `PUT /api/v1/me/notifications`
+
+Scope `write`. The body carries `channels`, `rules`, or both, and replaces what
+it carries. Channels are a whole list, so one this account has that the list
+leaves out is deleted. A secret left out keeps the stored one and an empty
+string clears it. A channel arrives unverified and stays silent until a test
+reaches it, and one edited to point somewhere else is unverified again.
+
+```
+PUT /api/v1/me/notifications
+{"channels": [{"kind": "ntfy", "topic": "ada-theses", "token": "tk_...",
+               "quiet_from": "23:00", "quiet_to": "07:00", "digest": false}],
+ "rules": {"mentioned": [2]}}
+```
+
+A channel that cannot work, quiet hours that are not two times of day, and an
+event key the matrix does not hold are `400`. An `id` this account does not own
+is `404`. The answer is what `GET` reports.
+
+Quiet hours hold a message until they end, and a channel set to `digest` holds
+everything until the digest time set on `/settings`. Being named is the
+exception: a mention arrives at once, on the first channel that was going to
+get it at all.
+
+## `POST /api/v1/me/notifications/test`
+
+Scope `write`. The body is JSON with a `channel`. Sends one message to it now,
+outside the outbox, and marks it verified if it arrives. A channel belonging to
+somebody else, or to the workspace, is `404`. A destination that refused is
+`502`, with what it said.
+
+```json
+{"sent": true, "channel": 2}
+```
+
 ## `GET /api/v1/settings`
 
 Scope `admin`. Every known setting, its definition and its current value.
@@ -202,11 +599,32 @@ one endpoint serves every tool.
 | `list_users` | `read` | Lists everyone in the workspace. |
 | `get_settings` | `admin` | Lists the workspace settings, with secrets reported as set rather than returned. |
 | `set_setting` | `admin` | Changes one workspace setting. |
+| `list_documents` | `read` | Lists the documents of one proposition and how many blocks each holds. |
+| `read_document` | `read` | Reads one document as markdown, with each block's id and version. |
+| `create_document` | `write` | Creates a document in a proposition and returns its id. |
+| `append_block` | `write` | Adds a paragraph at the end of a document. |
+| `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
+| `replace_block` | `write` | Replaces the text of one block. |
+| `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
+| `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
+| `list_files` | `read` | Lists the files uploaded to one proposition, with their folder, size and state. |
+| `get_download_url` | `read` | Returns a download link for one file that works for a few minutes. |
+| `attach_to_card` | `write` | Attaches a link or a file to a card on the same proposition, or detaches it. |
 
 Every tool returns structured output against a schema the tool list carries, and
-is annotated with whether it only reads: the four read tools are read only and
-`set_setting` is marked destructive and idempotent, since it replaces a value
-that was there.
+is annotated with what calling it does. The nine read tools are read only.
+`set_setting` and `replace_block` are destructive and idempotent, since each
+replaces what was there. `create_document`, `append_block`,
+`insert_after_heading` and `add_link` are neither, because calling one twice
+makes two of the thing, and `add_link` also reads a page on the open web.
+`attach_to_card` is idempotent without being destructive: attaching twice
+leaves the one attachment.
+
+`replace_block` takes the `base_version` that `read_document` reported and
+merges in what somebody else wrote since; left out, it reads the block and
+writes over whatever it holds. A merge that cannot be made is a tool error
+carrying the version the block is now at and the text it holds, so the next
+call is that text with yours worked into it.
 
 Resource `theses://workspace` describes the workspace: its name, time zone, how
 many people and propositions it holds, and what this endpoint can do.
