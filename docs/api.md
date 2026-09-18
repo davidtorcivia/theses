@@ -996,5 +996,5 @@ belongs to, with `mcp:<client>` in the log's `via` field.
 
 ## What is not here
 
-Adding a file from Drive and publishing to Transistor are browser routes only;
-they join this document with the board's own resources.
+Adding a file from Drive and publishing to Transistor are browser routes only.
+Neither has an API or MCP surface yet.

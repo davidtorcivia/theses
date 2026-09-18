@@ -17,6 +17,12 @@ import (
 // recording in Drive that will not fit.
 const maxImport = 5 << 30
 
+// ErrImportSize is a file too large to come in this way, or one with nothing
+// in it. It is a sentinel rather than a sentence so that a caller mapping
+// errors to statuses answers it as a refusal instead of a fault, which is what
+// ErrBadSize does for the browser's own uploads.
+var ErrImportSize = fmt.Errorf("a file imported this way has to be between 1 byte and %d GB", int64(maxImport)>>30)
+
 // Import is the one place the app receives file bytes. Everything else goes
 // browser to bucket over a presigned URL; a file that lives in somebody else's
 // service cannot, because the browser has no credentials for it, so the bytes
@@ -35,7 +41,7 @@ const maxImport = 5 << 30
 func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
 	name, folder string, size int64, body io.Reader) (File, error) {
 	if size <= 0 || size > maxImport {
-		return File{}, fmt.Errorf("a file imported this way has to be between 1 byte and %d GB", int64(maxImport)>>30)
+		return File{}, ErrImportSize
 	}
 	row, bucket, err := s.record(ctx, a, proposition, name, folder, size, 0)
 	if err != nil {

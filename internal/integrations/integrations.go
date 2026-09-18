@@ -60,6 +60,13 @@ var ErrNotConnected = errors.New("that integration is not connected yet; a works
 // pressing Connect again, not a retry.
 var ErrReconnect = errors.New("the connection to that service has expired; a workspace owner has to connect it again")
 
+// ErrProvider marks a refusal that came from the other end rather than from a
+// fault on this side: a status outside 2xx, or a file this cannot copy. The
+// message beside it is worth showing, and none of it means the server broke,
+// so a caller mapping errors to statuses answers it as a refusal rather than
+// logging it and returning a 500.
+var ErrProvider = errors.New("that service refused it")
+
 // maxImport is the largest object an import may stream. It is the S3 limit on
 // a single PutObject, which is what the import writes with.
 //
@@ -102,9 +109,9 @@ func failure(name string, resp *http.Response) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	if said := reason(body); said != "" {
-		return fmt.Errorf("%s said %s: %s", name, resp.Status, said)
+		return fmt.Errorf("%w: %s said %s: %s", ErrProvider, name, resp.Status, said)
 	}
-	return fmt.Errorf("%s said %s", name, resp.Status)
+	return fmt.Errorf("%w: %s said %s", ErrProvider, name, resp.Status)
 }
 
 // reason digs the message out of the two error shapes these two APIs use:

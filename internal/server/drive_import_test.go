@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +14,11 @@ import (
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
+	"github.com/davidtorcivia/theses/internal/integrations"
+	"github.com/davidtorcivia/theses/internal/store"
 )
 
 // driveFake is Drive as the import path uses it: a metadata read and a
@@ -287,5 +292,79 @@ func TestDriveRoutesCheckStandingBeforeAskingDrive(t *testing.T) {
 		`{"proposition":`+strconv.FormatInt(live, 10)+`,"file":"f1","folder":"Recordings"}`)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a member importing gave %d: %s", res.StatusCode, body)
+	}
+}
+
+// Every refusal these two routes can give, and the one answer they give to
+// something that is not a refusal at all.
+func TestDriveRefusalStatuses(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		says   string
+	}{
+		{"a proposition that is not there", core.ErrNotFound, http.StatusNotFound, "that is not there"},
+		{"a role that may not edit", core.ErrForbidden, http.StatusNotFound, "that is not there"},
+		{"an archived proposition", board.ErrArchived, http.StatusConflict, "restore it first"},
+		{"an integration nobody connected", integrations.ErrNotConnected, http.StatusConflict, "not connected yet"},
+		{"a connection that has to be made again", integrations.ErrReconnect, http.StatusConflict, "connect it again"},
+		{"what Drive said no to", fmt.Errorf("%w: that file is empty", integrations.ErrProvider),
+			http.StatusUnprocessableEntity, "that file is empty"},
+		{"a file too big to import", files.ErrImportSize, http.StatusUnprocessableEntity, "1 byte"},
+		{"a folder that is not one of ours", files.ErrKind, http.StatusUnprocessableEntity, "not one of the kinds"},
+		{"storage nobody has set up", files.ErrNoBucket, http.StatusServiceUnavailable, "not set up yet"},
+		// Anything with no meaning of its own is a fault here, and a fault
+		// says nothing to whoever asked.
+		{"a statement that would not run", errors.New("database is locked"),
+			http.StatusInternalServerError, "something went wrong here"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/app/drive/import", nil)
+			h.srv.refuseJSON(rec, req, c.err)
+			if rec.Code != c.status {
+				t.Fatalf("gave %d, want %d: %s", rec.Code, c.status, rec.Body)
+			}
+			if !strings.Contains(rec.Body.String(), c.says) {
+				t.Fatalf("said %s, want %q in it", rec.Body, c.says)
+			}
+			if c.status == http.StatusInternalServerError {
+				if strings.Contains(rec.Body.String(), "database is locked") {
+					t.Fatal("the fault's own words reached the browser")
+				}
+				if !strings.Contains(h.log.String(), "database is locked") {
+					t.Fatal("the fault was not logged")
+				}
+			}
+		})
+	}
+}
+
+// A secret that will not decrypt is the shape of fault the default is for: the
+// row is there, the key that seals it is not the one it was sealed with, and
+// nothing about that is the caller's to hear.
+func TestDriveListAnswersAFaultWithNothing(t *testing.T) {
+	h, _, _ := connectedDrive(t, map[string]string{})
+	ctx := context.Background()
+	if err := store.PutSetting(ctx, h.db, "integrations.drive.token",
+		"bm90IHNlYWxlZCBieSBhbnlib2R5", true, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.srv.settings.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, body := h.get("/app/drive")
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("a token that will not decrypt gave %d: %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "something went wrong here") || strings.Contains(body, "THESES_SECRET_KEY") {
+		t.Fatalf("the answer said %s", body)
+	}
+	if !strings.Contains(h.log.String(), "drive request failed") {
+		t.Fatal("the fault was not logged")
 	}
 }

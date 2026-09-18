@@ -85,7 +85,10 @@ func (d *Drive) Configure(s Settings) error {
 	d.token = Token{}
 	if raw := s["token"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &d.token); err != nil {
-			return fmt.Errorf("the stored Drive token cannot be read; connect Drive again")
+			// The row is there and will not parse, which is the same dead end
+			// as a refresh token Google has stopped honouring and has the same
+			// answer: connect it again.
+			return fmt.Errorf("%w: the stored Drive token cannot be read", ErrReconnect)
 		}
 	}
 	if d.HTTP == nil {
@@ -353,15 +356,17 @@ func (d *Drive) Stat(ctx context.Context, id string) (DriveFile, error) {
 	}
 	f := DriveFile{ID: answer.ID, Name: answer.Name, Mime: answer.Mime, Folder: answer.Mime == folderMime}
 	f.Size, _ = strconv.ParseInt(answer.Size, 10, 64)
+	// All four are facts about what Drive holds rather than faults here, so
+	// they carry ErrProvider and a caller answers them as refusals.
 	switch {
 	case f.Folder:
-		return DriveFile{}, fmt.Errorf("that is a folder, not a file")
+		return DriveFile{}, fmt.Errorf("%w: that is a folder, not a file", ErrProvider)
 	case strings.HasPrefix(f.Mime, nativePrefix):
-		return DriveFile{}, fmt.Errorf("a Google Docs, Sheets or Slides file has no file to copy; export it to the format you want first")
+		return DriveFile{}, fmt.Errorf("%w: a Google Docs, Sheets or Slides file has no file to copy; export it to the format you want first", ErrProvider)
 	case f.Size <= 0:
-		return DriveFile{}, fmt.Errorf("that file is empty")
+		return DriveFile{}, fmt.Errorf("%w: that file is empty", ErrProvider)
 	case f.Size > maxImport:
-		return DriveFile{}, fmt.Errorf("that file is larger than the %d GB this can import in one piece", int64(maxImport)>>30)
+		return DriveFile{}, fmt.Errorf("%w: that file is larger than the %d GB this can import in one piece", ErrProvider, int64(maxImport)>>30)
 	}
 	return f, nil
 }

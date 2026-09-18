@@ -59,18 +59,20 @@ func (s *Server) refuseJSON(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, integrations.ErrNotConnected), errors.Is(err, integrations.ErrReconnect):
 		s.refusal(w, r, http.StatusConflict, err)
 	case errors.Is(err, files.ErrKind), errors.Is(err, files.ErrBadSize),
-		errors.Is(err, files.ErrState), errors.Is(err, files.ErrSize),
-		errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong):
+		errors.Is(err, files.ErrImportSize), errors.Is(err, files.ErrState),
+		errors.Is(err, files.ErrSize), errors.Is(err, board.ErrEmpty),
+		errors.Is(err, board.ErrTooLong), errors.Is(err, integrations.ErrProvider):
 		s.refusal(w, r, http.StatusUnprocessableEntity, err)
 	case errors.Is(err, files.ErrNoBucket):
 		s.refusal(w, r, http.StatusServiceUnavailable, err)
 	default:
-		// Whatever is left is Drive's answer or the bucket's rather than a
-		// refusal this app chose, so it is worth a line in the log. It still
-		// goes back as 422: it is a plain sentence about a file, and a 500
-		// would say the server broke when Drive only said no.
-		s.log.Warn("drive request refused", "path", r.URL.Path, "err", err)
-		s.refusal(w, r, http.StatusUnprocessableEntity, err)
+		// Nothing above it, so it is a fault here rather than a refusal
+		// anybody chose: a statement that would not run, a secret that will
+		// not decrypt, a bucket that broke. It goes in the log and comes back
+		// saying nothing, the same as every other route under /app.
+		s.log.Error("drive request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+		s.writeJSON(w, http.StatusInternalServerError,
+			map[string]string{"error": "something went wrong here"})
 	}
 }
 
