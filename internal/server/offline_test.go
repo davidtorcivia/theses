@@ -9,6 +9,7 @@ import (
 	"testing/fstest"
 
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/settings"
 )
 
 func TestServiceWorkerIsServedFromTheRootWithTheAssetHash(t *testing.T) {
@@ -92,12 +93,8 @@ func TestTheWorkerVersionMovesWithTheAssets(t *testing.T) {
 	if one.version() == two.version() {
 		t.Errorf("two different trees are served under %q", one.version())
 	}
-	names, err := one.names()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) != 1 || names[0] != "app.css" {
-		t.Errorf("the precache list is %v", names)
+	if len(one.names) != 1 || one.names[0] != "app.css" {
+		t.Errorf("the precache list is %v", one.names)
 	}
 }
 
@@ -124,9 +121,14 @@ func TestOfflineShellCarriesNoSessionAtAll(t *testing.T) {
 		t.Fatalf("/shell gave %d", res.StatusCode)
 	}
 	// The service worker keeps a copy of this page and hands it to whoever
-	// navigates with no network, including the next person at this machine. It
-	// has to say nothing about the person who fetched it.
-	for _, leak := range []string{"Ada", "ada@example.com", "AL"} {
+	// navigates with no network, including the next person at this machine and
+	// anyone who simply asks for the URL. It has to say nothing about the person
+	// who fetched it, and nothing about the workspace either.
+	name := settings.Get[string](h.srv.settings, "workspace.name")
+	if name == "" {
+		t.Fatal("the workspace has no name to leak, so this test proves nothing")
+	}
+	for _, leak := range []string{"Ada", "ada@example.com", "AL", name} {
 		if strings.Contains(body, leak) {
 			t.Errorf("the cached shell names %q", leak)
 		}

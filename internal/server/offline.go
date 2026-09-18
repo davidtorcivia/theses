@@ -12,7 +12,6 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
-	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -31,12 +30,7 @@ func (s *Server) serviceWorker(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, fmt.Errorf("read %s: %w", swName, err))
 		return
 	}
-	names, err := s.assets.names()
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	list, err := json.Marshal(names)
+	list, err := json.Marshal(s.assets.names)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -58,17 +52,18 @@ func (a *assets) version() string {
 	return strings.Trim(strings.TrimPrefix(a.prefix, "/static/"), "/")
 }
 
-// names is every asset there is to precache, relative to the hashed prefix. The
-// worker itself is left out: it is served from the root and is not fetched
-// through that prefix.
+// assetNames is every asset there is to precache, relative to the hashed
+// prefix. The worker itself is left out: it is served from the root and is not
+// fetched through that prefix. It is walked once, at startup, because the tree
+// it walks is embedded and cannot change under a running process.
 //
 // ponytail: this is the whole tree, the error pages' artwork included, which is
 // about a megabyte and a half fetched once per deploy. A list of what the app
 // and the offline page actually need would save most of it, at the cost of a
 // list that goes stale the first time somebody adds a module.
-func (a *assets) names() ([]string, error) {
+func assetNames(fsys fs.FS) ([]string, error) {
 	out := []string{}
-	err := fs.WalkDir(a.fsys, ".", func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -84,15 +79,15 @@ func (a *assets) names() ([]string, error) {
 }
 
 // offlineShell is the app with nothing of anybody's in it: no payload, no CSRF
-// token, no account. The service worker keeps a copy and hands it to a
-// navigation the network refused, and the page fills itself from the snapshot
-// in IndexedDB. Nothing here is worth a session, which is the point: a cached
-// page that carried one would still be readable after a sign out.
+// token, no account, and not even the name of the workspace. The service worker
+// keeps a copy and hands it to a navigation the network refused, and the page
+// fills itself, the name in the top bar included, from the snapshot in
+// IndexedDB. Nothing here is worth a session, which is the point: this page is
+// served to anyone who asks for it, signed in or not.
 func (s *Server) offlineShell(w http.ResponseWriter, r *http.Request) {
-	name := settings.Get[string](s.settings, "workspace.name")
 	s.render(w, r, http.StatusOK, "shell.html", map[string]any{
-		"Title":     name,
-		"Workspace": name,
+		"Title":     "",
+		"Workspace": "",
 		"CSRF":      "",
 		"User":      &store.User{},
 		"Payload":   template.JS("null"),

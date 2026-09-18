@@ -22,6 +22,10 @@ const PAGES = ['/offline', '/shell'];
 // stand-in for and says so.
 const APP = /^\/(p\/\d+)?$/;
 
+// Every way out of the workspace. The profile page's "sign out everywhere" is
+// the one the app actually offers; /logout is the plain one the routes carry.
+const SIGNOUT = new Set(['/logout', '/profile/signout-everywhere', '/profile/delete']);
+
 // THESES_DEV serves every asset under one unchanging path with no-store on it,
 // so a worker holding a copy would serve yesterday's module through today's
 // edit. In development this one stands aside entirely.
@@ -52,9 +56,10 @@ self.addEventListener('fetch', (e) => {
 
   // Signing out takes this device's copy of the workspace with it, because the
   // next person at this machine would otherwise read the board with no session
-  // at all. The cache is left alone: every byte in it is the app itself, the
-  // same for everybody, and none of it names anyone.
-  if (req.method === 'POST' && url.pathname === '/logout') {
+  // at all. Both ways out are named: the one the profile page offers and the
+  // one an ordinary sign out would use. The cache is left alone: every byte in
+  // it is the app itself, the same for everybody, and none of it names anyone.
+  if (req.method === 'POST' && SIGNOUT.has(url.pathname)) {
     e.waitUntil(forget());
     return;
   }
@@ -101,13 +106,22 @@ async function navigate(req, url) {
 }
 
 // forget drops the cached proposition, the outbox and the uploads waiting to
-// start. Everything anybody wrote is in there.
+// start. Everything anybody wrote is in there, so the delete is waited on: a
+// sign out that answers before the database is gone has not signed anybody out
+// of what this machine is holding.
 function forget() {
-  try {
-    indexedDB.deleteDatabase('theses-offline');
-  } catch {
-    // A page still holding the database blocks the delete. Every store in it is
-    // written over on the next sign in either way.
-  }
-  return Promise.resolve();
+  return new Promise((resolve) => {
+    let req;
+    try {
+      req = indexedDB.deleteDatabase('theses-offline');
+    } catch {
+      resolve();
+      return;
+    }
+    req.onsuccess = resolve;
+    req.onerror = resolve;
+    // A tab still holding the database blocks the delete. It goes the moment
+    // that tab navigates, which a sign out is about to make it do.
+    req.onblocked = resolve;
+  });
 }

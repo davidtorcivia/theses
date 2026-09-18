@@ -49,7 +49,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. |
 | `GET /offline` | What the service worker serves for a navigation the network refused that the shell cannot stand in for. |
 | `GET /sw.js` | The service worker, from the root so its scope is the whole site. The URL never moves; the bytes carry the asset hash, so a deploy installs a new worker and the old cache goes with it. |
-| `GET /shell` | The app with an empty payload, no account and no CSRF token. The worker keeps a copy and hands it to an offline navigation to `/` or `/p/{id}`; the page draws itself from the snapshot in IndexedDB. |
+| `GET /shell` | The app with an empty payload, no account, no CSRF token and not even the workspace name. Anyone may fetch it. The worker keeps a copy and hands it to an offline navigation to `/` or `/p/{id}`; the page draws itself, the top bar included, from the snapshot in IndexedDB. |
 | `GET /app/activity?proposition={id}` | The activity panel's read: the newest rows of one proposition, newest first, each saying whether it has been undone and whether an undo would be refused out of hand. Session and membership, like the rest of `/app`. |
 | `GET /healthz` | Always 200. |
 | `GET /readyz` | Runs the readiness checks: the database, the object store, and the age of the newest backup. |
@@ -77,6 +77,15 @@ IndexedDB outbox with the version and the text they started from, and replayed
 in order over the websocket on reconnect. The server's three-way merge is what
 settles a set that went stale meanwhile; a replay it refuses appears in the
 activity panel with keep mine and take theirs, the same choice a live conflict
-offers. Signing out deletes that database, because the next person at the
-machine has no session and should find nothing of the workspace; the cache
-survives, since every byte in it is the app itself and names nobody.
+offers. A replay the server refuses for a reason of its own, being busy or
+being broken, is retried rather than recorded as a decision, and the queue goes
+up at a pace the socket's own limit allows.
+
+What this device holds goes when the session does, because the next person at
+the machine has no session and should find nothing of the workspace. Two things
+see to it: the worker deletes the database on the sign-out request itself, and
+the page deletes it and returns to the sign-in page the moment the server
+answers a request with no session behind it, which is what an expired or
+revoked one looks like. Every queued command carries the account that made it,
+so work left by one person is never sent as another. The cache survives both,
+since every byte in it is the app itself and names nobody.
