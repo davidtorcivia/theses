@@ -99,11 +99,6 @@ func UpdateProfile(ctx context.Context, q Querier, id int64, handle, name, initi
 	return err
 }
 
-func SetUserRole(ctx context.Context, q Querier, id int64, role string) error {
-	_, err := q.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, id)
-	return err
-}
-
 // SetUserRoleKeepingAnOwner changes a role but never leaves the workspace
 // without an owner, and reports whether it did. The count and the write are one
 // statement, so two owners demoting each other at the same moment cannot both
@@ -162,11 +157,6 @@ func BumpSessionEpoch(ctx context.Context, q Querier, id int64) error {
 
 func TouchUser(ctx context.Context, q Querier, id int64) error {
 	_, err := q.ExecContext(ctx, `UPDATE users SET last_seen_at = unixepoch() WHERE id = ?`, id)
-	return err
-}
-
-func DeleteUser(ctx context.Context, q Querier, id int64) error {
-	_, err := q.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
 	return err
 }
 

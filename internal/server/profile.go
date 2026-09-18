@@ -36,7 +36,7 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
 		return
 	}
-	if min := settings.Get[int](s.settings, "signin.handle_min_length"); len(handle) < min {
+	if min := s.handleMinLength(); len(handle) < min {
 		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": errShort(min).Error()})
 		return
 	}

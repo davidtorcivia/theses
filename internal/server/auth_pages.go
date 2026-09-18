@@ -39,6 +39,20 @@ func swatches(selected string) map[string]any {
 	return map[string]any{"Colours": Palette, "Selected": selected}
 }
 
+// handleMinLength clamps as well as reads, for the same reason as sessionDays:
+// a row written before the registry bounded the key would otherwise ask for an
+// account name nobody can type.
+func (s *Server) handleMinLength() int {
+	n := settings.Get[int](s.settings, "signin.handle_min_length")
+	if n < 2 {
+		return 2
+	}
+	if n > 32 {
+		return 32
+	}
+	return n
+}
+
 // sessionDays clamps as well as reads. The registry bounds what can be saved,
 // but a row written before that bound existed would otherwise build an expiry
 // that overflows and signs everyone out for good.
@@ -232,7 +246,7 @@ func (s *Server) accountFromForm(r *http.Request) (map[string]string, *pending, 
 		return form, nil, err
 	}
 	form["handle"] = handle
-	if min := settings.Get[int](s.settings, "signin.handle_min_length"); len(handle) < min {
+	if min := s.handleMinLength(); len(handle) < min {
 		return form, nil, errShort(min)
 	}
 	if form["name"] == "" {
