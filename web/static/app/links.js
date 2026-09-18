@@ -280,12 +280,15 @@ function sendToDoc(link) {
     const blocks = doc.blocks || [];
     const text = link.citation || link.title || link.url;
     try {
-      await send('block.insert', {
+      const went = await send('block.insert', {
         document: doc.id,
         after: blocks.length ? blocks[blocks.length - 1].id : 0,
         text,
       });
-      say('Sent to ' + doc.name + '.');
+      // A command that was kept rather than sent has arrived nowhere yet, and
+      // saying it has would be the app telling a story.
+      say(went ? 'Sent to ' + doc.name + '.'
+        : 'Kept on this device. It goes into ' + doc.name + ' when the connection is back.');
     } catch (err) {
       say(err.message);
     }
