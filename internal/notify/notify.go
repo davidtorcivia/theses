@@ -102,12 +102,11 @@ func New(db *store.DB, set *settings.Settings, log *slog.Logger, baseURL string)
 func (s *Service) Watch(ctx context.Context, bus *core.Bus) {
 	sub := bus.Subscribe(0)
 	defer sub.Close()
+	dropped := int64(0)
 	for {
 		select {
 		case <-ctx.Done():
-			if n := sub.Dropped(); n > 0 {
-				s.log.Warn("notifications missed events", "dropped", n)
-			}
+			s.missed(sub, &dropped)
 			return
 		case e, ok := <-sub.C:
 			if !ok {
@@ -116,8 +115,23 @@ func (s *Service) Watch(ctx context.Context, bus *core.Bus) {
 			if err := s.Handle(ctx, e); err != nil && ctx.Err() == nil {
 				s.log.Error("notify", "entity", e.Entity, "action", e.Action, "err", err)
 			}
+			s.missed(sub, &dropped)
 		}
 	}
+}
+
+// missed says so when the bus has thrown events away since the last look.
+//
+// The bus never blocks, so an emitter faster than this loop loses events rather
+// than waiting for it. Read only at shutdown, that is a gap nobody sees until
+// somebody asks why a notification never arrived.
+func (s *Service) missed(sub *core.Subscription, seen *int64) {
+	n := sub.Dropped()
+	if n <= *seen {
+		return
+	}
+	s.log.Warn("notifications missed events", "dropped", n-*seen, "total", n)
+	*seen = n
 }
 
 // Handle matches one event and queues whatever it produces.
