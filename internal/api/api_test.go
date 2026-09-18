@@ -14,6 +14,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -26,6 +27,8 @@ type harness struct {
 	set     *settings.Settings
 	handler http.Handler
 	user    *store.User
+	board   *board.Service
+	docs    *docs.Service
 }
 
 func newHarness(t *testing.T) *harness {
@@ -48,8 +51,14 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := New(db, a, set, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), user: user}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	api := New(db, a, set, log)
+	b := board.New(core.New(db, core.NewBus()), func() board.Defaults {
+		return board.Defaults{Status: "idea", Columns: []string{"Research"}}
+	})
+	api.Docs = docs.New(b.Service, "", func() string { return "" }, log)
+	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), user: user,
+		board: b, docs: api.Docs}
 }
 
 // token returns a clear API token with the given scopes.

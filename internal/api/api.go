@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -23,6 +24,9 @@ type API struct {
 	auth *auth.Auth
 	set  *settings.Settings
 	log  *slog.Logger
+	// Docs is the document service, set by the server after New because the
+	// documents arrived a wave after this package did.
+	Docs *docs.Service
 }
 
 func New(db *store.DB, a *auth.Auth, set *settings.Settings, log *slog.Logger) *API {
@@ -199,6 +203,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/activity", a.scoped(auth.ScopeRead, a.activity))
 	mux.HandleFunc("GET /api/v1/settings", a.scoped(auth.ScopeAdmin, a.getSettings))
 	mux.HandleFunc("PUT /api/v1/settings/{key}", a.scoped(auth.ScopeAdmin, a.putSetting))
+	a.documentRoutes(mux)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})
