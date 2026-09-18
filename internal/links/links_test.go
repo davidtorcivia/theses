@@ -102,10 +102,66 @@ func TestExtract(t *testing.T) {
 				t.Errorf("Published = %v, want %v", got.Published, tt.want.Published)
 			}
 			got.Published, tt.want.Published = time.Time{}, time.Time{}
+			if got.Text == "" {
+				t.Error("Text is empty; a page with a title has readable text")
+			}
+			// The readable text is a whole page, and it has a table of its own.
+			got.Text = ""
 			if got != tt.want {
 				t.Errorf("Extract =\n%+v\nwant\n%+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The readable text is stored for search and nothing else, so what matters is
+// that the words are there, the markup is not, and a page of scripts does not
+// fill the index with code.
+func TestReadable(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, want string
+	}{
+		{
+			name: "tags come off and whitespace collapses",
+			body: "<p>Twice   a day\n\tthe water</p><p>climbs.</p>",
+			want: "Twice a day the water climbs.",
+		},
+		{
+			name: "a script is not reading",
+			body: `<p>Hello</p><script>var secret = "token";</script><p>there</p>`,
+			want: "Hello there",
+		},
+		{
+			name: "a stylesheet is not reading either",
+			body: "<style>body{color:red}</style><p>Hello</p>",
+			want: "Hello",
+		},
+		{
+			name: "an entity comes back as its character",
+			body: "<p>Tides &amp; currents</p>",
+			want: "Tides & currents",
+		},
+		{
+			name: "nothing to read",
+			body: "<html><head><style>p{}</style></head><body></body></html>",
+			want: "",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := readable([]byte(tt.body)); got != tt.want {
+				t.Fatalf("readable() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A page far larger than the cap contributes the cap and stops, rather than
+// putting a megabyte of text in a row nobody reads.
+func TestReadableStopsAtTheCap(t *testing.T) {
+	body := "<p>" + strings.Repeat("water ", maxText) + "</p>"
+	got := readable([]byte(body))
+	if len(got) < maxText || len(got) > maxText+64 {
+		t.Fatalf("readable() is %d bytes, want about %d", len(got), maxText)
 	}
 }
 

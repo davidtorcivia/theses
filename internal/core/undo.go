@@ -43,6 +43,13 @@ var undoable = map[string]undoSpec{
 	"checklist_item": {table: "checklist_items", scope: "card_id", cols: []string{"text", "done", "position"}},
 	"document":       {table: "documents", scope: "proposition_id", cols: []string{"name", "slug", "position"}},
 	"block":          {table: "blocks", scope: "document_id", cols: []string{"position", "text", "deleted_at"}, versioned: true, tombstone: true},
+	// A link's fields are all a person's, so all of them go back. A file's are
+	// the two that do not describe the object in the bucket: putting back a
+	// size, a key or a state would say something about the bucket that is not
+	// true, and naming none of them is also what makes a completed upload not
+	// undoable, because nothing it changed is on this list.
+	"link": {table: "links", cols: []string{"title", "author", "year", "kind", "note_md", "question"}},
+	"file": {table: "files", cols: []string{"name", "folder"}},
 }
 
 // Undo puts back the before of one activity row and marks the row undone. The
