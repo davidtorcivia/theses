@@ -17,10 +17,11 @@ list with the reasoning beside each one.
 
 Generate both keys with `openssl rand -hex 32`. Startup refuses a weak one.
 
-`THESES_DEV`, `THESES_LOG_LEVEL`, `THESES_BIND_HOST`, `THESES_PORT`, `TZ` and
-`THESES_VERSION` are optional. `/settings` lists the variables the binary
-reads, read-only under Environment, with a line each on why it cannot be
-edited there.
+`THESES_DEV` and `THESES_LOG_LEVEL` are optional and read by the binary.
+`THESES_BIND_HOST`, `THESES_PORT`, `TZ` and `THESES_VERSION` are read by
+`docker-compose.yml` and by nothing else. `/settings` lists the variables the
+binary reads, read-only under Environment, with a line each on why it cannot
+be edited there.
 
 ## Compose
 

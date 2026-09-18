@@ -24,7 +24,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `GET POST /profile/authenticator` | Scan and confirm it. |
 | `POST /profile/signout-everywhere` | Bump the session epoch; every browser is signed out. |
 | `POST /profile/delete` | Delete the account. The last owner cannot. |
-| `GET /settings` | Owner only: Workspace, Defaults, Storage, Mail, Sign-in, Team, Environment. |
+| `GET /settings` | Owner only. See [settings.md](settings.md). |
 | `POST /settings` | Save every known key the form carried. |
 | `POST /settings/test/storage` | Write, read and delete a probe object in the chosen bucket. |
 | `POST /settings/test/mail` | Send a test message to the signed-in owner through the configured SMTP. |
@@ -36,7 +36,6 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /settings/tokens` | Create an API token. It is shown once. |
 | `POST /settings/tokens/{id}/revoke` | Revoke one. |
 | `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. |
-| `GET /api/events?proposition={id}&since={seq}` | The same stream by long poll, for a network that cannot hold a socket. |
 | `GET /offline` | What the service worker will serve when the server is unreachable. |
 | `GET /healthz` | Always 200. |
 | `GET /readyz` | Runs the readiness checks: the database, the object store, and the age of the newest backup. |

@@ -4,7 +4,7 @@ A workspace per proposition: a board on top, shared markdown documents underneat
 
 ## Status
 
-Pre-alpha. Under active development; parts of this document describe what is being built.
+Pre-alpha. Under active development; parts of this document and the docs it links describe what is being built.
 
 ## How it works
 

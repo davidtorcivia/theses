@@ -115,6 +115,28 @@ MCP client that carried it will be added to these rows. `before` and `after` are
 the JSON of the entity before and after the change, and are absent when there
 was none.
 
+## `GET /api/v1/propositions/{id}/events?since=&wait=`
+
+Scope `read`. The websocket stream as a long poll, for anything that cannot
+hold a socket. It answers with the commands applied to that proposition after
+`since`, which is the sequence number of the last event you were given, `0` or
+absent from the beginning. With events already waiting it answers at once.
+With none it holds the request open until one arrives or a bound passes,
+whichever comes first, and then answers, empty if nothing came. `wait=0`
+answers immediately either way.
+
+```json
+{"events": [
+  {"seq": 481, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
+   "command": "card.move", "entity": "card", "entity_id": "77",
+   "after": {"column_id": 3, "position": "a0m"}, "created_at": 1758067200}
+]}
+```
+
+Ask again with the highest `seq` you were given. The same events reach the
+websocket, in the same order, so a client can move between the two without
+missing one.
+
 ## `GET /api/v1/settings`
 
 Scope `admin`. Every known setting, its definition and its current value.
