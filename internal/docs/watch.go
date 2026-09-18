@@ -254,7 +254,7 @@ func (s *Service) Import(ctx context.Context, path string) error {
 	if !ours {
 		return nil
 	}
-	content, err := os.ReadFile(path)
+	content, err := readMirror(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

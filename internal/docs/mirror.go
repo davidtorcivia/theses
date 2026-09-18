@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // ErrOutside is a mirror path that would land somewhere other than under the
@@ -151,7 +154,7 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 		return nil
 	}
 	if !force {
-		if current, err := os.ReadFile(path); err == nil && (!known || hashOf(current) != was.hash) {
+		if current, err := readMirror(path); err == nil && (!known || hashOf(current) != was.hash) {
 			return nil
 		}
 	}
@@ -200,9 +203,62 @@ func stillThere(conflicted map[int64]bool, blocks []Block) map[int64]bool {
 	return out
 }
 
+// inUseWait is how long a file operation waits for whatever else has the file
+// to let go. An editor saving the document, a sync client or an indexer holds
+// it for a moment; a second is long enough to outlast that and short enough
+// that the goroutine doing this, which also drains the event bus, is never held
+// up for anything a person would notice.
+const inUseWait = time.Second
+
+// sharingViolation is what Windows answers when a file is open elsewhere. It is
+// named here rather than kept behind a build tag because no file operation on
+// any other platform returns it, so the test below is false everywhere else.
+const sharingViolation = syscall.Errno(32)
+
+// inUse reports whether an operation was refused because something else has the
+// file open. Windows will not let a rename replace a file another handle holds,
+// and will not open one that is in the middle of being replaced. Neither is a
+// reason to give up: the handle goes in a moment.
+func inUse(err error) bool {
+	if errors.Is(err, fs.ErrPermission) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && errno == sharingViolation
+}
+
+// waitOut runs a file operation again for as long as something else has the
+// file. Anything else it fails with comes straight back, so a path that is
+// wrong or a directory that cannot be written is one attempt, not a second of
+// them.
+func waitOut(op func() error) error {
+	deadline := time.Now().Add(inUseWait)
+	for delay := time.Millisecond; ; delay *= 2 {
+		err := op()
+		if err == nil || !inUse(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(delay)
+	}
+}
+
+// readMirror reads a file the mirror owns. A read given up on because an editor
+// still had the file open is a hand edit that is never read back at all:
+// nothing further happens to the file, so no later event asks again.
+func readMirror(path string) ([]byte, error) {
+	var content []byte
+	err := waitOut(func() error {
+		var err error
+		content, err = os.ReadFile(path)
+		return err
+	})
+	return content, err
+}
+
 // writeAtomic writes through a temporary file in the same directory and renames
 // it over the target, so a reader never sees half a document and a crash never
-// leaves one.
+// leaves one. The rename waits out anything holding the file it replaces,
+// because a write given up on is a change the document on disk never gets.
 func writeAtomic(path string, content []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
@@ -217,7 +273,7 @@ func writeAtomic(path string, content []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, path)
+	return waitOut(func() error { return os.Rename(name, path) })
 }
 
 // forgetOthers drops the mirror files this document used to be written to,
