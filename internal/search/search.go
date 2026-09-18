@@ -169,6 +169,6 @@ func ftsQuery(s string) string {
 // likePattern wraps the query in wildcards for the tables searched by name, with
 // LIKE's own three special characters escaped so that they match themselves.
 func likePattern(s string) string {
-	r := strings.NewReplacer(`\`, `\`, `%`, `\%`, `_`, `\_`)
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return "%" + r.Replace(strings.TrimSpace(s)) + "%"
 }

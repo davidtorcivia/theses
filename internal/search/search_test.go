@@ -29,8 +29,33 @@ func TestFTSQuery(t *testing.T) {
 }
 
 func TestLikePatternEscapes(t *testing.T) {
-	if got := likePattern(`100% of _it_`); got != `%100\% of \_it\_%` {
-		t.Errorf("likePattern = %q", got)
+	cases := []struct{ in, want string }{
+		{`100% of _it_`, `%100\% of \_it\_%`},
+		{`a\b`, `%a\\b%`},
+		{`trailing\`, `%trailing\\%`},
+	}
+	for _, c := range cases {
+		if got := likePattern(c.in); got != c.want {
+			t.Errorf("likePattern(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// A backslash in the query is a backslash to match, not an escape that eats the
+// character after it or dangles at the end of the pattern.
+func TestSearchMatchesABackslash(t *testing.T) {
+	db := store.OpenTemp(t)
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO users
+		(id, handle, email, name, initials, colour, role, password_hash, created_at)
+		VALUES (1, 'dos', 'dos@example.com', 'C:\ Drive', 'CD', '#fff', 'guest', 'x', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := Search(context.Background(), db, `C:\ Dri`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].Kind != KindUser {
+		t.Fatalf("groups = %v", kinds(groups))
 	}
 }
 
