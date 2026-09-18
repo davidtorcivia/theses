@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -137,5 +138,69 @@ func mustExec(t *testing.T, db *DB, q string, args ...any) {
 	t.Helper()
 	if _, err := db.ExecContext(context.Background(), q, args...); err != nil {
 		t.Fatalf("%s: %v", q, err)
+	}
+}
+
+func TestSwapReplacesTheFileAndKeepsTheOldOne(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(filepath.Join(dir, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `INSERT INTO settings (key, value_json, updated_at)
+		VALUES ('workspace.name', '"before"', 0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The file swapped in is a second database, as a restored archive would be.
+	restored := filepath.Join(dir, "restored.db")
+	other, err := Open(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ExecContext(ctx, `INSERT INTO settings (key, value_json, updated_at)
+		VALUES ('workspace.name', '"after"', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	other.Close()
+
+	aside := filepath.Join(dir, "app.db.aside")
+	if err := db.Swap(ctx, restored, aside); err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+	var name string
+	if err := db.QueryRowContext(ctx, `SELECT value_json FROM settings WHERE key = 'workspace.name'`).Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != `"after"` {
+		t.Errorf("the pool still reads the old file: %s", name)
+	}
+	if _, err := os.Stat(aside); err != nil {
+		t.Errorf("the old database was not kept: %v", err)
+	}
+}
+
+func TestSwapPutsTheOldFileBackWhenTheNewOneWillNotOpen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	junk := filepath.Join(dir, "junk.db")
+	if err := os.WriteFile(junk, []byte("not a database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Swap(ctx, junk, filepath.Join(dir, "app.db.aside")); err == nil {
+		t.Fatal("a file that is not a database was swapped in")
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
+		t.Fatalf("the original database is not back: %v", err)
 	}
 }
