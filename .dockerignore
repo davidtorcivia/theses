@@ -1,0 +1,12 @@
+.git
+.github
+.env
+data
+docs
+*.md
+!README.md
+theses
+theses.exe
+*.db
+*.db-wal
+*.db-shm

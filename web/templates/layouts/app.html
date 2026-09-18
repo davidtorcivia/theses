@@ -1,0 +1,18 @@
+{{define "layout"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} · THESES</title>
+<link rel="icon" href="{{asset "icon.svg"}}">
+<link rel="stylesheet" href="{{asset "app.css"}}">
+</head><body class="dirB">
+<header id="top">
+  <button id="railtoggle" aria-label="Propositions">≡</button>
+  <a class="brand" href="/">THESES</a><span class="show">{{.Workspace}}</span>
+  <button class="search" type="button"><span>Search, jump, do…</span><kbd>⌘K</kbd></button>
+  <div class="presence"></div>
+  <a class="acct" href="/profile">{{template "initials" .User}}<span>{{firstName .User.Name}}</span></a>
+</header>
+<aside id="rail"></aside>
+{{template "content" .}}
+<script src="{{asset "app.js"}}" defer></script>
+</body></html>
+{{end}}

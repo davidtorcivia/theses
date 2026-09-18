@@ -1,0 +1,21 @@
+{{define "content"}}<div class="split">
+  {{template "art" .ArtFrames}}
+  <div class="panel">
+    <div class="top"><span class="brand">THESES</span><span class="sm dim">{{.Workspace}}</span></div>
+    <form class="mid" method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <div class="who">{{if .Invitation.InviterInitials}}<span class="u {{colour .Invitation.InviterColour}}">{{.Invitation.InviterInitials}}</span>{{end}}<span class="sm dim">{{.Invitation.InviterName}} invited you as {{.Invitation.Role}}</span></div>
+      <h1>Join {{.Workspace}}.</h1>
+      {{template "notice" .}}
+      <label class="f"><span class="l sm">Account name</span><input name="handle" value="{{.Form.handle}}" spellcheck="false" autocomplete="username" autofocus required></label>
+      <div class="row3">
+        <label class="f"><span class="l sm">Name</span><input name="name" value="{{.Form.name}}" autocomplete="name" required></label>
+        <label class="f"><span class="l sm">Initials</span><input name="initials" value="{{.Form.initials}}" maxlength="2" required></label>
+      </div>
+      <div class="f"><span class="l sm">Colour</span>{{template "swatches" .Swatches}}</div>
+      <label class="f"><span class="l sm">Password</span><input type="password" name="password" placeholder="At least twelve characters" autocomplete="new-password" required></label>
+      <button class="btn" type="submit" data-busy="Joining">Join</button>
+    </form>
+    <div class="bot"></div>
+  </div>
+</div>{{end}}

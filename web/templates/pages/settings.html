@@ -1,0 +1,176 @@
+{{define "content"}}<section id="admin">
+  <nav>
+    <a href="#workspace">Workspace</a><a href="#defaults">Defaults</a><a href="#storage">Storage</a>
+    <a href="#mail">Mail</a><a href="#signin">Sign-in</a><a href="#team">Team</a><a href="#environment">Environment</a>
+    <a href="/" class="back">← Back to work</a>
+  </nav>
+  <div class="apane">
+    <h2>Settings</h2>
+    {{template "notice" .}}
+
+    <form class="form" method="post" action="/settings" id="workspace">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Workspace</h3><p>The show these propositions belong to, and when an episode is due.</p></div>
+        <div class="fsb">
+          <div class="row3">
+            <label class="f"><span class="l">Name</span><input name="workspace.name" value="{{index .S "workspace.name"}}"></label>
+            <label class="f"><span class="l">Episode numbering starts at</span><input name="workspace.episode_start" value="{{index .S "workspace.episode_start"}}"></label>
+            <label class="f"><span class="l">Release day</span><select name="workspace.release_day">{{range .Days}}<option{{if eq . (index $.S "workspace.release_day")}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+          </div>
+          <div class="row3">
+            <label class="f"><span class="l">Release time</span><input name="workspace.release_time" value="{{index .S "workspace.release_time"}}"><small>24 hour, in the workspace time zone.</small></label>
+            <label class="f"><span class="l">Time zone</span><input name="workspace.timezone" value="{{index .S "workspace.timezone"}}"><small>An IANA name, for example America/New_York.</small></label>
+          </div>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/settings" id="defaults">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Defaults</h3><p>What a new proposition starts with. Existing boards and documents keep their own.</p></div>
+        <div class="fsb">
+          <label class="f"><span class="l">Board columns</span><textarea name="defaults.columns" rows="6" spellcheck="false">{{index .S "defaults.columns"}}</textarea><small>One per line, in order.</small></label>
+          <label class="f"><span class="l">Statuses</span><textarea name="defaults.statuses" rows="5" spellcheck="false">{{index .S "defaults.statuses"}}</textarea><small>These are the rail groups and the filter.</small></label>
+          <label class="f"><span class="l">Question labels</span><textarea name="defaults.question_labels" rows="4" spellcheck="false">{{index .S "defaults.question_labels"}}</textarea><small>The four questions a card can be tagged with, I to IV.</small></label>
+          <label class="f"><span class="l">Document template</span><textarea name="defaults.document_template" rows="9" spellcheck="false" class="mono-ta">{{index .S "defaults.document_template"}}</textarea></label>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+
+    <form class="form" method="post" action="/settings" id="storage">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Storage</h3><p>Where files and recordings live. Changing a bucket does not move what is already in the old one. The bucket needs a CORS rule allowing PUT, GET and HEAD from this origin, because the browser talks to it directly.</p></div>
+        <div class="fsb">
+          {{template "bucket" .Primary}}
+          <h3 class="sub">Recordings</h3>
+          <p class="small dim">Leave the bucket empty to keep recordings in the primary bucket.</p>
+          {{template "bucket" .Recordings}}
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+    <form class="form" method="post" action="/settings/test/storage">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="lnk" type="submit">Test connection</button>
+    </form>
+
+    <form class="form" method="post" action="/settings" id="mail">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Mail</h3><p>Invitations, password resets and notifications go out through this server. Sending is queued, so a hiccup never fails a request.</p></div>
+        <div class="fsb">
+          <div class="row3">
+            <label class="f"><span class="l">SMTP host</span><input name="mail.host" value="{{index .S "mail.host"}}" spellcheck="false"></label>
+            <label class="f"><span class="l">Port</span><input name="mail.port" value="{{index .S "mail.port"}}"></label>
+            <label class="f"><span class="l">TLS</span><select name="mail.tls">{{range .TLSModes}}<option{{if eq . (index $.S "mail.tls")}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+          </div>
+          <div class="row3">
+            <label class="f"><span class="l">Username</span><input name="mail.user" value="{{index .S "mail.user"}}" spellcheck="false" autocomplete="off"></label>
+            <label class="f"><span class="l">Password</span><input type="password" name="mail.password" placeholder="{{if index .Set "mail.password"}}set, leave empty to keep{{end}}" autocomplete="new-password"></label>
+            <label class="f"><span class="l">From address</span><input name="mail.from" value="{{index .S "mail.from"}}" spellcheck="false"></label>
+          </div>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+    <form class="form" method="post" action="/settings/test/mail">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="lnk" type="submit">Send a test message</button>
+    </form>
+
+    <form class="form" method="post" action="/settings" id="signin">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Sign-in</h3><p>Account name, password and an authenticator code, in one form. There is no other way in.</p></div>
+        <div class="fsb">
+          <div class="row3">
+            <label class="f"><span class="l">Require an authenticator</span><select name="signin.require_totp"><option value="all"{{if eq (index .S "signin.require_totp") "all"}} selected{{end}}>Everyone</option><option value="owners"{{if eq (index .S "signin.require_totp") "owners"}} selected{{end}}>Owners only</option></select><small>Owners are always required to enrol.</small></label>
+            <label class="f"><span class="l">Session length</span><input name="signin.session_days" value="{{index .S "signin.session_days"}}"><small>Days a sign-in lasts.</small></label>
+            <label class="f"><span class="l">Shortest account name</span><input name="signin.handle_min_length" value="{{index .S "signin.handle_min_length"}}"><small>Lowercase letters, digits and hyphens, up to 32.</small></label>
+          </div>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+
+    <section class="fs" id="team">
+      <div class="fsh"><h3>Team</h3><p>Owners change roles and settings. Editors do everything else. Researchers cannot delete. Guests read.</p></div>
+      <div class="fsb">
+        <table class="team"><thead><tr><th>Person</th><th>Email</th><th>Role</th><th>Last seen</th></tr></thead><tbody>
+          {{range .Members}}<tr>
+            <td>{{template "initials" .}}<span>{{.Name}}</span></td>
+            <td class="mono">{{.Email}}</td>
+            <td><form method="post" action="/settings/team/role">
+              <input type="hidden" name="csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="user" value="{{.ID}}">
+              <select name="role"{{if .Self}} disabled{{end}}>{{range .RoleOptions}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+              {{if not .Self}}<button class="lnk" type="submit">Save</button>{{end}}
+            </form></td>
+            <td class="mono">{{.LastSeen}}</td>
+          </tr>{{end}}
+        </tbody></table>
+
+        <form class="invite" method="post" action="/settings/team/invite">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <input type="email" name="email" placeholder="Invite by email" spellcheck="false" required>
+          <select name="role">{{range .InviteRoles}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
+          <button class="lnk" type="submit">Send invite</button>
+        </form>
+
+        <h3 class="sub">Pending invitations</h3>
+        {{if .NewInvite}}<p class="notice">Send this to them now; it is not shown again. <span class="mono">{{.NewInvite}}</span></p>{{end}}
+        <ul class="pending">
+          {{range .Invitations}}<li>
+            <span>{{.Email}}</span>
+            <span class="mono">{{.Role}} · {{.Sent}}{{if .InviterName}} by {{.InviterName}}{{end}}</span>
+            <form method="post" action="/settings/team/invite/{{.ID}}/resend"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="lnk" type="submit">Resend</button></form>
+            <form method="post" action="/settings/team/invite/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="lnk del" type="submit">Revoke</button></form>
+          </li>{{else}}<li><span class="mono dim">None outstanding.</span></li>{{end}}
+        </ul>
+
+        <h3 class="sub">API tokens</h3>
+        <p class="small dim">A token carries the permissions of the account that made it. It is shown once.</p>
+        {{if .NewToken}}<p class="notice">Copy this now; it is not shown again. <span class="mono">{{.NewToken}}</span></p>{{end}}
+        <ul class="pending">
+          {{range .Tokens}}<li>
+            <span>{{.Name}}</span>
+            <span class="mono">{{.Scopes}} · created {{.Created}} · {{.Used}}</span>
+            <form method="post" action="/settings/tokens/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="lnk del" type="submit">Revoke</button></form>
+          </li>{{else}}<li><span class="mono dim">None.</span></li>{{end}}
+        </ul>
+        <form class="invite" method="post" action="/settings/tokens">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <input name="name" placeholder="What is it for" required>
+          <select name="scopes"><option value="read">read</option><option value="read write">read and write</option><option value="read write files">read, write and files</option><option value="read write files admin">everything</option></select>
+          <button class="lnk" type="submit">Create a token</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="fs last" id="environment">
+      <div class="fsh"><h3>Environment</h3><p>The bootstrap variables. They are read once at startup and cannot be edited here.</p></div>
+      <div class="fsb">
+        <ul class="env">
+          {{range .Env}}<li><span class="mono">{{.Name}}</span><span>{{.Value}}<small>{{.Why}}</small></span></li>{{end}}
+        </ul>
+      </div>
+    </section>
+  </div>
+</section>{{end}}
+
+{{define "bucket"}}<div class="row3">
+  <label class="f"><span class="l">Provider</span><select name="{{.Prefix}}.provider">{{range .Providers}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+  <label class="f"><span class="l">Endpoint</span><input name="{{.Prefix}}.endpoint" value="{{.Endpoint}}" spellcheck="false"></label>
+  <label class="f"><span class="l">Region</span><input name="{{.Prefix}}.region" value="{{.Region}}" spellcheck="false"></label>
+</div>
+<div class="row3">
+  <label class="f"><span class="l">Bucket</span><input name="{{.Prefix}}.bucket" value="{{.Bucket}}" spellcheck="false"></label>
+  <label class="f"><span class="l">Access key</span><input type="password" name="{{.Prefix}}.access_key" placeholder="{{if .AccessSet}}set, leave empty to keep{{end}}" autocomplete="off"></label>
+  <label class="f"><span class="l">Secret key</span><input type="password" name="{{.Prefix}}.secret_key" placeholder="{{if .SecretSet}}set, leave empty to keep{{end}}" autocomplete="off"></label>
+</div>
+<label class="f"><span class="l">Public base URL</span><input name="{{.Prefix}}.public_base_url" value="{{.PublicBaseURL}}" spellcheck="false"><small>Optional, for a CDN in front of the bucket.</small></label>{{end}}
