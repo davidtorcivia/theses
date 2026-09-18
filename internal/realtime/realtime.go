@@ -19,6 +19,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -43,6 +44,9 @@ type Hub struct {
 	board *board.Service
 	auth  *auth.Auth
 	log   *slog.Logger
+	// Docs is the document service, set by the server after New because the
+	// document commands arrived a wave after the board's.
+	Docs *docs.Service
 
 	mu    sync.Mutex
 	rooms map[int64]map[*client]struct{}
@@ -104,6 +108,8 @@ type args struct {
 	Question    string  `json:"question"`
 	Done        bool    `json:"done"`
 	Where       string  `json:"where"`
+	Document    int64   `json:"document"`
+	Block       int64   `json:"block"`
 }
 
 type client struct {

@@ -18,6 +18,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -42,6 +43,8 @@ func newRig(t *testing.T) *rig {
 		return board.Defaults{Status: "idea", Columns: []string{"Research", "Outline"}}
 	})
 	hub := New(boards, a, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	hub.Docs = docs.New(boards.Service, "", func() string { return "" },
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	r := &rig{T: t, hub: hub, boards: boards, db: db,
 		users: map[string]*store.User{}, cookie: map[string]string{}}

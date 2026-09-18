@@ -6,6 +6,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 )
 
 // commands is the whole client surface. Every one of them is a board command
@@ -122,13 +123,19 @@ func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 		h.announce(c.proposition)
 		return
 	}
-	run, ok := commands[cmd.Cmd]
-	if !ok {
-		c.send(message{Type: "error", ID: cmd.ID, Error: "there is no such command"})
-		return
-	}
 	actor := core.Actor{Kind: core.KindUser, ID: c.user.ID, Name: c.user.Name}
-	e, err := run(ctx, h.board, actor, cmd.Args)
+	run := h.docsCommand(cmd.Cmd)
+	if run == nil {
+		board, ok := commands[cmd.Cmd]
+		if !ok {
+			c.send(message{Type: "error", ID: cmd.ID, Error: "there is no such command"})
+			return
+		}
+		run = func(ctx context.Context, a core.Actor, v args) (core.Event, error) {
+			return board(ctx, h.board, a, v)
+		}
+	}
+	e, err := run(ctx, actor, cmd.Args)
 	var conflict *core.ConflictError
 	switch {
 	case errors.As(err, &conflict):
@@ -151,7 +158,8 @@ func reason(err error) string {
 		return "that is no longer there"
 	case errors.Is(err, core.ErrNotUndoable), errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty),
-		errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong):
+		errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong),
+		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrTooManyDocuments):
 		return err.Error()
 	default:
 		return "that did not go through"
