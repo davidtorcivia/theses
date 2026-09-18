@@ -195,7 +195,11 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 		"MailProblem": mailProblem,
 		"Backups":     s.backupSection(r, shown, isSet),
 	}
-	return s.page(r, "Settings", merge(data, extra)), nil
+	notifications, err := s.notifySettings(r)
+	if err != nil {
+		return nil, err
+	}
+	return s.page(r, "Settings", merge(merge(data, notifications), extra)), nil
 }
 
 // backupSection is the Backups row. The listing is a request to the bucket, so

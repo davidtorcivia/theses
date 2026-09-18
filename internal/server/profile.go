@@ -11,9 +11,14 @@ import (
 
 func (s *Server) renderProfile(w http.ResponseWriter, r *http.Request, status int, extra map[string]any) {
 	u := userOf(r)
-	s.render(w, r, status, "profile.html", s.page(r, "Profile", merge(map[string]any{
+	notifications, err := s.notifyProfile(r)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.render(w, r, status, "profile.html", s.page(r, "Profile", merge(merge(map[string]any{
 		"Swatches": swatches(u.Colour),
-	}, extra)))
+	}, notifications), extra)))
 }
 
 func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {

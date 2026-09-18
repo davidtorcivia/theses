@@ -10,6 +10,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/mail"
+	"github.com/davidtorcivia/theses/internal/notify"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -406,6 +407,13 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := store.CreateUser(r.Context(), tx, u)
 	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// The account starts with its own address as a channel and the events the
+	// owner chose, so that being mentioned reaches somebody from the first day
+	// rather than from the first visit to the profile page.
+	if err := notify.StartingChannels(r.Context(), tx, s.settings, id); err != nil {
 		s.fail(w, r, err)
 		return
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
+	"github.com/davidtorcivia/theses/internal/notify"
 	"github.com/davidtorcivia/theses/internal/realtime"
 	"github.com/davidtorcivia/theses/internal/safehttp"
 	"github.com/davidtorcivia/theses/internal/settings"
@@ -68,6 +69,8 @@ type Server struct {
 
 	files *files.Service
 	blobs *buckets
+
+	notify *notify.Service
 }
 
 func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Logger, version string) (*Server, error) {
@@ -146,6 +149,10 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	}
 	s.hasUsers.Store(n > 0)
 
+	// The notifier watches the bus every command publishes on and fills its own
+	// outbox; main runs its worker and stops it with the process.
+	s.notify = notify.New(db, set, log, cfg.BaseURL)
+
 	s.handler = s.chain(s.routes())
 	return s, nil
 }
@@ -159,6 +166,14 @@ func (s *Server) Backups() *backup.Backup { return s.backups }
 // Docs is the document service. main runs its markdown mirror and watcher and
 // stops them with the process.
 func (s *Server) Docs() *docs.Service { return s.docs }
+
+// Notify is the notifier. main runs its worker and its watcher over the bus the
+// board publishes on, and stops both with the process.
+func (s *Server) Notify() *notify.Service { return s.notify }
+
+// Bus is what the notifier watches: the one bus every applied command is
+// published on.
+func (s *Server) Bus() *core.Bus { return s.board.Bus }
 
 // AddCheck registers a readiness probe. Call it before the server starts serving.
 func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
@@ -240,6 +255,15 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /settings/team/invite/{id}/revoke", s.requireOwner(s.postInviteRevoke))
 	mux.HandleFunc("POST /settings/tokens", s.requireOwner(s.postTokenCreate))
 	mux.HandleFunc("POST /settings/tokens/{id}/revoke", s.requireOwner(s.postTokenRevoke))
+
+	mux.HandleFunc("POST /profile/notifications", s.requireUser(s.postNotificationRules))
+	mux.HandleFunc("POST /profile/notifications/channel", s.requireUser(s.postChannel))
+	mux.HandleFunc("POST /profile/notifications/channel/{id}/test", s.requireUser(s.postChannelTest))
+	mux.HandleFunc("POST /profile/notifications/channel/{id}/delete", s.requireUser(s.postChannelDelete))
+	mux.HandleFunc("POST /settings/notifications/defaults", s.requireOwner(s.postNotifyDefaults))
+	mux.HandleFunc("POST /settings/integrations/webhook", s.requireOwner(s.postWorkspaceWebhook))
+	mux.HandleFunc("POST /settings/integrations/webhook/{id}/test", s.requireOwner(s.postWorkspaceWebhookTest))
+	mux.HandleFunc("POST /settings/integrations/webhook/{id}/delete", s.requireOwner(s.postWorkspaceWebhookDelete))
 
 	// Anything unclaimed is the 404 page rather than Go's plain text one.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

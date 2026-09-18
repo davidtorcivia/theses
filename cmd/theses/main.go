@@ -104,6 +104,19 @@ func run() error {
 		srv.SweepUploads(ctx)
 	}()
 
+	// The notifier is two goroutines: one filling the outbox from the bus every
+	// applied command is published on, one emptying it. Both stop with ctx.
+	notifyDone := make(chan struct{})
+	go func() {
+		defer close(notifyDone)
+		srv.Notify().Watch(ctx, srv.Bus())
+	}()
+	notifySendDone := make(chan struct{})
+	go func() {
+		defer close(notifySendDone)
+		srv.Notify().Run(ctx)
+	}()
+
 	httpSrv := &http.Server{
 		Addr:    cfg.Bind,
 		Handler: srv,
@@ -140,6 +153,8 @@ func run() error {
 		<-backupDone
 		<-docsDone
 		<-sweepDone
+		<-notifyDone
+		<-notifySendDone
 		return <-done
 	}
 }
