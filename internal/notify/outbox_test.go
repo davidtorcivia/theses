@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/notify/channel"
 )
 
@@ -181,6 +182,53 @@ func TestMailThatIsNotConfiguredCostsNoAttempt(t *testing.T) {
 	}
 	if attempts != 0 {
 		t.Errorf("attempts = %d, want 0: the day of retries has not started", attempts)
+	}
+}
+
+// A batch is twenty rows. Undeliverable email at the head of the queue must not
+// be able to hold everything behind it.
+func TestUnsendableMailDoesNotBlockTheQueue(t *testing.T) {
+	f := newFixture(t)
+	grace := f.user(t, "grace")
+	post := f.channel(t, Channel{UserID: grace, Kind: KindEmail}, "moved")
+	hook := f.channel(t, Channel{UserID: grace, Kind: KindWebhook,
+		Config: Config{URL: "https://example.com/hook"}}, "moved")
+	f.onCard(t, 7, grace)
+
+	// More email rows than one batch holds, all due, all older than the webhook.
+	for range batchSize + 5 {
+		if _, err := f.db.ExecContext(context.Background(), `INSERT INTO notification_outbox
+			(channel_id, payload_json, created_at, next_at, event)
+			VALUES (?, '{"event":"moved","title":"t","items":[{"text":"x"}]}', ?, ?, 'moved')`,
+			post.ID, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.db.ExecContext(context.Background(), `INSERT INTO notification_outbox
+		(channel_id, payload_json, created_at, next_at, event)
+		VALUES (?, '{"event":"moved","title":"t","items":[{"text":"x"}]}', ?, ?, 'moved')`,
+		hook.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mail is not configured, so every email row stops at the sender. The
+	// webhook behind them still goes out.
+	calls := fakeSender(t, func(int) error { return nil })
+	was := send
+	send = func(ctx context.Context, s *Service, c Channel, email string, n channel.Note) error {
+		if c.Kind == KindEmail {
+			return mail.ErrNotConfigured
+		}
+		return was(ctx, s, c, email, n)
+	}
+
+	for range 3 {
+		if err := f.s.once(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(*calls) != 1 || (*calls)[0].channel != hook.ID {
+		t.Fatalf("delivered %+v, want the one webhook message", *calls)
 	}
 }
 

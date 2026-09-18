@@ -126,8 +126,16 @@ func (s *Service) once(ctx context.Context) error {
 		}
 		// Mail that has not been configured yet is not a failed attempt: the
 		// row waits, with its day of retries still ahead of it, exactly as a
-		// queued invitation does.
+		// queued invitation does. It is pushed past the next poll rather than
+		// left due, because a batch is twenty rows and every account has an
+		// email channel: twenty of these sitting at the head of the queue would
+		// otherwise stop everything behind them from ever going out.
 		if errors.Is(err, mail.ErrNotConfigured) {
+			if _, err := s.db.ExecContext(ctx,
+				`UPDATE notification_outbox SET next_at = ? WHERE id = ?`,
+				time.Now().Add(pollEvery).Unix(), q.id); err != nil {
+				return err
+			}
 			continue
 		}
 		next := time.Now().Add(backoff(q.attempts + 1)).Unix()
