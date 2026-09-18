@@ -4,7 +4,7 @@
 // propositions this tab already holds and the handful of things the palette
 // does are listed from here, so it is never empty and never waits.
 
-import { $, $$, el, clear, num, say } from './dom.js';
+import { $, $$, el, clear, num } from './dom.js';
 import { state, emit, material } from './state.js';
 import { openCard } from './drawer.js';
 import { openLink } from './links.js';
@@ -88,7 +88,7 @@ function remote(hit) {
   // finding nothing and putting itself away again, so it waits for them.
   else if (hit.kind === 'link') row.go = () => pane('links', () => openLink(hit.id));
   else if (hit.kind === 'file') row.go = () => pane('files', () => openFile(hit.id));
-  else if (hit.kind === 'block') row.go = () => openBlock(hit.id);
+  else if (hit.kind === 'block') row.go = () => openBlock(hit.id, hit.proposition_id);
   // A comment's card is not in the hit, so the board is as close as this gets.
   else row.go = () => { closePalette(); location.hash = ''; };
   return row;
@@ -103,10 +103,12 @@ function pane(tab, open) {
 // openBlock opens the document holding a block and puts it on the screen. The
 // payload carries every document of this proposition with its blocks, so which
 // one it is in is already here.
-function openBlock(id) {
+function openBlock(id, proposition) {
   const doc = state.documents.find((d) => (d.blocks || []).some((b) => b.id === id));
   closePalette();
-  if (!doc) return;
+  // A block this tab has no document for is one the page was rendered before,
+  // so the proposition is loaded again rather than the palette doing nothing.
+  if (!doc) { location.href = '/p/' + proposition; return; }
   state.document = doc.id;
   state.docSource = false;
   state.tab = 'board';
@@ -164,10 +166,10 @@ function search(query) {
     try {
       const answer = await api.get(`/search?q=${encodeURIComponent(query)}&limit=${perKind}`);
       groups = answer.groups || [];
-    } catch (err) {
+    } catch {
       // Offline, or a session that has ended. The local rows are still there,
-      // and a line on every key press would be the app shouting.
-      if (err.status === 401) say(err.message);
+      // a session that ended is already on its way to the sign in page, and a
+      // line on every key press would be the app shouting.
     }
     if (mine !== asked || $('#palette').hidden) return;
     list(query, groups);
