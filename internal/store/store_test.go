@@ -83,9 +83,9 @@ func TestFTSTriggers(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
 
-	mustExec(t, db, `INSERT INTO propositions (id, number, title, status, position, created_at) VALUES (1, 1, 'Debt', 'idea', 1, 0)`)
-	mustExec(t, db, `INSERT INTO columns (id, proposition_id, name, position) VALUES (1, 1, 'Research', 1)`)
-	mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, description_md, created_at) VALUES (1, 1, 1, 1, 'Mortgage servicers', 'who forecloses', 0)`)
+	mustExec(t, db, `INSERT INTO propositions (id, number, title, status, position, created_at) VALUES (1, 1, 'Debt', 'idea', 'V', 0)`)
+	mustExec(t, db, `INSERT INTO columns (id, proposition_id, name, position) VALUES (1, 1, 'Research', 'V')`)
+	mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, description_md, created_at) VALUES (1, 1, 1, 'V', 'Mortgage servicers', 'who forecloses', 0)`)
 
 	count := func(q string) int {
 		t.Helper()
@@ -113,11 +113,11 @@ func TestFTSTriggers(t *testing.T) {
 	}
 
 	// The other four indexes exist and index their own tables.
-	mustExec(t, db, `INSERT INTO documents (id, proposition_id, name, slug, position, created_at) VALUES (1, 1, 'Research', 'research', 1, 0)`)
+	mustExec(t, db, `INSERT INTO documents (id, proposition_id, name, slug, position, created_at) VALUES (1, 1, 'Research', 'research', 1.0, 0)`)
 	mustExec(t, db, `INSERT INTO blocks (id, document_id, position, text, updated_at) VALUES (1, 1, 'a0', 'five consequential facts', 0)`)
 	mustExec(t, db, `INSERT INTO links (id, proposition_id, url, title, created_at) VALUES (1, 1, 'https://example.com', 'Foreclosure machine', 0)`)
 	mustExec(t, db, `INSERT INTO files (id, proposition_id, name, object_key, state, created_at) VALUES (1, 1, 'interview.wav', '1-debt/1/interview.wav', 'ready', 0)`)
-	mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, created_at) VALUES (2, 1, 1, 2, 'Outline', 0)`)
+	mustExec(t, db, `INSERT INTO cards (id, proposition_id, column_id, position, title, created_at) VALUES (2, 1, 1, 'W', 'Outline', 0)`)
 	mustExec(t, db, `INSERT INTO comments (id, card_id, body_md, created_at) VALUES (1, 2, 'needs a street question', 0)`)
 
 	for _, c := range []struct{ table, match string }{
@@ -323,7 +323,8 @@ func TestSidecarsMoveWithTheirDatabaseAndAreRemovedWithIt(t *testing.T) {
 
 // Ordering keys are base-62 strings, and a column with REAL affinity would turn
 // the ones that spell a number into floats and leave the rest as text, which
-// would put "2" above "1A" instead of below it.
+// would put "2" above "1A" instead of below it, so the ordered board columns
+// are declared TEXT.
 func TestOrderingKeysStayText(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)
