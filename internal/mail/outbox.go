@@ -32,9 +32,11 @@ const expired = "the link it carries expired before it could be sent"
 // sendable is the part of the WHERE clause that says a row is still worth
 // trying. It takes now and the give up cutoff, in that order.
 //
-// The day is counted from the first attempt rather than from the enqueue, so a
-// message queued while the workspace had no SMTP server still goes out when one
-// is finally configured, however long that took.
+// A row that has never been tried is always claimable, so a message queued
+// while the workspace had no SMTP server still goes out once one is configured,
+// however long that took. Once a row has been tried, the day runs from its
+// enqueue, which means a long wait for a server leaves it few attempts; retry
+// now restarts the clock for those.
 const sendable = `(expires_at IS NULL OR expires_at > ?) AND (attempts = 0 OR created_at > ?)`
 
 // Enqueue writes one row per recipient through q, which may be a transaction,
