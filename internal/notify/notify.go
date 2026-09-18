@@ -92,7 +92,7 @@ func New(db *store.DB, set *settings.Settings, log *slog.Logger, baseURL string)
 	}
 }
 
-// Watch fills the outbox from the bus until ctx is cancelled. Nothing here
+// Watch fills the outbox from the bus until ctx is canceled. Nothing here
 // talks to the network: it reads and writes the database and hands the sending
 // to the worker, so an unreachable ntfy server cannot back the bus up.
 //

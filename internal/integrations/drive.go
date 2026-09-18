@@ -60,7 +60,7 @@ type Drive struct {
 	// request from here on, and saying so once is better than that.
 	Save func(ctx context.Context, t Token) error
 
-	// mu covers the token, which a refresh replaces. Refreshes are serialised
+	// mu covers the token, which a refresh replaces. Refreshes are serialized
 	// rather than deduplicated: one process, and two requests arriving at the
 	// same expired token do the exchange one after the other, which Google
 	// allows on the same refresh token.
@@ -87,7 +87,7 @@ func (d *Drive) Configure(s Settings) error {
 	if raw := s["token"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &d.token); err != nil {
 			// The row is there and will not parse, which is the same dead end
-			// as a refresh token Google has stopped honouring and has the same
+			// as a refresh token Google has stopped honoring and has the same
 			// answer: connect it again. Why it will not parse is for whoever
 			// reads the log, not for the person being told to reconnect.
 			slog.Warn("the stored Drive token cannot be read", "err", err)

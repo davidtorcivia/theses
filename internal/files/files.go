@@ -392,7 +392,7 @@ func (s *Service) do(ctx context.Context, a core.Actor, proposition int64, need,
 }
 
 // propositionOf answers which proposition a row belongs to, which is what the
-// command is authorised against. Nothing ever moves a link or a file to another
+// command is authorized against. Nothing ever moves a link or a file to another
 // proposition, so reading it outside the transaction is safe.
 func (s *Service) propositionOf(ctx context.Context, query string, id int64) (int64, error) {
 	var proposition int64

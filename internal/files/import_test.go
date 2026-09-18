@@ -134,14 +134,14 @@ func TestImportLeavesNothingBehindWhenTheRequestIsCancelled(t *testing.T) {
 	_, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 64,
 		readerThatCancels(cancel, 64))
 	if err == nil {
-		t.Fatal("a cancelled copy was accepted")
+		t.Fatal("a canceled copy was accepted")
 	}
 	rows, err := f.ListFiles(context.Background(), f.who["owner"], f.prop)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 0 {
-		t.Fatalf("a cancelled import left %+v", rows)
+		t.Fatalf("a canceled import left %+v", rows)
 	}
 }
 
@@ -217,7 +217,7 @@ func TestCreateSignsTheTypeOfTheStoredName(t *testing.T) {
 		{"notes.md.", "notes.md", "text/markdown; charset=utf-8"},
 		{"notes.md ", "notes.md", "text/markdown; charset=utf-8"},
 		{"take one.wav", "take one.wav", "audio/wav"},
-		{"unlabelled", "unlabelled", "application/octet-stream"},
+		{"unlabeled", "unlabeled", "application/octet-stream"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -151,11 +151,11 @@ func (h *harness) setupOwner() (password, secret string) {
 	_, body := h.get("/setup/authenticator")
 	m := secretRe.FindStringSubmatch(body)
 	if m == nil {
-		h.Fatal("the enrolment page did not print the key")
+		h.Fatal("the enrollment page did not print the key")
 	}
 	secret = m[1]
 	if !strings.Contains(body, `<img class="qr" src="data:image/png;base64,`) {
-		h.Fatal("the enrolment page did not render the QR code as a data URI")
+		h.Fatal("the enrollment page did not render the QR code as a data URI")
 	}
 
 	code, err := totp.GenerateCode(secret, time.Now())
@@ -389,7 +389,7 @@ func TestInvitationAcceptCreatesAUser(t *testing.T) {
 		"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "code": {code},
 	})
 	if res.Header.Get("Location") != "/" {
-		t.Fatalf("enrolment gave %d %s", res.StatusCode, res.Header.Get("Location"))
+		t.Fatalf("enrollment gave %d %s", res.StatusCode, res.Header.Get("Location"))
 	}
 
 	u, err := store.UserByHandle(ctx, h.db, "mara")
@@ -617,14 +617,14 @@ func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
 
 	res, _ := h.post("/profile/totp", url.Values{"csrf": {h.csrf("/profile")}})
 	if res.Header.Get("Location") != "/profile/authenticator" {
-		t.Fatalf("re-enrol gave %d %s", res.StatusCode, res.Header.Get("Location"))
+		t.Fatalf("re-enroll gave %d %s", res.StatusCode, res.Header.Get("Location"))
 	}
 	_, body := h.get("/profile/authenticator")
 	secret := secretRe.FindStringSubmatch(body)[1]
 	token := csrfRe.FindStringSubmatch(body)[1]
 
 	// Someone else is now signed in on this browser, with the first person's
-	// enrolment cookie still there.
+	// enrollment cookie still there.
 	other := &store.User{Handle: "mara", Email: "mara@example.com", Name: "Mara Okafor",
 		Initials: "MO", Colour: Palette[2], Role: auth.RoleEditor, PasswordHash: "x"}
 	id, err := store.CreateUser(context.Background(), h.db, other)
@@ -642,7 +642,7 @@ func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
 	code, _ := totp.GenerateCode(secret, time.Now())
 	res, _ = h.post("/profile/authenticator", url.Values{"csrf": {token}, "code": {code}})
 	if res.StatusCode != http.StatusForbidden {
-		t.Errorf("a stale enrolment cookie gave %d, want 403", res.StatusCode)
+		t.Errorf("a stale enrollment cookie gave %d, want 403", res.StatusCode)
 	}
 	owner, err := store.UserByHandle(context.Background(), h.db, "ada")
 	if err != nil {
@@ -1035,7 +1035,7 @@ func inviteID(t *testing.T, h *harness) int64 {
 	return id
 }
 
-// replayPending puts an enrolment cookie back in the jar, which is what a
+// replayPending puts an enrollment cookie back in the jar, which is what a
 // resubmitted form or a copied cookie amounts to.
 func (h *harness) replayPending(t *testing.T, handle, secret, role string, invitation int64) {
 	t.Helper()

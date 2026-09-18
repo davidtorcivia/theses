@@ -98,7 +98,7 @@ func (s *Service) do(ctx context.Context, a core.Actor, proposition int64, need,
 
 // place returns the ordering key for a row that should sit directly after the
 // row `after` within a scope. after zero puts it at the head; exclude is the
-// row being moved, which must not be treated as its own neighbour.
+// row being moved, which must not be treated as its own neighbor.
 func place(ctx context.Context, tx *sql.Tx, table, scope string, scopeID, after, exclude int64) (string, error) {
 	where, args := "1 = 1", []any{}
 	if scope != "" {
@@ -139,7 +139,7 @@ func last(ctx context.Context, tx *sql.Tx, table, scope string, scopeID int64) (
 }
 
 // propositionOf answers which proposition an entity belongs to, which is what
-// the command is authorised against. It runs outside the transaction because
+// the command is authorized against. It runs outside the transaction because
 // nothing ever moves a card or a column to another proposition.
 func propositionOf(ctx context.Context, q store.Querier, query string, id int64) (int64, error) {
 	var proposition int64
@@ -203,7 +203,7 @@ func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title str
 		}
 		// The creator is a member, written here rather than by a second
 		// command because every later command on this proposition is
-		// authorised against the row, including the one that would add it.
+		// authorized against the row, including the one that would add it.
 		if a.Kind == core.KindUser && a.ID != 0 {
 			if err := addMember(ctx, tx, id, a.ID); err != nil {
 				return core.Change{}, err

@@ -542,7 +542,7 @@ func hugePNG(width, height uint32) []byte {
 	head := make([]byte, 13)
 	binary.BigEndian.PutUint32(head[0:], width)
 	binary.BigEndian.PutUint32(head[4:], height)
-	head[8], head[9] = 8, 6 // eight bits a channel, colour with alpha
+	head[8], head[9] = 8, 6 // eight bits a channel, color with alpha
 	chunk(&b, "IHDR", head)
 	chunk(&b, "IDAT", []byte{0})
 	chunk(&b, "IEND", nil)

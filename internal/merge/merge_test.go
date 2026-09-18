@@ -85,7 +85,7 @@ func TestMerge(t *testing.T) {
 			want: "Le thé est fermé",
 		},
 		{
-			name: "crlf normalised to lf",
+			name: "crlf normalized to lf",
 			base: "Alpha\r\nBeta\r\n", ours: "Alpha one\r\nBeta\r\n", theirs: "Alpha\r\nBeta two\r\n",
 			want: "Alpha one\nBeta two\n",
 		},

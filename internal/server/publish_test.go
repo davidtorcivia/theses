@@ -371,7 +371,7 @@ func TestPublishSectionIsHiddenUntilTransistorIsConnected(t *testing.T) {
 }
 
 // A publish that is under way when the browser goes away has to finish. The
-// episode exists at Transistor from the moment it answers, and a cancelled
+// episode exists at Transistor from the moment it answers, and a canceled
 // write of its id is a second episode on the next attempt.
 func TestPublishRecordsTheEpisodeWhenTheRequestGoesAway(t *testing.T) {
 	h, fake, id := publishable(t)
@@ -389,7 +389,7 @@ func TestPublishRecordsTheEpisodeWhenTheRequestGoesAway(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if _, err := h.client.Do(req); err == nil {
-		t.Fatal("the request was not cancelled")
+		t.Fatal("the request was not canceled")
 	}
 
 	// The handler runs on after the connection has gone, so the assertion

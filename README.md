@@ -24,7 +24,7 @@ Put the two keys in `.env` and set `THESES_BASE_URL` to the absolute public URL,
 docker compose up -d
 ```
 
-Open it. The first visit is `/setup`: it creates the owner account, enrols an authenticator and signs you in. Every other route redirects there until an owner exists.
+Open it. The first visit is `/setup`: it creates the owner account, enrolls an authenticator and signs you in. Every other route redirects there until an owner exists.
 
 ## Docs
 

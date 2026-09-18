@@ -690,7 +690,7 @@ func TestLongPollHoldsOpenAndMissesNothingInTheWindow(t *testing.T) {
 // A proposition somebody makes is a proposition they are on, so their other
 // open tab hears about it rather than waiting for a reload. The membership row
 // goes in with the proposition, not through a member command, because every
-// later command on it is authorised against that row.
+// later command on it is authorized against that row.
 func TestCreatorsOtherTabSeesTheNewProposition(t *testing.T) {
 	r := newRig(t)
 	one := r.mustDial("grace")

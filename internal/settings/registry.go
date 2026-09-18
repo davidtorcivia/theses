@@ -87,7 +87,7 @@ var Registry = []Def{
 	{Key: "mail.password", Kind: KindString, Default: "", Secret: true, Label: "Password"},
 	{Key: "mail.from", Kind: KindString, Default: "", Label: "From address"},
 
-	{Key: "signin.require_totp", Kind: KindChoice, Default: "all", Choices: []string{"all", "owners"}, Label: "Require an authenticator", Hint: "Owners are always required to enrol."},
+	{Key: "signin.require_totp", Kind: KindChoice, Default: "all", Choices: []string{"all", "owners"}, Label: "Require an authenticator", Hint: "Owners are always required to enroll."},
 	{Key: "signin.session_days", Kind: KindInt, Default: 30, Min: 1, Max: MaxSessionDays, Label: "Session length", Hint: "Days a sign-in lasts before it has to be repeated, 1 to 365."},
 	{Key: "signin.handle_min_length", Kind: KindInt, Default: 2, Min: 2, Max: 32, Label: "Shortest account name", Hint: "Account names are lowercase letters, digits and hyphens, up to 32 characters."},
 

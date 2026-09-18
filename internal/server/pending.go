@@ -18,7 +18,7 @@ import (
 const pendingCookie = "theses_pending"
 const pendingValidity = 15 * time.Minute
 
-// pending is an account part-way through enrolment: the details are already
+// pending is an account part-way through enrollment: the details are already
 // checked and the password already hashed, but nothing is in the database until
 // the authenticator code comes back. Keeping it in an encrypted cookie means a
 // crash or an abandoned tab leaves no half-made user, and "no users yet" stays a
@@ -46,7 +46,7 @@ type pendingStore struct {
 func newPendingStore(secretKey []byte) (*pendingStore, error) {
 	var derived [32]byte
 	if _, err := hkdf.New(sha256.New, secretKey, nil, []byte("theses/pending")).Read(derived[:]); err != nil {
-		return nil, fmt.Errorf("derive enrolment key: %w", err)
+		return nil, fmt.Errorf("derive enrollment key: %w", err)
 	}
 	block, err := aes.NewCipher(derived[:])
 	if err != nil {
@@ -59,7 +59,7 @@ func newPendingStore(secretKey []byte) (*pendingStore, error) {
 	return &pendingStore{aead: aead}, nil
 }
 
-var errNoPending = errors.New("no enrolment in progress")
+var errNoPending = errors.New("no enrollment in progress")
 
 func (p *pendingStore) put(w http.ResponseWriter, secure bool, v *pending) error {
 	v.Expires = time.Now().Add(pendingValidity).Unix()

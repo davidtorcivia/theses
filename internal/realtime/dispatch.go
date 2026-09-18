@@ -148,7 +148,7 @@ func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 	}
 }
 
-// reason is what a refusal says out loud. Anything unrecognised is a fault on
+// reason is what a refusal says out loud. Anything unrecognized is a fault on
 // this side, and the log has the detail the tab has no business seeing.
 func reason(err error) string {
 	switch {

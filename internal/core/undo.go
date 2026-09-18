@@ -59,7 +59,7 @@ var undoable = map[string]undoSpec{
 }
 
 // Undo puts back the before of one activity row and marks the row undone. The
-// undo is itself a command: it is authorised, recorded and published like any
+// undo is itself a command: it is authorized, recorded and published like any
 // other edit, so a board watching sees it happen.
 func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, error) {
 	var proposition sql.NullInt64
@@ -78,7 +78,7 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 
 	return s.Do(ctx, a, proposition.Int64, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
 		// Whether this row can be put back is asked after the actor has been
-		// authorised for the proposition it belongs to, not before. Answering
+		// authorized for the proposition it belongs to, not before. Answering
 		// that a change cannot be undone to somebody who may not read the
 		// proposition would tell them the row is there, and activity ids are
 		// dense enough to walk. A refusal here rolls the transaction back and

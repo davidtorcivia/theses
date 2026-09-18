@@ -39,7 +39,7 @@ func Enrol(handle string) (*Enrolment, error) {
 	return &Enrolment{Secret: key.Secret(), URL: key.URL(), QR: qr}, nil
 }
 
-// QR renders an otpauth URL as a PNG data URI, so an enrolment page reloaded
+// QR renders an otpauth URL as a PNG data URI, so an enrollment page reloaded
 // from its stored URL shows the same code.
 func QR(otpauth string) (string, error) {
 	key, err := otp.NewKeyFromURL(otpauth)

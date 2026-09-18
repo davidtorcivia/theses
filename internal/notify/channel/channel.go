@@ -60,7 +60,7 @@ var client = &http.Client{
 // private ranges, any host resolving to an address inside the deployment. It
 // returns a context pinning the request to the address it checked, which is
 // what closes the gap between this lookup and the dial.
-// ponytail: only the first address is dialled, so a dual stack host has no
+// ponytail: only the first address is dialed, so a dual stack host has no
 // fallback if that one is unreachable, and replace with safehttp.Client once
 // merged.
 func checkURL(ctx context.Context, name, rawURL string, allowPrivate bool) (context.Context, error) {

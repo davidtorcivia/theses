@@ -123,7 +123,7 @@ func (o *Outbox) Nudge() {
 	}
 }
 
-// Run sends batches until ctx is cancelled.
+// Run sends batches until ctx is canceled.
 func (o *Outbox) Run(ctx context.Context) {
 	t := time.NewTicker(pollEvery)
 	defer t.Stop()
@@ -208,7 +208,7 @@ func (o *Outbox) once(ctx context.Context) error {
 			}
 			continue
 		}
-		// A cancelled send is the shutdown, not the server refusing. The row is
+		// A canceled send is the shutdown, not the server refusing. The row is
 		// left exactly as it was and goes out on the next start.
 		if ctx.Err() != nil {
 			return ctx.Err()

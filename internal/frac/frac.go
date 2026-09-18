@@ -1,6 +1,6 @@
 // Package frac makes short ordering keys for blocks and cards. A key is read
 // as the base-62 fraction 0.key, so byte-wise string comparison is numeric
-// comparison and an item can be inserted between two neighbours without
+// comparison and an item can be inserted between two neighbors without
 // renumbering anything else.
 package frac
 
@@ -51,7 +51,7 @@ func Between(a, b string) string {
 // blocks.
 //
 // ponytail: an append still costs a digit every 61 keys, and an insert between
-// two neighbours a digit every 6; integer prefixed keys would be the fix if a
+// two neighbors a digit every 6; integer prefixed keys would be the fix if a
 // list ever ran to many thousands.
 func next(a string) string {
 	head := strings.TrimRight(a, "z")

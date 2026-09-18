@@ -44,7 +44,7 @@ func (s *Service) Nudge() {
 	}
 }
 
-// Run delivers batches and runs the daily tick until ctx is cancelled.
+// Run delivers batches and runs the daily tick until ctx is canceled.
 func (s *Service) Run(ctx context.Context) {
 	t := time.NewTicker(pollEvery)
 	defer t.Stop()
@@ -119,7 +119,7 @@ func (s *Service) once(ctx context.Context) error {
 			}
 			continue
 		}
-		// A cancelled send is the shutdown, not the destination refusing. The
+		// A canceled send is the shutdown, not the destination refusing. The
 		// row is left exactly as it was and goes out on the next start.
 		if ctx.Err() != nil {
 			return ctx.Err()

@@ -336,7 +336,7 @@ func TestResendingAnAcceptedInvitationIsRefused(t *testing.T) {
 	if err := h.db.QueryRowContext(ctx, `SELECT id FROM invitations`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	// Accepted, as the enrolment step would leave it.
+	// Accepted, as the enrollment step would leave it.
 	if _, err := h.db.ExecContext(ctx,
 		`UPDATE invitations SET accepted_at = unixepoch() WHERE id = ?`, id); err != nil {
 		t.Fatal(err)

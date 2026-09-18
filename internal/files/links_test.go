@@ -118,7 +118,7 @@ func TestAddLinkRefusesWhatIsNotAWebAddress(t *testing.T) {
 }
 
 // The refetch is a second way to make the server fetch a URL, and it takes an
-// id rather than an address, so the authorisation is what stands between a
+// id rather than an address, so the authorization is what stands between a
 // stranger and it.
 func TestRefetchNeedsTheSameStanding(t *testing.T) {
 	f := setup(t)

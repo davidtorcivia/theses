@@ -209,7 +209,7 @@ func (b *Backup) RestoreNow(ctx context.Context, key string, actorID int64) erro
 	return nil
 }
 
-// Schedule runs the backup at the configured time of day until ctx is cancelled.
+// Schedule runs the backup at the configured time of day until ctx is canceled.
 func (b *Backup) Schedule(ctx context.Context) {
 	t := time.NewTicker(tickEvery)
 	defer t.Stop()
@@ -509,7 +509,7 @@ func (b *Backup) inventory(ctx context.Context) (string, map[string]int, error) 
 }
 
 func (b *Backup) record(ctx context.Context, m Manifest, runErr error) {
-	// The run is over, so a cancelled context is the shutdown rather than a
+	// The run is over, so a canceled context is the shutdown rather than a
 	// reason not to write down what happened.
 	ctx = context.WithoutCancel(ctx)
 	set := func(key, value string) {

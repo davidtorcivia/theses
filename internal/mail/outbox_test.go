@@ -421,7 +421,7 @@ func TestMarkSentSurvivesCancellation(t *testing.T) {
 	stopped, cancel := context.WithCancel(ctx)
 	cancel()
 	if err := o.markSent(stopped, id); err != nil {
-		t.Fatalf("marking a delivered message failed on a cancelled context: %v", err)
+		t.Fatalf("marking a delivered message failed on a canceled context: %v", err)
 	}
 	if n := countRows(t, db, `sent_at IS NULL`); n != 0 {
 		t.Error("the row is still unsent, so the next start would deliver it twice")

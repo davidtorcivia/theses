@@ -53,7 +53,7 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 	}, s.search)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "list_users",
-		Description: "Lists everyone in the workspace with their handle, role and colour.",
+		Description: "Lists everyone in the workspace with their handle, role and color.",
 		Annotations: reads("List the people"),
 	}, s.listUsers)
 	sdk.AddTool(s.srv, &sdk.Tool{

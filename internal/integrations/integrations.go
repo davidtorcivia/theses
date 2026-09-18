@@ -55,7 +55,7 @@ type Settings map[string]string
 // connecting the integration in settings.
 var ErrNotConnected = errors.New("that integration is not connected yet; a workspace owner does that in settings")
 
-// ErrReconnect is a refresh token the provider will not honour any more. It is
+// ErrReconnect is a refresh token the provider will not honor any more. It is
 // separated from every other failure because the answer to it is a person
 // pressing Connect again, not a retry.
 var ErrReconnect = errors.New("the connection to that service has expired; a workspace owner has to connect it again")
@@ -97,7 +97,7 @@ const maxImport = 5 << 30
 const maxJSON = 1 << 20
 
 // Client is the outbound client the integrations use: safehttp's, so every
-// address is resolved and checked before it is dialled, with no whole-request
+// address is resolved and checked before it is dialed, with no whole-request
 // timeout because an import streams for as long as the file takes. What bounds
 // a call is the context the caller passes and the transport's own header and
 // dial timeouts.

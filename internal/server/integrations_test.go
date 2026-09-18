@@ -340,7 +340,7 @@ func TestDriveCallbackWithNoCode(t *testing.T) {
 	sent, _ := url.Parse(res.Header.Get("Location"))
 	res, body := h.get(driveCallback + "?state=" + url.QueryEscape(sent.Query().Get("state")))
 	if res.StatusCode != http.StatusUnprocessableEntity ||
-		!strings.Contains(body, "no authorisation code") {
+		!strings.Contains(body, "no authorization code") {
 		t.Fatalf("gave %d: %q", res.StatusCode, firstNotice(body))
 	}
 }

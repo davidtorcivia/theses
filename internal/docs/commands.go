@@ -295,7 +295,7 @@ func (s *Service) DeleteDocument(ctx context.Context, a core.Actor, id int64) (c
 // block `after` in this document, or at the head when after is zero. Tombstoned
 // blocks keep their keys and are counted here: an undo puts one back on the key
 // it had, and a key given away in the meantime is a refusal it does not need to
-// meet. exclude is the block being moved, which is not its own neighbour.
+// meet. exclude is the block being moved, which is not its own neighbor.
 func place(ctx context.Context, tx *sql.Tx, document, after, exclude int64) (string, error) {
 	lo := ""
 	if after != 0 {

@@ -52,7 +52,7 @@ type Event struct {
 }
 
 var (
-	// ErrForbidden is every authorisation refusal: the role, the membership and
+	// ErrForbidden is every authorization refusal: the role, the membership and
 	// the actor that no longer exists all come back as this, because telling a
 	// caller which one it was tells it about rows it may not read.
 	ErrForbidden = errors.New("not allowed")
@@ -103,7 +103,7 @@ func New(db *store.DB, bus *Bus) *Service {
 }
 
 // Change is what a command did: the row it touched and the row as it was and
-// as it now is. Before and After are marshalled into the activity row and the
+// as it now is. Before and After are marshaled into the activity row and the
 // event, keyed by column name so undo can put them back without a translation
 // table.
 type Change struct {
@@ -113,7 +113,7 @@ type Change struct {
 	Before   any
 	After    any
 	// Proposition names the proposition the change belongs to when that is not
-	// the one the command was authorised against, which is how creating a
+	// the one the command was authorized against, which is how creating a
 	// proposition files itself under the row it just made.
 	Proposition int64
 	// Detached writes the activity row with no proposition at all, which is
@@ -123,7 +123,7 @@ type Change struct {
 }
 
 // Do is the shape of every mutation. apply runs inside an immediate
-// transaction with the actor already authorised for need (one of auth.CanEdit
+// transaction with the actor already authorized for need (one of auth.CanEdit
 // or auth.CanDelete) on proposition, which is zero when the command creates the
 // proposition itself.
 func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need string,
