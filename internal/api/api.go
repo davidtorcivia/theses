@@ -275,11 +275,17 @@ const (
 	activityMaxLimit = 200
 )
 
+// administration is what the log says about running the workspace rather than
+// about its work: a setting's value either side of a change, the address an
+// invitation went to, the name and scopes of a token. A token without admin
+// reads the log without these.
+const administration = `'setting', 'invitation', 'api_token'`
+
 // activity is a cursor rather than a feed: it returns the rows after ?since= in
 // id order, so following the log is asking again with the last id you were
 // given. Ids are used and not timestamps because created_at is whole seconds
 // and a busy second holds many rows.
-func (a *API) activity(w http.ResponseWriter, r *http.Request, _ Principal) {
+func (a *API) activity(w http.ResponseWriter, r *http.Request, p Principal) {
 	limit := intParam(r, "limit", activityLimit)
 	if limit <= 0 {
 		limit = activityLimit
@@ -287,9 +293,14 @@ func (a *API) activity(w http.ResponseWriter, r *http.Request, _ Principal) {
 	if limit > activityMaxLimit {
 		limit = activityMaxLimit
 	}
-	rows, err := a.db.QueryContext(r.Context(), `SELECT id, proposition_id, actor_kind, actor_id,
+	query := `SELECT id, proposition_id, actor_kind, actor_id,
 		entity, entity_id, action, before_json, after_json, created_at, undone_at
-		FROM activity WHERE id > ? ORDER BY id LIMIT ?`, intParam(r, "since", 0), limit)
+		FROM activity WHERE id > ?`
+	if !p.Allowed(auth.ScopeAdmin) {
+		query += ` AND entity NOT IN (` + administration + `)`
+	}
+	rows, err := a.db.QueryContext(r.Context(), query+` ORDER BY id LIMIT ?`,
+		intParam(r, "since", 0), limit)
 	if err != nil {
 		a.serverError(w, r, err)
 		return

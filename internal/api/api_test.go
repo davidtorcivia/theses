@@ -474,3 +474,37 @@ func TestATokenCannotOutrankItsOwner(t *testing.T) {
 		t.Errorf("a demoted owner's token wrote a setting: %d", w.Code)
 	}
 }
+
+func TestActivityHidesAdministrationFromAReadToken(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	rows := []struct{ entity, entityID, before, after string }{
+		{"card", "1", "", `{"t":"x"}`},
+		{"setting", "mail.host", `"old.example.com"`, `"smtp.example.com"`},
+		{"invitation", "invitee@example.com", "", "editor"},
+		{"api_token", "deploy", "", "admin"},
+	}
+	for _, e := range rows {
+		if err := store.InsertActivity(ctx, h.db, "user", "1",
+			e.entity, e.entityID, "set", e.before, e.after); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := h.do("GET", "/api/v1/activity", h.token(auth.ScopeRead), "")
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	if body := w.Body.String(); strings.Contains(body, "invitee@example.com") ||
+		strings.Contains(body, "smtp.example.com") || strings.Contains(body, "deploy") {
+		t.Errorf("a read token saw administration: %s", body)
+	}
+	if got := decode(t, w)["activity"].([]any); len(got) != 1 {
+		t.Errorf("rows = %v", got)
+	}
+
+	w = h.do("GET", "/api/v1/activity", h.token(auth.ScopeAdmin), "")
+	if got := decode(t, w)["activity"].([]any); len(got) != 4 {
+		t.Errorf("an admin token saw %d of 4 rows", len(got))
+	}
+}
