@@ -587,7 +587,7 @@ func TestARefusedSectionLeavesNothingBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(after) != len(cols) {
-		t.Errorf("%d columns after a refused section, want the %d there were", len(after), len(cols))
+		t.Fatalf("%d columns after a refused section, want the %d there were", len(after), len(cols))
 	}
 	for i, c := range after {
 		if c.Name != cols[i].Name {
