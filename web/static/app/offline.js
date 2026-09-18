@@ -8,9 +8,20 @@
 // of being kept.
 
 const DB = 'theses-offline';
+
+// The version is bumped whenever a store is added, because that is what makes
+// the browser run the upgrade on a database that already exists.
+const VERSION = 2;
+
 const STORES = {
   outbox: { keyPath: 'n', autoIncrement: true },
   snapshot: { keyPath: 'proposition' },
+  // The links and files of a proposition are kept apart from its snapshot,
+  // because they are read by a different thing at a different time: the board
+  // arrives with the page and these two requests later, and only if somebody
+  // opens the pane that wants them. Written together, a visit that never opened
+  // that pane would overwrite them with the nothing it had.
+  material: { keyPath: 'proposition' },
   uploads: { keyPath: 'file' },
 };
 
@@ -18,7 +29,7 @@ function open() {
   return new Promise((resolve) => {
     let req;
     try {
-      req = indexedDB.open(DB, 1);
+      req = indexedDB.open(DB, VERSION);
     } catch {
       resolve(null);
       return;
@@ -158,6 +169,14 @@ export function retry(n) {
 // renders into the page, so booting from it is the same boot.
 
 export const keep = (row) => withStore('snapshot', 'readwrite', (store) => store.put(row));
+
+// The links and files beside it, written only by whoever has actually read
+// them. Everything else leaves this row alone rather than replacing it with the
+// nothing it happens to be holding.
+export const keepMaterial = (row) => withStore('material', 'readwrite', (store) => store.put(row));
+
+export const cachedMaterial = (proposition) =>
+  withStore('material', 'readonly', (store) => store.get(proposition));
 
 export const cached = (proposition) =>
   withStore('snapshot', 'readonly', (store) => store.get(proposition));

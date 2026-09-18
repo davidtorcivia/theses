@@ -28,7 +28,14 @@ export function renderLinks(pane) {
 
   const list = el('ul', { id: 'llist', class: 'list' });
   if (!rows.length) {
-    list.append(el('li', { class: 'none', text: state.links.length ? 'Nothing matches.' : 'No links yet. Paste one above.' }));
+    // A read that failed is not the same as there being none, and saying the
+    // second when the first happened is the app being confidently wrong.
+    list.append(el('li', {
+      class: 'none',
+      text: state.links.length ? 'Nothing matches.'
+        : state.materialFailed ? 'These could not be read. Reload to try again.'
+          : 'No links yet. Paste one above.',
+    }));
   }
   for (const link of rows) list.append(row(link));
   pane.append(list);

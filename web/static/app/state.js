@@ -60,6 +60,9 @@ export const state = {
   panel: false,
   activity: [],
   refused: [],
+  // materialFailed is the last read of the links and files having gone wrong,
+  // which the panes say out loud rather than reporting there are none.
+  materialFailed: false,
 };
 
 export function boot(payload) {
@@ -117,6 +120,12 @@ export async function material() {
   // better witness, and when it says yes the rows are read whatever the flag
   // feels.
   if (!navigator.onLine && !state.connected) return;
+  // A read that failed is tried again, because a moment of trouble that nothing
+  // else notices should not leave the pane saying there is nothing there for the
+  // rest of the session. Not on every render though: ten seconds between goes is
+  // often enough to catch a server coming back and rare enough to be quiet.
+  if (Date.now() - lastTried < retryAfter) return;
+  lastTried = Date.now();
   const proposition = state.open;
   state.loaded = proposition;
   try {
@@ -133,18 +142,46 @@ export async function material() {
     state.folders = files.folders || [];
     state.kinds = links.kinds || [];
     state.attachments = { links: attached.links || [], files: attached.files || [] };
-    // The snapshot the boot wrote had none of this in it, because none of it
-    // had arrived. It is what the links and files panes draw offline.
-    remember();
+    state.materialFailed = false;
+    // This is the only thing that knows the links and files of a proposition,
+    // so it is the only thing that writes them.
+    offline.keepMaterial({
+      proposition,
+      at: Date.now(),
+      v: VERSION,
+      links: state.links,
+      files: state.files,
+      folders: state.folders,
+      kinds: state.kinds,
+      attachments: state.attachments,
+    });
     emit();
   } catch (err) {
-    // The mark stays, so this is said once rather than on every render for as
-    // long as whatever went wrong lasts. The socket coming back clears it and
-    // the rows are read again, which is the event that means a retry is worth
-    // making.
+    // The mark is cleared so another go is possible, and the stamp above is
+    // what keeps that from being every render. The pane says it could not read
+    // them rather than saying there are none.
+    state.loaded = 0;
+    state.materialFailed = true;
+    // One render once the gap has passed, because a pane nobody is touching
+    // produces no renders and would otherwise sit on a moment of trouble until
+    // somebody clicked something. That render calls this again; if it works
+    // there is no failure to schedule another, so this stops on its own.
+    if (!nudging) nudging = setTimeout(() => { nudging = 0; emit(); }, retryAfter);
     throw err;
   }
 }
+
+// retryMaterial forgets that a read failed, which the socket coming back does:
+// that is the event that makes another go worth making right now rather than in
+// ten seconds.
+export function retryMaterial() {
+  state.loaded = 0;
+  lastTried = 0;
+}
+
+let lastTried = 0;
+let nudging = 0;
+const retryAfter = 10000;
 
 export function user(id) {
   return state.users.get(id) || { id, name: 'Someone', initials: '??', colour: 'c8', handle: '' };
@@ -535,13 +572,6 @@ function write() {
     at: Date.now(),
     v: VERSION,
     payload: snapshot(),
-    material: {
-      links: state.links,
-      files: state.files,
-      folders: state.folders,
-      kinds: state.kinds,
-      attachments: state.attachments,
-    },
   });
 }
 
@@ -557,7 +587,11 @@ export async function restore(open) {
   if (!row || row.v !== VERSION) return false;
   boot(row.payload);
   state.open = open;
-  const material = row.material || {};
+  // The links and files are a row of their own, written by the only thing that
+  // reads them. A proposition whose panes were never opened has none, and the
+  // panes say so rather than the board refusing to draw.
+  const kept = await offline.cachedMaterial(open);
+  const material = kept && kept.v === VERSION ? kept : {};
   state.links = material.links || [];
   state.files = material.files || [];
   state.folders = material.folders || [];

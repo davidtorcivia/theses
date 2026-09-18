@@ -8,7 +8,7 @@
 // applying the guess again; a refusal puts back what was there and, for a
 // command that was queued, leaves a row in the activity panel to choose from.
 
-import { state, apply, emit, predict, baseText, target } from './state.js';
+import { state, apply, emit, predict, baseText, target, retryMaterial } from './state.js';
 import * as offline from './offline.js';
 import * as api from './api.js';
 
@@ -64,8 +64,8 @@ export function connect() {
     }
     // A socket coming back is the moment a read that failed is worth making
     // again, so the links and files of the open proposition are marked unread
-    // and the next render asks for them.
-    state.loaded = 0;
+    // and the next render asks for them without waiting out the retry gap.
+    retryMaterial();
     await catchUp();
     replay();
   });

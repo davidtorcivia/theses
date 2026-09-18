@@ -41,9 +41,13 @@ export function renderFiles(pane) {
       el('span', { class: 'when mono', text: 'goes up when the connection is back' })));
   }
   if (!rows.length) {
+    // A read that failed is not the same as there being none, and saying the
+    // second when the first happened is the app being confidently wrong.
     list.append(el('li', {
       class: 'none',
-      text: state.files.length ? 'Nothing matches.' : 'No files yet. Drop one above.',
+      text: state.files.length ? 'Nothing matches.'
+        : state.materialFailed ? 'These could not be read. Reload to try again.'
+          : 'No files yet. Drop one above.',
     }));
   }
   for (const file of rows) list.append(row(file));
