@@ -245,7 +245,7 @@ func (s *Service) queueWorkspace(ctx context.Context, tx *sql.Tx, m Notice, acto
 }
 
 // recipients turns a match into the people it is for, which never includes
-// whoever caused it.
+// whoever caused it and never includes somebody who may not read it.
 func (s *Service) recipients(ctx context.Context, q store.Querier, m Notice, actor core.Actor) ([]int64, error) {
 	var found []int64
 	var err error
@@ -272,6 +272,45 @@ func (s *Service) recipients(ctx context.Context, q store.Querier, m Notice, act
 			continue
 		}
 		out = append(out, id)
+	}
+	return canRead(ctx, q, m.Proposition, out)
+}
+
+// canRead keeps only the people who may read the proposition the notification
+// is about, which is the read rule the board, search and activity all use:
+// an owner sees everything, everybody else sees what they are a member of.
+//
+// Without it a mention or an assignment carries a card title and an excerpt of
+// a note to somebody who cannot open the page it came from. A notice with no
+// proposition behind it is left alone, because there is nothing to be a member
+// of.
+func canRead(ctx context.Context, q store.Querier, proposition int64, people []int64) ([]int64, error) {
+	if proposition == 0 || len(people) == 0 {
+		return people, nil
+	}
+	// The arguments are in the order the placeholders appear, the people first
+	// and the proposition last, because a mix of numbered and plain placeholders
+	// does not number the way it reads.
+	args := make([]any, 0, len(people)+1)
+	for _, id := range people {
+		args = append(args, id)
+	}
+	args = append(args, proposition)
+	allowed, err := ids(ctx, q, `SELECT id FROM users
+		WHERE id IN (?`+strings.Repeat(", ?", len(people)-1)+`)
+		AND (role = 'owner' OR EXISTS (
+			SELECT 1 FROM proposition_members
+			WHERE proposition_id = ? AND user_id = users.id))`, args...)
+	if err != nil {
+		return nil, err
+	}
+	// Back into the order the matcher produced, because the first channel a
+	// mention reaches depends on it.
+	out := make([]int64, 0, len(allowed))
+	for _, id := range people {
+		if slices.Contains(allowed, id) {
+			out = append(out, id)
+		}
 	}
 	return out, nil
 }

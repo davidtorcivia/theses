@@ -138,6 +138,18 @@ func (f *fixture) onCard(t *testing.T, cardID int64, users ...int64) {
 			`INSERT OR IGNORE INTO card_assignees (card_id, user_id) VALUES (?, ?)`, cardID, u); err != nil {
 			t.Fatal(err)
 		}
+		f.member(t, u)
+	}
+}
+
+// member puts somebody on proposition 3, which is what lets them be told
+// anything about it.
+func (f *fixture) member(t *testing.T, user int64) {
+	t.Helper()
+	if _, err := f.db.ExecContext(context.Background(),
+		`INSERT OR IGNORE INTO proposition_members (proposition_id, user_id) VALUES (3, ?)`,
+		user); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -158,6 +170,58 @@ func TestActorIsNeverNotifiedOfTheirOwnChange(t *testing.T) {
 	}
 	if got[0].Payload.Items[0].URL != "https://example.com/p/3" {
 		t.Errorf("link = %q", got[0].Payload.Items[0].URL)
+	}
+}
+
+// A notification carries a card title and an excerpt of what was written, so
+// it may only reach somebody who could have opened the page it came from.
+func TestSomebodyWhoCannotReadThePropositionIsNotTold(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	stranger := f.user(t, "grace")
+	f.onCard(t, 7, ada) // ada is a member, grace is not
+	f.channel(t, Channel{UserID: stranger, Kind: KindNtfy, Config: Config{Topic: "t"}}, "mentioned")
+
+	mention := core.Event{Entity: "comment", Action: "create", Proposition: 3,
+		Actor: core.Actor{Kind: core.KindUser, ID: ada, Name: "Ada Lovelace"},
+		After: raw(t, map[string]any{"id": 9, "card_id": 7, "body_md": "ask @grace about this"})}
+	if err := f.s.Handle(context.Background(), mention); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 0 {
+		t.Fatalf("told somebody who is not on the proposition: %+v", got)
+	}
+
+	// The same mention once she is a member.
+	f.member(t, stranger)
+	if err := f.s.Handle(context.Background(), mention); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 1 {
+		t.Fatalf("wrote %d rows for a member, want 1", len(got))
+	}
+}
+
+// An owner reads every proposition, so an owner is told without being a member.
+func TestAnOwnerIsToldWithoutBeingAMember(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	owner := f.user(t, "grace")
+	if _, err := f.db.ExecContext(context.Background(),
+		`UPDATE users SET role = 'owner' WHERE id = ?`, owner); err != nil {
+		t.Fatal(err)
+	}
+	f.onCard(t, 7, ada)
+	f.channel(t, Channel{UserID: owner, Kind: KindNtfy, Config: Config{Topic: "t"}}, "mentioned")
+
+	if err := f.s.Handle(context.Background(), core.Event{
+		Entity: "comment", Action: "create", Proposition: 3,
+		Actor: core.Actor{Kind: core.KindUser, ID: ada, Name: "Ada Lovelace"},
+		After: raw(t, map[string]any{"id": 9, "card_id": 7, "body_md": "@grace"})}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 1 {
+		t.Fatalf("wrote %d rows for the owner, want 1", len(got))
 	}
 }
 
@@ -274,6 +338,7 @@ func TestAMentionGetsThroughDigestAndQuietHours(t *testing.T) {
 	f := newFixture(t)
 	ada := f.user(t, "ada")
 	grace := f.user(t, "grace")
+	f.onCard(t, 7, grace)
 	night := time.Date(2026, 9, 8, 23, 30, 0, 0, time.UTC).Unix()
 	f.s.Now = func() int64 { return night }
 	f.channel(t, Channel{UserID: grace, Kind: KindEmail, Digest: true}, "mentioned")
@@ -343,6 +408,7 @@ func TestAMentionReachesAnAccountWithNoRuleTicked(t *testing.T) {
 	f := newFixture(t)
 	ada := f.user(t, "ada")
 	grace := f.user(t, "grace")
+	f.onCard(t, 7, grace)
 	f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"}})
 
 	e := core.Event{Entity: "comment", Action: "create", Proposition: 3,

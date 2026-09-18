@@ -59,10 +59,6 @@ func TestTickFiresDatesOnceADay(t *testing.T) {
 	f := newFixture(t)
 	grace := f.user(t, "grace")
 	f.onCard(t, 7, grace)
-	if _, err := f.db.ExecContext(context.Background(),
-		`INSERT INTO proposition_members (proposition_id, user_id) VALUES (3, ?)`, grace); err != nil {
-		t.Fatal(err)
-	}
 	f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"}},
 		"due", "overdue", "release")
 
