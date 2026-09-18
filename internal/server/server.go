@@ -279,6 +279,14 @@ func (s *Server) routes() http.Handler {
 	// CSRF check.
 	mux.Handle("/app/", s.requireUser(api.SessionHandler(s.api, s.files, userOf).ServeHTTP))
 	mux.HandleFunc("POST /settings/test/cors", s.requireOwner(s.postTestCORS))
+
+	// Offline. The worker is served from the root so its scope is the whole
+	// site; the shell is what it answers an app navigation with when the
+	// network is gone; the activity panel reads through the session, and its
+	// pattern is more specific than /app/ so it wins the match.
+	mux.HandleFunc("GET /sw.js", s.serviceWorker)
+	mux.HandleFunc("GET /shell", s.offlineShell)
+	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
 	return mux
 }
 

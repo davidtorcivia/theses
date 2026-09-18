@@ -23,7 +23,7 @@ import (
 // configured gets this policy unchanged.
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; " +
 	"img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; " +
-	"frame-ancestors 'none'; form-action 'self'"
+	"frame-ancestors 'none'; form-action 'self'; worker-src 'self'"
 
 // policy is the CSP this process sends, with the storage origins folded in.
 func (s *Server) policy() string {

@@ -47,7 +47,10 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /settings/integrations/webhook/{id}/test` | Send one message to it and mark it verified when it arrives. |
 | `POST /settings/integrations/webhook/{id}/delete` | Remove it. |
 | `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. |
-| `GET /offline` | What the service worker will serve when the server is unreachable. |
+| `GET /offline` | What the service worker serves for a navigation the network refused that the shell cannot stand in for. |
+| `GET /sw.js` | The service worker, from the root so its scope is the whole site. The URL never moves; the bytes carry the asset hash, so a deploy installs a new worker and the old cache goes with it. |
+| `GET /shell` | The app with an empty payload, no account, no CSRF token and not even the workspace name. Anyone may fetch it. The worker keeps a copy and hands it to an offline navigation to `/` or `/p/{id}`; the page draws itself, the top bar included, from the snapshot in IndexedDB. |
+| `GET /app/activity?proposition={id}` | The activity panel's read: the newest rows of one proposition, newest first, each saying whether it has been undone and whether an undo would be refused out of hand. Session and membership, like the rest of `/app`. |
 | `GET /healthz` | Always 200. |
 | `GET /readyz` | Runs the readiness checks: the database, the object store, and the age of the newest backup. |
 | `GET /static/{hash}/...` | Content-hashed assets, cached for a year. |
@@ -61,3 +64,28 @@ websocket and through `/app`, which is the API's own links and files handlers
 on the session cookie, so moving between them costs no page load. A document's
 history comes from `/documents/{id}/revisions`, and a tab that has lost its
 websocket falls back to `/api/events`.
+
+## Offline
+
+The service worker caches the static tree, the offline page and the shell, and
+nothing else: no API answer and no page rendered with a session on it. A
+navigation is tried on the network first and falls back only when the network
+refuses to answer at all, so a 404 or a 500 is still the server talking.
+
+Commands made with no connection are applied in the browser, kept in an
+IndexedDB outbox with the version and the text they started from, and replayed
+in order over the websocket on reconnect. The server's three-way merge is what
+settles a set that went stale meanwhile; a replay it refuses appears in the
+activity panel with keep mine and take theirs, the same choice a live conflict
+offers. A replay the server refuses for a reason of its own, being busy or
+being broken, is retried rather than recorded as a decision, and the queue goes
+up at a pace the socket's own limit allows.
+
+What this device holds goes when the session does, because the next person at
+the machine has no session and should find nothing of the workspace. Two things
+see to it: the worker deletes the database on the sign-out request itself, and
+the page deletes it and returns to the sign-in page the moment the server
+answers a request with no session behind it, which is what an expired or
+revoked one looks like. Every queued command carries the account that made it,
+so work left by one person is never sent as another. The cache survives both,
+since every byte in it is the app itself and names nobody.

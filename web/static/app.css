@@ -487,3 +487,10 @@ dialog.history{max-width:44rem;width:calc(100vw - 2rem)}
 .diff .same{color:var(--dim)}
 .diff .in{color:var(--y)}
 .diff .out{color:#ff5a3c}
+
+/* Offline: the count beside the Activity tab, and a file still waiting for a
+   connection to go up on. */
+.tabs .tab i{font-style:normal;font-weight:800;color:var(--y)}
+.tabs .tab.on i{color:var(--k)}
+.list .row.pending{cursor:default;color:var(--dim)}
+#drawer .linked li p{margin:.15rem 0}

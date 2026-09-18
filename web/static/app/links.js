@@ -4,7 +4,7 @@
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
 import { state, user, emit, hold, canEdit, material } from './state.js';
-import { send } from './net.js';
+import { send, queueLink } from './net.js';
 import * as api from './api.js';
 
 export function renderLinks(pane) {
@@ -28,7 +28,14 @@ export function renderLinks(pane) {
 
   const list = el('ul', { id: 'llist', class: 'list' });
   if (!rows.length) {
-    list.append(el('li', { class: 'none', text: state.links.length ? 'Nothing matches.' : 'No links yet. Paste one above.' }));
+    // A read that failed is not the same as there being none, and saying the
+    // second when the first happened is the app being confidently wrong.
+    list.append(el('li', {
+      class: 'none',
+      text: state.links.length ? 'Nothing matches.'
+        : state.materialFailed ? 'These could not be read. Reload to try again.'
+          : 'No links yet. Paste one above.',
+    }));
   }
   for (const link of rows) list.append(row(link));
   pane.append(list);
@@ -45,6 +52,17 @@ function addLine() {
     if (e.key !== 'Enter') return;
     const url = field.value.trim();
     if (!url) return;
+    // Reading the page is the server's job, so with no connection the URL goes
+    // in the outbox and the title, the author and the date are fetched on the
+    // way back up.
+    if (!navigator.onLine) {
+      field.value = '';
+      const kept = await queueLink(state.open, url);
+      say(kept
+        ? 'That link is kept on this device. It is read when the connection is back.'
+        : 'This browser will not keep it. Paste it again when the connection is back.');
+      return;
+    }
     field.disabled = true;
     field.value = 'Reading ' + url + '…';
     try {
@@ -271,12 +289,15 @@ function sendToDoc(link) {
     const blocks = doc.blocks || [];
     const text = link.citation || link.title || link.url;
     try {
-      await send('block.insert', {
+      const went = await send('block.insert', {
         document: doc.id,
         after: blocks.length ? blocks[blocks.length - 1].id : 0,
         text,
       });
-      say('Sent to ' + doc.name + '.');
+      // A command that was kept rather than sent has arrived nowhere yet, and
+      // saying it has would be the app telling a story.
+      say(went ? 'Sent to ' + doc.name + '.'
+        : 'Kept on this device. It goes into ' + doc.name + ' when the connection is back.');
     } catch (err) {
       say(err.message);
     }

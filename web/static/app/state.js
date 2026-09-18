@@ -3,6 +3,7 @@
 // came back from this tab's own command or arrived from somebody else's.
 
 import * as api from './api.js';
+import * as offline from './offline.js';
 
 export const state = {
   me: 0,
@@ -46,8 +47,22 @@ export const state = {
   folder: 'all',
   fileQuery: '',
   // uploads is what is in flight in this tab, by file id: a fraction and,
-  // when one went wrong, what to say about it.
+  // when one went wrong, what to say about it. A file dropped with nothing to
+  // upload it to waits in here under a negative id until there is.
   uploads: new Map(),
+
+  // The offline half. fromCache is a page the service worker handed back with
+  // no server behind it; waiting is how many commands the outbox is holding;
+  // panel is the activity drawer, with its rows and the refused replays.
+  fromCache: false,
+  waiting: 0,
+  waitingHere: 0,
+  panel: false,
+  activity: [],
+  refused: [],
+  // materialFailed is the last read of the links and files having gone wrong,
+  // which the panes say out loud rather than reporting there are none.
+  materialFailed: false,
 };
 
 export function boot(payload) {
@@ -67,6 +82,11 @@ export function boot(payload) {
   state.open = payload.open || 0;
   loadBoard(payload.board);
   loadDocuments(payload.documents);
+  // Opening a proposition is enough to have it on this device. Without this the
+  // snapshot was only ever written by an applied event, so a proposition that
+  // was read and not edited had nothing cached and said so when the connection
+  // went. A page booted from a snapshot is already one and writes nothing.
+  remember();
 }
 
 function loadDocuments(documents) {
@@ -89,6 +109,23 @@ function loadBoard(board) {
 // up to date from then on.
 export async function material() {
   if (!state.open || state.loaded === state.open) return;
+  // With no connection there is nothing to read them from, and every render
+  // would try again and say so again over whatever else is on the bar. What
+  // was cached is already here; the next render with a network fetches.
+  //
+  // The browser's own flag is not believed on its own, because it is wrong
+  // often enough to matter: some VPN and captive states report no network while
+  // the socket is plainly carrying one, and a pane that trusted the flag would
+  // say there are no links for as long as the lie lasted. A live socket is the
+  // better witness, and when it says yes the rows are read whatever the flag
+  // feels.
+  if (!navigator.onLine && !state.connected) return;
+  // A read that failed is tried again, because a moment of trouble that nothing
+  // else notices should not leave the pane saying there is nothing there for the
+  // rest of the session. Not on every render though: ten seconds between goes is
+  // often enough to catch a server coming back and rare enough to be quiet.
+  if (Date.now() - lastTried < retryAfter) return;
+  lastTried = Date.now();
   const proposition = state.open;
   state.loaded = proposition;
   try {
@@ -105,12 +142,50 @@ export async function material() {
     state.folders = files.folders || [];
     state.kinds = links.kinds || [];
     state.attachments = { links: attached.links || [], files: attached.files || [] };
+    state.materialFailed = false;
+    // This is the only thing that knows the links and files of a proposition,
+    // so it is the only thing that writes them.
+    offline.keepMaterial({
+      proposition,
+      at: Date.now(),
+      v: VERSION,
+      links: state.links,
+      files: state.files,
+      folders: state.folders,
+      kinds: state.kinds,
+      attachments: state.attachments,
+    });
     emit();
   } catch (err) {
+    // The mark is cleared so another go is possible, and the stamp above is
+    // what keeps that from being every render. The pane says it could not read
+    // them rather than saying there are none.
     state.loaded = 0;
+    state.materialFailed = true;
+    // Drawn again now, so the pane says it could not read them rather than
+    // keeping the line it was drawn with, which was that there are none. Without
+    // this it said the wrong thing for the whole of the gap below.
+    emit();
+    // One render once the gap has passed, because a pane nobody is touching
+    // produces no renders and would otherwise sit on a moment of trouble until
+    // somebody clicked something. That render calls this again; if it works
+    // there is no failure to schedule another, so this stops on its own.
+    if (!nudging) nudging = setTimeout(() => { nudging = 0; emit(); }, retryAfter);
     throw err;
   }
 }
+
+// retryMaterial forgets that a read failed, which the socket coming back does:
+// that is the event that makes another go worth making right now rather than in
+// ten seconds.
+export function retryMaterial() {
+  state.loaded = 0;
+  lastTried = 0;
+}
+
+let lastTried = 0;
+let nudging = 0;
+const retryAfter = 10000;
 
 export function user(id) {
   return state.users.get(id) || { id, name: 'Someone', initials: '??', colour: 'c8', handle: '' };
@@ -308,5 +383,244 @@ export function apply(ev) {
       break;
     }
   }
+  remember();
   emit();
+}
+
+// The optimistic half. Every command the browser sends is drawn before the
+// server has answered and reconciled when it does: the echo carries the whole
+// row, so applying it after the guess is applying the guess again, and a
+// refusal puts back what was there.
+//
+// Only the commands that change a row already on the screen are in here. A
+// create has no id to draw under until the server has given it one, and waiting
+// the width of a socket round trip for one is not something anybody notices.
+//
+// last says the command sets a field to a value, so two of them on one row are
+// the second one. Those are the ones the outbox folds together while there is
+// nothing to send them to. Assigning is not one of them: two assignments are
+// two people.
+const optimistic = {
+  'card.title': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ title: a.title }) },
+  'card.description': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ description_md: a.text }) },
+  'card.due': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ due_date: a.due }) },
+  'card.question': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ question: a.question }) },
+  'card.done': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ done_at: a.done ? seconds() : null }) },
+  'card.assign': {
+    entity: 'card', id: (a) => a.card,
+    fields: (a, row) => ({ assignees: [...new Set([...(row.assignees || []), a.user])] }),
+  },
+  'card.unassign': {
+    entity: 'card', id: (a) => a.card,
+    fields: (a, row) => ({ assignees: (row.assignees || []).filter((id) => id !== a.user) }),
+  },
+  'card.move': {
+    entity: 'card', id: (a) => a.card, last: true,
+    fields: (a, row) => ({ column_id: a.column, position: behind(a.after, row) }),
+  },
+  'column.rename': { entity: 'column', id: (a) => a.column, last: true, fields: (a) => ({ name: a.title }) },
+  'checklist.toggle': { entity: 'checklist_item', id: (a) => a.item, last: true, fields: (a) => ({ done: a.done }) },
+  'block.set': { entity: 'block', id: (a) => a.block, last: true, fields: (a) => ({ text: a.text }) },
+  'proposition.status': { entity: 'proposition', id: (a) => a.proposition, last: true, fields: (a) => ({ status: a.status }) },
+  'proposition.edit': {
+    entity: 'proposition', id: (a) => a.proposition, last: true,
+    fields: (a) => ({ title: a.title, statement: a.statement, blurb: a.blurb }),
+  },
+};
+
+const seconds = () => Math.floor(Date.now() / 1000);
+
+// behind is a position key that sorts just after the card the drop landed on.
+// Keys are base 62, so a tilde is above every character one can end in.
+//
+// ponytail: it is a guess, not the key the server will allocate, and a card
+// dropped above a neighbour whose key runs deeper than one character can land a
+// place out until the echo arrives with the real one. The upgrade is the
+// server's fractional key generator in the browser as well.
+function behind(after, row) {
+  if (!after) return '';
+  const previous = state.cards.get(after);
+  return previous ? previous.position + '~' : row.position;
+}
+
+function rowOf(entity, id) {
+  switch (entity) {
+    case 'card':
+      return state.cards.get(id) || null;
+    case 'column':
+      return state.columns.find((c) => c.id === id) || null;
+    case 'proposition':
+      return proposition(id);
+    case 'checklist_item':
+      for (const card of state.cards.values()) {
+        const item = (card.checklist || []).find((i) => i.id === id);
+        if (item) return item;
+      }
+      return null;
+    case 'block':
+      for (const doc of state.documents) {
+        const block = (doc.blocks || []).find((b) => b.id === id);
+        if (block) return block;
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+// predict draws one row as it will be, through the same path an event takes so
+// that there is one way into the state and not two. It answers the function
+// that puts the row back, which is what a refusal calls.
+export function predict(cmd, args) {
+  const spec = optimistic[cmd];
+  if (!spec) return null;
+  const row = rowOf(spec.entity, spec.id(args));
+  if (!row) return null;
+  const was = { ...row };
+  const touched = Object.keys(spec.fields(args, row));
+  apply(local(spec.entity, { ...row, ...spec.fields(args, row) }));
+  // Undrawing puts back the fields the guess touched and leaves the rest of the
+  // row where it is. Starting from the copy taken before the guess would undo
+  // whatever else has happened to that row since, and while a command was in
+  // the outbox somebody may well have changed a field beside it. A conflict
+  // does better still on the one field it is about: it carries what the server
+  // holds and the version it holds it at, which is where the row actually is.
+  return (detail) => {
+    const now = rowOf(spec.entity, spec.id(args)) || was;
+    const back = { ...now };
+    for (const field of touched) back[field] = was[field];
+    if (detail && detail.field) {
+      back[detail.field] = detail.current;
+      back.version = detail.version;
+    }
+    apply(local(spec.entity, back));
+  };
+}
+
+// local is an event this tab made up. Sequence zero, so it never moves the
+// stream's place: the real one arrives with a number on it.
+function local(entity, row) {
+  return { seq: 0, proposition: state.open, entity, entity_id: row.id, action: 'edit', after: row };
+}
+
+// target names the row and the field a command sets, or nothing for a command
+// that adds rather than sets. It is what the outbox folds two edits together
+// on, so a second edit to a title made with no connection replaces the first
+// rather than queueing behind it and going up against a version the server has
+// already moved past.
+export function target(cmd, args) {
+  const spec = optimistic[cmd];
+  if (!spec || !spec.last) return '';
+  const id = spec.id(args);
+  return id ? `${cmd}:${id}` : '';
+}
+
+// baseText is what the field held before the change. It is kept beside a queued
+// command so a refusal an hour later can still say what this device was working
+// from, and it has to be read before the guess is applied.
+export function baseText(cmd, args) {
+  const spec = optimistic[cmd];
+  if (!spec) return null;
+  const row = rowOf(spec.entity, spec.id(args));
+  if (!row) return null;
+  if (cmd === 'block.set') return row.text || '';
+  if (cmd === 'card.title') return row.title || '';
+  if (cmd === 'card.description') return row.description_md || '';
+  return null;
+}
+
+// The snapshot is written in the shape the server renders into the page, so a
+// page the worker served with no payload in it boots from this unchanged.
+function snapshot() {
+  return {
+    me: state.me,
+    workspace: state.workspace,
+    statuses: state.statuses,
+    questions: state.questions,
+    question_labels: state.questionLabels,
+    can: state.can,
+    presence: [],
+    users: [...state.users.values()],
+    propositions: state.props,
+    open: state.open,
+    board: { columns: state.columns, cards: [...state.cards.values()], seq: state.seq },
+    documents: state.documents,
+  };
+}
+
+// VERSION is the hash the modules were served under. A snapshot is a payload in
+// the shape this build of the app reads, so one written by an older build is
+// ignored rather than booted from: the shapes are not promised to match across
+// a deploy, and a cached page is exactly where that would show.
+const VERSION = import.meta.url.match(/\/static\/([^/]+)\//)?.[1] || 'dev';
+
+// ponytail: the whole snapshot is written again two seconds after the last
+// change rather than the rows that moved. At four hundred cards that is not
+// what limits anything, measured: a replay of four hundred commands takes the
+// time its pace asks for whether the snapshot is written through it or held
+// until the end. Beyond a few thousand rows it would have to be one row at a
+// time.
+let keeping = 0;
+
+export function remember() {
+  if (!state.open || keeping || state.fromCache) return;
+  keeping = setTimeout(write, 2000);
+}
+
+function write() {
+  clearTimeout(keeping);
+  keeping = 0;
+  if (!state.open || state.fromCache) return;
+  offline.keep({
+    proposition: state.open,
+    at: Date.now(),
+    v: VERSION,
+    payload: snapshot(),
+  });
+}
+
+// A tab closed inside the two seconds would otherwise leave the last few
+// changes out of the snapshot, which is the reload that most wants them.
+addEventListener('pagehide', () => { if (keeping) write(); });
+
+// askTwice tells a read that could not be made from one that was made and found
+// nothing. The database answers null for the first, which is what a tab holding
+// the version before this one causes, and undefined for the second. A block
+// lifts the moment that tab goes, and this page asks only once and then tells
+// somebody their work is not on this device, so the first is worth one more go.
+// The second is the answer, and asking again would only be slower.
+// The second ask is a second chance rather than a second full wait: a block that
+// has not lifted by now is one the boot should stop holding somebody up for,
+// and the page it draws instead says plainly that it has nothing.
+async function askTwice(read) {
+  const first = await read();
+  if (first !== null) return first;
+  await new Promise((r) => setTimeout(r, 500));
+  return Promise.race([read(), new Promise((r) => setTimeout(() => r(null), 1500))]);
+}
+
+// restore boots this page from what the last visit left behind. It answers
+// false when nothing was cached for the proposition asked for, which is what
+// the page says out loud rather than drawing an empty board.
+export async function restore(open) {
+  const row = await askTwice(() => offline.cached(open));
+  if (!row || row.v !== VERSION) return false;
+  boot(row.payload);
+  state.open = open;
+  // The links and files are a row of their own, written by the only thing that
+  // reads them. A proposition whose panes were never opened has none, and the
+  // panes say so rather than the board refusing to draw.
+  const kept = await askTwice(() => offline.cachedMaterial(open));
+  const material = kept && kept.v === VERSION ? kept : {};
+  state.links = material.links || [];
+  state.files = material.files || [];
+  state.folders = material.folders || [];
+  state.kinds = material.kinds || [];
+  state.attachments = material.attachments || { links: [], files: [] };
+  // The material is what was cached, so material() must not go looking for it.
+  state.loaded = open;
+  // Only the proposition this device saw last can be changed offline. The rest
+  // are read only from whatever was cached, which is what the plan asks for.
+  if ((await offline.newest()) !== open) state.can = { ...state.can, edit: false };
+  return true;
 }

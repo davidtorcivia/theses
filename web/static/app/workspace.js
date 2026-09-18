@@ -8,6 +8,7 @@ import { renderBoard, boardSummary } from './board.js';
 import { renderDocument } from './docs.js';
 import { renderLinks } from './links.js';
 import { renderFiles } from './files.js';
+import { openPanel, outstanding } from './activity.js';
 
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
@@ -15,7 +16,12 @@ export function renderWork() {
   const work = clear($('#work'));
   const p = open();
   if (!p) {
-    work.append(el('p', { class: 'empty', text: 'Nothing here yet.' }));
+    work.append(el('p', {
+      class: 'empty',
+      text: state.fromCache
+        ? 'Nothing of this proposition is on this device. It will be here when the connection is back.'
+        : 'Nothing here yet.',
+    }));
     return;
   }
   document.title = `${num(p.number)} ${p.title} · THESES`;
@@ -43,6 +49,13 @@ function head(p) {
       onclick: (e) => { e.preventDefault(); state.tab = id; location.hash = id; emit(); },
     }, label));
   }
+  // Activity is a panel rather than a pane: it opens beside the work instead of
+  // taking its place, and it carries the count of what has not gone up yet.
+  const held = outstanding();
+  tabs.append(el('button', {
+    class: 'tab' + (state.panel ? ' on' : ''), id: 'activitytab', type: 'button',
+    onclick: openPanel,
+  }, 'Activity', held ? el('i', { text: ' ' + held }) : null));
   tabs.append(el('a', { class: 'tab', href: `/p/${p.id}/settings` }, 'Settings'));
 
   return el('div', { class: 'whead' },

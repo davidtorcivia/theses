@@ -63,7 +63,11 @@ THESES_DEV=1 go run ./cmd/theses
 
 Set `THESES_BASE_URL=http://localhost:8080` and `THESES_DATA_DIR=data` in
 `.env` first. `THESES_DEV=1` reads templates and static files from `web/` and
-reparses the templates on every render, so editing a page needs no restart.
+reparses the templates on every render, so editing a page needs no restart. It
+also stands the service worker down: assets are served under one unchanging
+path with `no-store` on them, and a worker holding copies would serve this
+morning's module through this afternoon's edit. Nothing is cached in
+development, so nothing has to be cleared between edits.
 
 Before every commit:
 
@@ -104,6 +108,26 @@ The notifier also runs one pass a day, a few minutes before the digest time set
 on `/settings`: the cards due tomorrow, the cards that have just gone overdue,
 and a release day tomorrow. The day it ran is recorded before the work, so a
 restart an hour later does not send everything again.
+
+## Deploying over a running version
+
+Browsers hold the app shell, the stylesheet, the modules and the fonts in a
+service worker cache. Nothing has to be cleared by hand. Every asset is served
+under one prefix named after a hash of the whole static tree, the cache is
+named after that hash, and the hash is written into `/sw.js` itself. A deploy
+that changes any asset therefore changes the bytes of the worker, the browser
+installs the new one on its next navigation, and activating it deletes every
+cache that is not the current one. `/sw.js` is served with `no-cache` so the
+browser always checks it.
+
+The consequence worth knowing: a tab left open across a deploy keeps running
+the old modules until it is reloaded, as it did before any of this. What it
+cannot do is come back tomorrow and still be served them.
+
+The one thing a deploy does not carry with it is the store browsers keep
+offline work in, which is at version 2 from this version on: rolling back to a
+build older than this one leaves whatever anybody had queued unreadable in
+their browser, though untouched, until the newer build is served again.
 
 ## Health
 
