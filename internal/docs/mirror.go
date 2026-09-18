@@ -34,6 +34,13 @@ var blockComment = regexp.MustCompile(`^<!-- block (\d+) v(\d+) -->$`)
 // paths returns the file this document is mirrored to. The directory is the
 // proposition, numbered and named the way an object key is, so a listing of
 // data/docs reads like the rail.
+//
+// ponytail: renaming a proposition changes the directory, and the one it used
+// to be is left where it is until somebody edits the document, at which point
+// the file moves and the empty directory stays behind. Nothing imports from it,
+// because the watcher only reads back paths it has itself written. The upgrade
+// path is to move the directory on a proposition rename, which wants an event
+// this package does not listen for yet.
 func (s *Service) paths(ctx context.Context, document int64) (dir, path string, err error) {
 	var number int64
 	var title, slug string
