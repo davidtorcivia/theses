@@ -406,3 +406,48 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// An archived proposition is read only. Restoring it and deleting it are the
+// two things still allowed, so the rail's archived list cannot be edited by
+// accident from a tab that still has it open.
+func TestArchivedPropositionTakesOnlyRestoreAndDelete(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
+	owner := f.who["owner"]
+
+	if _, err := f.ArchiveProposition(ctx, owner, f.prop); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func() error{
+		"edit the proposition": func() error {
+			_, err := f.EditProposition(ctx, owner, f.prop, "Renamed", "", "")
+			return err
+		},
+		"set the status":  func() error { _, err := f.SetStatus(ctx, owner, f.prop, "recording"); return err },
+		"archive again":   func() error { _, err := f.ArchiveProposition(ctx, owner, f.prop); return err },
+		"move a card":     func() error { _, err := f.MoveCard(ctx, owner, card.ID, f.cols[1].ID, 0); return err },
+		"tick a card":     func() error { _, err := f.SetCardDone(ctx, owner, card.ID, true); return err },
+		"add a card":      func() error { _, err := f.CreateCard(ctx, owner, f.cols[0].ID, "New", nil); return err },
+		"rename a column": func() error { _, err := f.RenameColumn(ctx, owner, f.cols[0].ID, "Other"); return err },
+		"post a note":     func() error { _, err := f.PostComment(ctx, owner, card.ID, "hello"); return err },
+		"add a member":    func() error { _, err := f.AddMember(ctx, owner, f.prop, f.who["outsider"].ID); return err },
+	} {
+		if err := run(); !errors.Is(err, ErrArchived) {
+			t.Errorf("%s on an archived proposition gave %v, want ErrArchived", name, err)
+		}
+	}
+
+	if _, err := f.RestoreProposition(ctx, owner, f.prop); err != nil {
+		t.Fatalf("restore was refused: %v", err)
+	}
+	if _, err := f.SetCardDone(ctx, owner, card.ID, true); err != nil {
+		t.Errorf("the board is still read only after a restore: %v", err)
+	}
+	if _, err := f.ArchiveProposition(ctx, owner, f.prop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteProposition(ctx, owner, f.prop); err != nil {
+		t.Errorf("deleting an archived proposition was refused: %v", err)
+	}
+}

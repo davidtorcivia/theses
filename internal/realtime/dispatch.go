@@ -143,7 +143,8 @@ func reason(err error) string {
 	case errors.Is(err, core.ErrNotFound):
 		return "that is no longer there"
 	case errors.Is(err, core.ErrNotUndoable), errors.Is(err, board.ErrColumnNotEmpty),
-		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty):
+		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty),
+		errors.Is(err, board.ErrArchived):
 		return err.Error()
 	default:
 		return "that did not go through"
