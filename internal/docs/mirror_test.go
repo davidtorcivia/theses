@@ -446,3 +446,95 @@ func TestRunImportsAHandEditAndNotItsOwnWrites(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// An edit made while the process was down is read in at the next start rather
+// than written over by the first thing anybody does in the browser.
+func TestRunImportsAnEditMadeWhileTheProcessWasDown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f, path := mirrorFixture(t)
+	f.Debounce = 40 * time.Millisecond
+	f.Every = 0
+
+	edited := strings.Replace(read(t, path), "## Is it true?", "## Is it true, though?", 1)
+	if err := os.WriteFile(path, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A restart: the process remembers nothing about what it wrote.
+	f.mu.Lock()
+	f.written = map[string]mirrored{}
+	f.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	waitFor(t, "the edit made while the process was down", func() bool {
+		return f.blocks(t)[1].Text == "## Is it true, though?"
+	})
+	if list := revisionsOf(t, f); len(list) != 1 || list[0].Reason != ReasonPreImport {
+		t.Fatalf("revisions are %+v", list)
+	}
+	cancel()
+	<-done
+}
+
+// The file an import leaves behind carries a marker on every block the database
+// would not give up, and the events that import published must not take them
+// off again a moment later.
+func TestRunKeepsTheConflictMarkersItWrote(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := setup(t, t.TempDir())
+	f.Debounce = 40 * time.Millisecond
+	f.Every = 0
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	_, path, err := f.paths(ctx, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the mirror to be written", func() bool {
+		_, err := os.Stat(path)
+		return err == nil
+	})
+	stale := read(t, path)
+
+	blocks := f.blocks(t)
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version,
+		"## Is it true in the browser?"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the browser's change to reach the file", func() bool {
+		return strings.Contains(read(t, path), "## Is it true in the browser?")
+	})
+
+	// The terminal saves the version it had, with its own change to that block
+	// and a paragraph at the end. The paragraph goes in, which is what makes
+	// this worth testing: the commands the import applies publish events of
+	// their own, and writing the file for one of those would take the marker
+	// off the block the import could not apply.
+	if err := os.WriteFile(path,
+		[]byte(strings.Replace(stale, "## Is it true?", "## Is it true at the terminal?", 1)+
+			"\nAnd a paragraph typed into the file.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the paragraph typed into the file", func() bool {
+		blocks := f.blocks(t)
+		return blocks[len(blocks)-1].Text == "And a paragraph typed into the file."
+	})
+	waitFor(t, "the conflict marker", func() bool {
+		return strings.Contains(read(t, path), conflictMarker)
+	})
+	deadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if !strings.Contains(read(t, path), conflictMarker) {
+			t.Fatal("the marker was written and then taken off again")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if f.blocks(t)[1].Text != "## Is it true in the browser?" {
+		t.Fatalf("the database gave way to the file: %q", f.blocks(t)[1].Text)
+	}
+	cancel()
+	<-done
+}

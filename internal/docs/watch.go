@@ -131,9 +131,14 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher, import
 			s.log.Warn("document not mirrored", "document", id, "err", err)
 			continue
 		}
-		if content, err := os.ReadFile(path); err == nil {
+		if _, err := os.Stat(path); err == nil {
+			// The file is this document's, but nothing here wrote it, so what
+			// is in it is unknown: an empty hash matches nothing, which makes
+			// the import read it rather than mistake it for our own write and
+			// stops the next command writing over an edit made while the
+			// process was down.
 			s.mu.Lock()
-			s.written[path] = mirrored{document: id, hash: hashOf(content)}
+			s.written[path] = mirrored{document: id}
 			s.mu.Unlock()
 			s.watch(watcher, filepath.Dir(path))
 			select {
@@ -154,6 +159,12 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher, import
 // a proposition's directory is added the first time something is written into
 // it.
 func (s *Service) applied(ctx context.Context, watcher *fsnotify.Watcher, e core.Event) {
+	// An import's own commands need no file written: it wrote one itself when
+	// it finished, with the conflict markers on the blocks the database would
+	// not give up, and writing again here would take those markers off.
+	if e.Actor.Kind == core.KindFile {
+		return
+	}
 	var document int64
 	switch e.Entity {
 	case "document":

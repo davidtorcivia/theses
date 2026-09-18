@@ -280,7 +280,11 @@ function editor(id, text, base) {
   // A blur raised by the rebuild is not somebody leaving the block. The node is
   // put back by the same render and afterRender takes the caret with it.
   area.addEventListener('blur', () => { if (!rendering) commit(id); });
-  editing = { id, node, area, base };
+  // opened is the text the editor started from, so that leaving a block
+  // without typing in it writes nothing even when somebody else changed it in
+  // the meantime; clashed is a block reopened on a refusal, where blurring
+  // again means keep mine.
+  editing = { id, node, area, base, opened: text, clashed: !!(conflict && conflict.id === id) };
   where('block:' + id);
   // The height is set after the node is in the page, because a detached
   // textarea has no scroll height to measure.
@@ -290,15 +294,13 @@ function editor(id, text, base) {
 
 function commit(id) {
   if (!editing || editing.id !== id) return;
-  const { area, base } = editing;
+  const { area, base, opened, clashed } = editing;
   const text = area.value;
   editing = null;
-  const was = conflict;
   conflict = null;
   where(docWhere());
 
-  const b = blockOf(id);
-  if (!b || (text === b.text && !was)) { emit(); return; }
+  if (!blockOf(id) || (text === opened && !clashed)) { emit(); return; }
   send('block.set', { block: id, base, text }).catch((err) => {
     if (err instanceof Conflict) {
       // The editor stays open with what this person wrote, above a line saying
