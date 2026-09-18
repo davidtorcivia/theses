@@ -56,6 +56,7 @@ export const state = {
   // panel is the activity drawer, with its rows and the refused replays.
   fromCache: false,
   waiting: 0,
+  waitingHere: 0,
   panel: false,
   activity: [],
   refused: [],
@@ -331,12 +332,17 @@ export function apply(ev) {
 // Only the commands that change a row already on the screen are in here. A
 // create has no id to draw under until the server has given it one, and waiting
 // the width of a socket round trip for one is not something anybody notices.
+//
+// last says the command sets a field to a value, so two of them on one row are
+// the second one. Those are the ones the outbox folds together while there is
+// nothing to send them to. Assigning is not one of them: two assignments are
+// two people.
 const optimistic = {
-  'card.title': { entity: 'card', id: (a) => a.card, fields: (a) => ({ title: a.title }) },
-  'card.description': { entity: 'card', id: (a) => a.card, fields: (a) => ({ description_md: a.text }) },
-  'card.due': { entity: 'card', id: (a) => a.card, fields: (a) => ({ due_date: a.due }) },
-  'card.question': { entity: 'card', id: (a) => a.card, fields: (a) => ({ question: a.question }) },
-  'card.done': { entity: 'card', id: (a) => a.card, fields: (a) => ({ done_at: a.done ? seconds() : null }) },
+  'card.title': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ title: a.title }) },
+  'card.description': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ description_md: a.text }) },
+  'card.due': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ due_date: a.due }) },
+  'card.question': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ question: a.question }) },
+  'card.done': { entity: 'card', id: (a) => a.card, last: true, fields: (a) => ({ done_at: a.done ? seconds() : null }) },
   'card.assign': {
     entity: 'card', id: (a) => a.card,
     fields: (a, row) => ({ assignees: [...new Set([...(row.assignees || []), a.user])] }),
@@ -346,15 +352,15 @@ const optimistic = {
     fields: (a, row) => ({ assignees: (row.assignees || []).filter((id) => id !== a.user) }),
   },
   'card.move': {
-    entity: 'card', id: (a) => a.card,
+    entity: 'card', id: (a) => a.card, last: true,
     fields: (a, row) => ({ column_id: a.column, position: behind(a.after, row) }),
   },
-  'column.rename': { entity: 'column', id: (a) => a.column, fields: (a) => ({ name: a.title }) },
-  'checklist.toggle': { entity: 'checklist_item', id: (a) => a.item, fields: (a) => ({ done: a.done }) },
-  'block.set': { entity: 'block', id: (a) => a.block, fields: (a) => ({ text: a.text }) },
-  'proposition.status': { entity: 'proposition', id: (a) => a.proposition, fields: (a) => ({ status: a.status }) },
+  'column.rename': { entity: 'column', id: (a) => a.column, last: true, fields: (a) => ({ name: a.title }) },
+  'checklist.toggle': { entity: 'checklist_item', id: (a) => a.item, last: true, fields: (a) => ({ done: a.done }) },
+  'block.set': { entity: 'block', id: (a) => a.block, last: true, fields: (a) => ({ text: a.text }) },
+  'proposition.status': { entity: 'proposition', id: (a) => a.proposition, last: true, fields: (a) => ({ status: a.status }) },
   'proposition.edit': {
-    entity: 'proposition', id: (a) => a.proposition,
+    entity: 'proposition', id: (a) => a.proposition, last: true,
     fields: (a) => ({ title: a.title, statement: a.statement, blurb: a.blurb }),
   },
 };
@@ -409,17 +415,36 @@ export function predict(cmd, args) {
   if (!row) return null;
   const was = { ...row };
   apply(local(spec.entity, { ...row, ...spec.fields(args, row) }));
-  // ponytail: the row goes back exactly as it was, so a refusal arriving after
-  // somebody else changed the same row puts the older value back until the next
-  // event corrects it. The upgrade is asking the event stream for that one row
-  // instead of remembering it.
-  return () => apply(local(spec.entity, was));
+  // Undrawing a refusal puts the row back as it was. A conflict does better
+  // than that: it carries the field the server actually holds and the version
+  // it holds it at, which is where the row is now rather than where it was when
+  // this person started typing.
+  //
+  // ponytail: a refusal that is not a conflict has no such answer, so the row
+  // goes back to what it was here, which is stale if somebody else changed it
+  // meanwhile. It is corrected by the next event on that row. The upgrade is
+  // asking the event stream for that one row instead of remembering it.
+  return (detail) => apply(local(spec.entity, detail && detail.field
+    ? { ...was, [detail.field]: detail.current, version: detail.version }
+    : was));
 }
 
 // local is an event this tab made up. Sequence zero, so it never moves the
 // stream's place: the real one arrives with a number on it.
 function local(entity, row) {
   return { seq: 0, proposition: state.open, entity, entity_id: row.id, action: 'edit', after: row };
+}
+
+// target names the row and the field a command sets, or nothing for a command
+// that adds rather than sets. It is what the outbox folds two edits together
+// on, so a second edit to a title made with no connection replaces the first
+// rather than queueing behind it and going up against a version the server has
+// already moved past.
+export function target(cmd, args) {
+  const spec = optimistic[cmd];
+  if (!spec || !spec.last) return '';
+  const id = spec.id(args);
+  return id ? `${cmd}:${id}` : '';
 }
 
 // baseText is what the field held before the change. It is kept beside a queued
@@ -455,35 +480,50 @@ function snapshot() {
   };
 }
 
+// VERSION is the hash the modules were served under. A snapshot is a payload in
+// the shape this build of the app reads, so one written by an older build is
+// ignored rather than booted from: the shapes are not promised to match across
+// a deploy, and a cached page is exactly where that would show.
+const VERSION = import.meta.url.match(/\/static\/([^/]+)\//)?.[1] || 'dev';
+
 // ponytail: the whole snapshot is written again two seconds after the last
 // change rather than the rows that moved. At a few hundred cards that is a
 // millisecond; at a hundred thousand it would have to be one row at a time.
 let keeping = 0;
 export function remember() {
   if (!state.open || keeping || state.fromCache) return;
-  keeping = setTimeout(() => {
-    keeping = 0;
-    offline.keep({
-      proposition: state.open,
-      at: Date.now(),
-      payload: snapshot(),
-      material: {
-        links: state.links,
-        files: state.files,
-        folders: state.folders,
-        kinds: state.kinds,
-        attachments: state.attachments,
-      },
-    });
-  }, 2000);
+  keeping = setTimeout(write, 2000);
 }
+
+function write() {
+  clearTimeout(keeping);
+  keeping = 0;
+  if (!state.open || state.fromCache) return;
+  offline.keep({
+    proposition: state.open,
+    at: Date.now(),
+    v: VERSION,
+    payload: snapshot(),
+    material: {
+      links: state.links,
+      files: state.files,
+      folders: state.folders,
+      kinds: state.kinds,
+      attachments: state.attachments,
+    },
+  });
+}
+
+// A tab closed inside the two seconds would otherwise leave the last few
+// changes out of the snapshot, which is the reload that most wants them.
+addEventListener('pagehide', () => { if (keeping) write(); });
 
 // restore boots this page from what the last visit left behind. It answers
 // false when nothing was cached for the proposition asked for, which is what
 // the page says out loud rather than drawing an empty board.
 export async function restore(open) {
   const row = await offline.cached(open);
-  if (!row) return false;
+  if (!row || row.v !== VERSION) return false;
   boot(row.payload);
   state.open = open;
   const material = row.material || {};

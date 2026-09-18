@@ -3,6 +3,8 @@
 // these are requests with answers of their own, a presigned URL or a list, and
 // they go over fetch to the same commands under /app.
 
+import * as offline from './offline.js';
+
 // The CSRF token this page was rendered with. Every request that is not a read
 // carries it in a header, because these bodies are JSON and have no form field
 // to put it in.
@@ -37,6 +39,9 @@ async function call(method, path, body) {
   // caller would be a crash three lines later, so it is a refusal here.
   if (!/json/i.test(res.headers.get('Content-Type') || '')) {
     if (res.redirected || res.status === 200) {
+      // There is no session behind this browser any more, so what this device
+      // holds of the workspace goes with it.
+      offline.signedOut();
       throw new Refused('Your session has ended. Sign in again.', 401);
     }
     throw new Refused('That did not go through.', res.status);

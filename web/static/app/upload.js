@@ -19,7 +19,7 @@ export const pending = offline.uploads;
 // start uploads one file and returns the row the server marked ready. hooks
 // takes started, called with the row as soon as it exists so the list can show
 // it filling up, and progress, called with a fraction between 0 and 1.
-export async function start(proposition, file, folder, replace, hooks) {
+export async function start(proposition, me, file, folder, replace, hooks) {
   const up = await api.post('/files', {
     proposition,
     name: file.name,
@@ -27,18 +27,25 @@ export async function start(proposition, file, folder, replace, hooks) {
     size: file.size,
     replace: replace || 0,
   });
-  await remember({ file: up.file.id, handle: file, folder, proposition });
+  await remember({ file: up.file.id, handle: file, folder, proposition, me });
   hooks.started(up.file);
   return carryOn(up, file, hooks.progress);
 }
 
 // hold keeps a file that was dropped with no connection. There is no file id
 // yet, because only the server gives those out, so the note is filed under a
-// negative one of this device's own making until the upload can start.
-export async function hold(proposition, file, folder, replace) {
-  const id = -Date.now();
-  await remember({ file: id, handle: file, folder, proposition, replace: replace || 0, queued: true });
-  return id;
+// negative one of this device's own making until the upload can start. The
+// counter is what keeps two files dropped in the same millisecond apart.
+let held = 0;
+
+export async function hold(proposition, me, file, folder, replace) {
+  const id = -(Date.now() * 1000 + (++held % 1000));
+  const kept = await remember({
+    file: id, handle: file, folder, proposition, me, replace: replace || 0, queued: true,
+  });
+  // A browser that will not keep it cannot promise to send it later, and a file
+  // promised and then dropped is worse than one refused out loud.
+  return kept === null ? 0 : id;
 }
 
 // resume picks an upload up again from whatever the bucket already holds. The

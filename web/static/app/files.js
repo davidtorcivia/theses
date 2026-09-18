@@ -101,13 +101,17 @@ async function run(file, folder, replace) {
   // the bucket is on the far side of the same network. The file waits in the
   // list instead and goes up when there is a line again.
   if (!navigator.onLine) {
-    const held = await upload.hold(state.open, file, folder, replace);
+    const held = await upload.hold(state.open, state.me, file, folder, replace);
+    if (!held) {
+      say('This browser will not keep files for later. Add it again when the connection is back.');
+      return;
+    }
     state.uploads.set(held, { name: file.name, at: 0, queued: true });
     emit();
     return;
   }
   try {
-    const ready = await upload.start(state.open, file, folder, replace, {
+    const ready = await upload.start(state.open, state.me, file, folder, replace, {
       // The row exists before a byte has moved, so the list shows it filling
       // up. The same row arrives on the socket; applying it twice is applying
       // it once, because every payload is the whole row.
@@ -162,6 +166,11 @@ async function carryOn() {
     return;
   }
   for (const row of rows) {
+    // A note left by whoever was signed in before is not this person's to send.
+    if (row.me && state.me && row.me !== state.me) {
+      await upload.forget(row.file);
+      continue;
+    }
     if (row.proposition !== state.open) continue;
     const name = row.handle ? row.handle.name : '';
     // A file that waited for a connection has no server row yet, so it starts
