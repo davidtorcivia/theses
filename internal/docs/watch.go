@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -53,9 +54,39 @@ func (s *Service) Run(ctx context.Context) {
 	sub := s.Bus.Subscribe(0)
 	defer sub.Close()
 
-	imports := make(chan string, 16)
+	// A debounced import is held in a set rather than sent down a channel: a
+	// channel with room for sixteen drops the seventeenth, and a dropped import
+	// is a document that never gets read back. The channel here only wakes the
+	// loop, and losing a wake costs nothing because the work is still in the
+	// set when the next one arrives.
+	var pendMu sync.Mutex
+	pending := map[string]bool{}
+	wake := make(chan struct{}, 1)
+	poke := func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	take := func() []string {
+		pendMu.Lock()
+		defer pendMu.Unlock()
+		paths := make([]string, 0, len(pending))
+		for path := range pending {
+			paths = append(paths, path)
+			delete(pending, path)
+		}
+		return paths
+	}
+
 	timers := map[string]*time.Timer{}
-	s.catchUp(ctx, watcher, imports)
+	// Whatever was already on disk is read before the loop starts, so that no
+	// number of documents can outrun anything.
+	for _, path := range s.catchUp(ctx, watcher) {
+		if err := s.Import(ctx, path); err != nil {
+			s.log.Warn("document not imported", "err", err)
+		}
+	}
 
 	for {
 		select {
@@ -82,15 +113,17 @@ func (s *Service) Run(ctx context.Context) {
 				continue
 			}
 			timers[path] = time.AfterFunc(s.Debounce, func() {
-				select {
-				case imports <- path:
-				default:
-				}
+				pendMu.Lock()
+				pending[path] = true
+				pendMu.Unlock()
+				poke()
 			})
-		case path := <-imports:
-			delete(timers, path)
-			if err := s.Import(ctx, path); err != nil {
-				s.log.Warn("document not imported", "err", err)
+		case <-wake:
+			for _, path := range take() {
+				delete(timers, path)
+				if err := s.Import(ctx, path); err != nil {
+					s.log.Warn("document not imported", "err", err)
+				}
 			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
@@ -101,15 +134,14 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// catchUp brings the mirror up to date with the database at start. A file that
-// is already there was written by an earlier run: its bytes are taken as the
-// last thing this process wrote and it is queued for import, so an edit made
-// while the process was down is applied rather than overwritten.
-func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher, imports chan<- string) {
+// catchUp brings the mirror up to date with the database at start and returns
+// the files it found already there, for the caller to read back: one written by
+// an earlier run may hold an edit made while the process was down.
+func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher) []string {
 	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM documents`)
 	if err != nil {
 		s.log.Error("documents not mirrored", "err", err)
-		return
+		return nil
 	}
 	defer rows.Close()
 	var ids []int64
@@ -117,14 +149,15 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher, import
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			s.log.Error("documents not mirrored", "err", err)
-			return
+			return nil
 		}
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		s.log.Error("documents not mirrored", "err", err)
-		return
+		return nil
 	}
+	var found []string
 	for _, id := range ids {
 		_, path, err := s.paths(ctx, id)
 		if err != nil {
@@ -141,10 +174,7 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher, import
 			s.written[path] = mirrored{document: id}
 			s.mu.Unlock()
 			s.watch(watcher, filepath.Dir(path))
-			select {
-			case imports <- path:
-			default:
-			}
+			found = append(found, path)
 			continue
 		}
 		if err := s.Mirror(ctx, id, nil, false); err != nil {
@@ -153,6 +183,7 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher, import
 		}
 		s.watch(watcher, filepath.Dir(path))
 	}
+	return found
 }
 
 // applied writes the file behind one command. fsnotify watches directories, so

@@ -188,8 +188,9 @@ export function apply(ev) {
         }
         break;
       }
-      // Only a create carries the blocks it seeded; a rename carries the row
-      // alone, so the blocks already here are kept.
+      // A document event carries the row alone. The blocks a new document
+      // starts from arrive as their own inserts, in the same transaction, so a
+      // document seen for the first time starts empty and fills.
       const at = state.documents.findIndex((d) => d.id === now.id);
       if (at < 0) state.documents.push({ blocks: [], ...now });
       else state.documents[at] = { ...state.documents[at], ...now };

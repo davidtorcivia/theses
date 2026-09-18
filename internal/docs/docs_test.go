@@ -259,12 +259,16 @@ func TestSetBlockMergesOrConflicts(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tc := range []struct {
-		name          string
-		base, theirs  string
-		ours          string
-		want          string
-		wantConflict  bool
-		wantThenValue string
+		name         string
+		base, theirs string
+		ours         string
+		want         string
+		wantConflict bool
+		// seeded uses the first block the document was created with rather
+		// than one this test inserted. A block written when the document was
+		// made has to be as mergeable as any other, which it is not if the
+		// text it started from left no trace to recover.
+		seeded bool
 	}{
 		{name: "clean on the current version", base: "One two three.", theirs: "",
 			ours: "One two four.", want: "One two four."},
@@ -280,17 +284,31 @@ func TestSetBlockMergesOrConflicts(t *testing.T) {
 			wantConflict: true},
 		{name: "the same change from both sides is not a conflict",
 			base: "One.", theirs: "Two.", ours: "Two.", want: "Two."},
+		{name: "a block the document was created with merges like any other",
+			seeded: true,
+			base:   "# The sea is a battery.",
+			theirs: "# The tide is a battery.",
+			ours:   "# The sea is a flywheel.",
+			want:   "# The tide is a flywheel."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t, "")
-			inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.base)
-			if err != nil {
-				t.Fatal(err)
+			var id int64
+			if tc.seeded {
+				id = f.blocks(t)[0].ID
+			} else {
+				inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.base)
+				if err != nil {
+					t.Fatal(err)
+				}
+				id = inserted.EntityID
 			}
-			id := inserted.EntityID
 			started, err := GetBlock(ctx, f.db, id)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if started.Text != tc.base {
+				t.Fatalf("the block starts at %q, want %q", started.Text, tc.base)
 			}
 			if tc.theirs != "" {
 				if _, err := f.SetBlock(ctx, f.who["owner"], id, started.Version, tc.theirs); err != nil {

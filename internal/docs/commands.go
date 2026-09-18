@@ -159,7 +159,40 @@ func (s *Service) CreateDocument(ctx context.Context, a core.Actor, proposition 
 	if s.Template != nil {
 		template = s.Template()
 	}
-	return s.do(ctx, a, proposition, auth.CanEdit, "document", "create",
+	// The row and the blocks it starts from go in one transaction, so a
+	// refusal partway through leaves no half made document, and the blocks go
+	// in as ordinary insert commands rather than as raw rows: the text a block
+	// holds at a version is recovered from the activity log, and a block that
+	// never wrote one there could never be merged, only refused.
+	var created core.Event
+	err = s.Together(ctx, func(ctx context.Context) error {
+		e, start, err := s.createDocumentRow(ctx, a, proposition, name, template)
+		if err != nil {
+			return err
+		}
+		created = e
+		after := int64(0)
+		for _, text := range Paragraphs(start) {
+			block, err := s.insertOne(ctx, a, proposition, e.EntityID, after, text)
+			if err != nil {
+				return err
+			}
+			after = block.EntityID
+		}
+		return nil
+	})
+	return created, err
+}
+
+// createDocumentRow writes the document row and returns the text it starts
+// from: the workspace's template for the first document of a proposition, with
+// the proposition's own statement in place of the placeholder, and the title
+// for every one after it, because a second document is not a second copy of the
+// research outline.
+func (s *Service) createDocumentRow(ctx context.Context, a core.Actor, proposition int64,
+	name, template string) (core.Event, string, error) {
+	var start string
+	e, err := s.do(ctx, a, proposition, auth.CanEdit, "document", "create",
 		func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 			var count int
 			var statement string
@@ -188,35 +221,17 @@ func (s *Service) CreateDocument(ctx context.Context, a core.Actor, proposition 
 				return core.Change{}, err
 			}
 
-			start := "# " + name
+			start = "# " + name
 			if count == 0 && strings.TrimSpace(template) != "" {
 				start = strings.ReplaceAll(template, "{statement}", statement)
 			}
-			position := ""
-			for _, text := range Paragraphs(start) {
-				position = frac.Between(position, "")
-				if _, err := tx.ExecContext(ctx, `INSERT INTO blocks
-					(document_id, position, text, updated_by, updated_at)
-					VALUES (?, ?, ?, ?, unixepoch())`, id, position, text, writer(a)); err != nil {
-					return core.Change{}, err
-				}
-			}
-			// A create carries the blocks it seeded as well as the row, which
-			// is the one event that does: they were written in this
-			// transaction and no block.insert was published for them, so a tab
-			// would otherwise show a document with nothing in it until the
-			// next reload. Every key the row has is still there.
 			document, err := GetDocument(ctx, tx, id)
 			if err != nil {
 				return core.Change{}, err
 			}
-			blocks, err := Blocks(ctx, tx, id)
-			if err != nil {
-				return core.Change{}, err
-			}
-			return core.Change{Entity: "document", EntityID: id, Action: "create",
-				After: Doc{Document: document, Blocks: blocks}}, nil
+			return core.Change{Entity: "document", EntityID: id, Action: "create", After: document}, nil
 		})
+	return e, start, err
 }
 
 // document is the shape every command on one document has.
@@ -322,17 +337,25 @@ func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after
 	if err != nil {
 		return core.Event{}, err
 	}
+	proposition, err := PropositionOfDocument(ctx, s.DB, document)
+	if err != nil {
+		return core.Event{}, err
+	}
 	parts := Paragraphs(text)
 	if len(parts) == 0 {
 		parts = []string{""}
 	}
 	if len(parts) == 1 {
-		return s.insertOne(ctx, a, document, after, parts[0])
+		e, err := s.insertOne(ctx, a, proposition, document, after, parts[0])
+		if err == nil {
+			s.touch(document, a)
+		}
+		return e, err
 	}
 	var first core.Event
 	err = s.Together(ctx, func(ctx context.Context) error {
 		for i, part := range parts {
-			e, err := s.insertOne(ctx, a, document, after, part)
+			e, err := s.insertOne(ctx, a, proposition, document, after, part)
 			if err != nil {
 				return err
 			}
@@ -343,14 +366,16 @@ func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after
 		}
 		return nil
 	})
+	if err == nil {
+		s.touch(document, a)
+	}
 	return first, err
 }
 
-func (s *Service) insertOne(ctx context.Context, a core.Actor, document, after int64, text string) (core.Event, error) {
-	proposition, err := PropositionOfDocument(ctx, s.DB, document)
-	if err != nil {
-		return core.Event{}, err
-	}
+// insertOne is told the proposition rather than looking it up, because the
+// blocks a document starts from are written in the transaction that makes the
+// document, where no other connection can yet see the row to look it up from.
+func (s *Service) insertOne(ctx context.Context, a core.Actor, proposition, document, after int64, text string) (core.Event, error) {
 	e, err := s.do(ctx, a, proposition, auth.CanEdit, "block", "insert",
 		func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 			position, err := place(ctx, tx, document, after, 0)
@@ -373,9 +398,6 @@ func (s *Service) insertOne(ctx context.Context, a core.Actor, document, after i
 			}
 			return core.Change{Entity: "block", EntityID: id, Action: "insert", After: block}, nil
 		})
-	if err == nil {
-		s.touch(document, a)
-	}
 	return e, err
 }
 
@@ -433,6 +455,14 @@ func (s *Service) SetBlock(ctx context.Context, a core.Actor, id, base int64, te
 	if len(parts) == 1 {
 		return s.setOne(ctx, a, id, base, parts[0])
 	}
+	proposition, err := PropositionOfBlock(ctx, s.DB, id)
+	if err != nil {
+		return core.Event{}, err
+	}
+	document, err := DocumentOfBlock(ctx, s.DB, id)
+	if err != nil {
+		return core.Event{}, err
+	}
 	// More than one paragraph went into one block, which is a paste. The first
 	// stays where it is and the rest follow it, in one transaction so that a
 	// conflict on the first leaves none of them behind.
@@ -443,13 +473,9 @@ func (s *Service) SetBlock(ctx context.Context, a core.Actor, id, base int64, te
 			return err
 		}
 		first = e
-		document, err := DocumentOfBlock(ctx, s.DB, id)
-		if err != nil {
-			return err
-		}
 		after := id
 		for _, part := range parts[1:] {
-			inserted, err := s.insertOne(ctx, a, document, after, part)
+			inserted, err := s.insertOne(ctx, a, proposition, document, after, part)
 			if err != nil {
 				return err
 			}

@@ -50,8 +50,12 @@ func (s *Service) paths(ctx context.Context, document int64) (dir, path string, 
 	if err != nil {
 		return "", "", err
 	}
+	// The slug stored on the row is already a slug, and already the one thing
+	// that tells two documents of a proposition apart. Running it through Slug
+	// again would cut it back to sixty characters and take the number that
+	// makes it unique off the end, so two documents would mirror to one file.
 	dir = filepath.Join(s.root, fmt.Sprintf("%d-%s", number, Slug(title)))
-	path = filepath.Join(dir, Slug(slug)+".md")
+	path = filepath.Join(dir, slug+".md")
 	if err := within(s.root, path); err != nil {
 		return "", "", err
 	}
@@ -125,12 +129,19 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	if err != nil {
 		return err
 	}
-	content := render(d, blocks, conflicted)
-	sum := hashOf(content)
-
 	s.mu.Lock()
 	was, known := s.written[path]
 	s.mu.Unlock()
+	// Only an import knows what is in conflict, and it says so by forcing the
+	// write. Every other write keeps the markers the last import left, because
+	// they are the only notice the person at the terminal has that a block of
+	// theirs did not go in, and an unrelated edit must not take it away.
+	if !force {
+		conflicted = was.conflicted
+	}
+	content := render(d, blocks, conflicted)
+	sum := hashOf(content)
+
 	if known && was.hash == sum && !force {
 		return nil
 	}
@@ -146,9 +157,21 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	// The hash is recorded before the bytes land, so that the watcher cannot
 	// see the write before it knows the write was ours.
 	s.mu.Lock()
-	s.written[path] = mirrored{document: document, hash: sum}
+	s.written[path] = mirrored{document: document, hash: sum, conflicted: conflicted}
 	s.mu.Unlock()
 	if err := writeAtomic(path, content); err != nil {
+		// Nothing landed, so what this process last wrote is still what it
+		// wrote before. Leaving the new hash recorded would make every later
+		// write read the file, find it different from it, take that for a hand
+		// edit waiting to be imported, and skip: one failed rename would stop
+		// this document mirroring for the life of the process.
+		s.mu.Lock()
+		if known {
+			s.written[path] = was
+		} else {
+			delete(s.written, path)
+		}
+		s.mu.Unlock()
 		return err
 	}
 	// A rename moved the file; the one it used to be is not the mirror of

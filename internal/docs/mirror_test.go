@@ -3,6 +3,7 @@ package docs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -535,6 +536,208 @@ func TestRunKeepsTheConflictMarkersItWrote(t *testing.T) {
 	if f.blocks(t)[1].Text != "## Is it true in the browser?" {
 		t.Fatalf("the database gave way to the file: %q", f.blocks(t)[1].Text)
 	}
+	cancel()
+	<-done
+}
+
+// Two documents whose names are the same for the first sixty characters get
+// different slugs, and the mirror must keep them: running the slug through Slug
+// again would cut the number that made it unique off the end and write both
+// documents to one file.
+func TestMirrorKeepsTwoLongNamesApart(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, t.TempDir())
+	long := strings.Repeat("severn", 10) // sixty characters, no trailing hyphen
+	var ids []int64
+	for _, name := range []string{long + " one", long + " two"} {
+		e, err := f.CreateDocument(ctx, f.who["editor"], f.prop, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, e.EntityID)
+		if _, err := f.InsertBlock(ctx, f.who["editor"], e.EntityID, 0, "In "+name+"."); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Mirror(ctx, e.EntityID, nil, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		_, path, err := f.paths(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[path] {
+			t.Fatalf("two documents mirror to %s", path)
+		}
+		seen[path] = true
+		file, err := parseMirror([]byte(read(t, path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if file.Document != id {
+			t.Fatalf("%s holds document %d, want %d", path, file.Document, id)
+		}
+	}
+}
+
+// A write that does not land must leave behind no record of having landed. One
+// failed rename used to stop the document mirroring for good: every later write
+// read the file, found it different from the hash it thought it had written,
+// took that for a hand edit and skipped.
+func TestMirrorRecoversFromAWriteThatDidNotLand(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	original := read(t, path)
+	blocks := f.blocks(t)
+
+	// The file is replaced by a directory of the same name, which no rename
+	// can be completed over.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "in the way"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, "# Written while blocked"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err == nil {
+		t.Fatal("the mirror reported a write it could not make")
+	}
+
+	// The obstruction goes and the file is put back as it was, which is what
+	// the mirror should still believe it last wrote.
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after := f.blocks(t)
+	if _, err := f.SetBlock(ctx, f.who["editor"], after[0].ID, after[0].Version, "# Written after the block cleared"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, path), "# Written after the block cleared") {
+		t.Fatalf("the mirror never wrote again:\n%s", read(t, path))
+	}
+}
+
+// The markers an import leaves survive every write but the next import's, so a
+// change made in the browser to some other block does not take away the only
+// notice the person at the terminal has.
+func TestMirrorKeepsTheMarkersUntilAnImportClearsThem(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	blocks := f.blocks(t)
+
+	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("no conflict marker:\n%s", read(t, path))
+	}
+
+	// A change to another block rewrites the file, and the marker stays.
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[2].ID, blocks[2].Version, "## Who pays for it?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	marked := read(t, path)
+	if !strings.Contains(marked, conflictMarker) {
+		t.Fatalf("an unrelated change took the marker off:\n%s", marked)
+	}
+	if !strings.Contains(marked, "## Who pays for it?") {
+		t.Fatalf("the unrelated change did not reach the file:\n%s", marked)
+	}
+
+	// The terminal takes the marker out, agreeing with what the database has,
+	// and the next import clears it for good.
+	if err := os.WriteFile(path, []byte(strings.Replace(marked, conflictMarker+"\n", "", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("the marker outlived the conflict:\n%s", read(t, path))
+	}
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, f.blocks(t)[0].Version, "# Later still"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(read(t, path), conflictMarker) {
+		t.Fatalf("the marker came back:\n%s", read(t, path))
+	}
+}
+
+// Every document found on disk at start is read back, however many there are.
+// A queue with room for sixteen used to drop the rest, and because their files
+// were already recorded as unknown they then stopped mirroring altogether.
+func TestRunImportsEveryFileItFindsAtStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := setup(t, t.TempDir())
+	f.Debounce = 40 * time.Millisecond
+	f.Every = 0
+
+	const documents = 20
+	paths := map[int64]string{}
+	for i := 0; i < documents; i++ {
+		e, err := f.CreateDocument(ctx, f.who["editor"], f.prop, fmt.Sprintf("Note %d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Mirror(ctx, e.EntityID, nil, false); err != nil {
+			t.Fatal(err)
+		}
+		_, path, err := f.paths(ctx, e.EntityID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths[e.EntityID] = path
+		if err := os.WriteFile(path,
+			[]byte(read(t, path)+fmt.Sprintf("\nTyped into file %d.\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A restart: the process remembers nothing about what it wrote.
+	f.mu.Lock()
+	f.written = map[string]mirrored{}
+	f.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	waitFor(t, "every file to be read back", func() bool {
+		for id := range paths {
+			blocks, err := Blocks(ctx, f.db, id)
+			if err != nil || len(blocks) == 0 {
+				return false
+			}
+			if !strings.HasPrefix(blocks[len(blocks)-1].Text, "Typed into file ") {
+				return false
+			}
+		}
+		return true
+	})
 	cancel()
 	<-done
 }
