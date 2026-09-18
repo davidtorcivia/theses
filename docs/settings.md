@@ -33,6 +33,12 @@ needs a CORS rule allowing `PUT`, `GET` and `HEAD` from the origin in
 apply it on the bucket before the first upload. `POST /settings/test/storage`
 writes, reads and deletes a probe object and reports what happened.
 
+The second button is the half the server cannot do for itself: the page asks
+for a presigned PUT, has this browser try it against the bucket the way an
+upload does, and then asks again to have the probe object removed. A bucket
+whose CORS rule is missing or names another origin fails here rather than on
+somebody's first upload.
+
 Changing a bucket does not move what is already in the old one.
 
 ## Mail
@@ -53,17 +59,24 @@ name allowed. Owners always enrol, whatever the first is set to.
 
 ## Notifications
 
-The defaults a new account starts with, so that someone who changes nothing
-still hears about what is addressed to them, and the workspace-wide pieces the
-per-account channels borrow: the shared application token for the push
-service, the notification server URL, and the workspace-level webhooks that
-fire regardless of who did the thing. Each account picks its own channels and
-rules on its profile page.
+What a new account's email starts subscribed to, ticked from the same list of
+events the profile page draws its matrix from, so that someone who changes
+nothing still hears about what is addressed to them. Then the pieces every
+account's own channels borrow: the Pushover application token, so that members
+paste only their own user key; the ntfy server a topic lives on when nobody
+names one; and the time of day the daily digest and the due date pass run, read
+in the workspace time zone. Each account picks its own channels, its quiet
+hours and its rules on its profile page.
 
 ## Integrations
 
-One row per integration, with connect, configure and disconnect. Each stores
-its tokens as secrets, on the same terms as the rest of this page.
+Webhooks the workspace fires whoever caused the thing, which is how a chat
+room or anything else is wired up without an integration of its own. Each has
+a URL, a secret each message is signed with when one is set, the events it
+fires on, and optionally one column: a card move then fires only when the card
+lands there. A webhook is sent nothing until a test message has reached it, and
+the page tests one as it is saved, so a URL that refuses says so on the spot.
+The secret is stored on the same terms as the rest of this page.
 
 ## Backups
 

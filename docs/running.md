@@ -9,7 +9,7 @@ list with the reasoning beside each one.
 | Variable | What it is |
 | --- | --- |
 | `THESES_BIND` | Address the binary listens on. Inside the container leave it as `:8080`; the published port is what keeps it on loopback. |
-| `THESES_DATA_DIR` | Where `theses.db`, the markdown mirror and the thumbnail cache live. |
+| `THESES_DATA_DIR` | Where `theses.db` and the markdown mirror under `docs/` live. Thumbnails are written beside their originals in the bucket, not here. |
 | `THESES_BASE_URL` | The absolute public URL, no trailing slash. Links in mail use it, and an `http` URL turns the `Secure` flag on cookies off so local development works. |
 | `THESES_SECRET_KEY` | Encrypts settings secrets at rest with AES-GCM. At least 32 bytes. Losing it means losing every stored secret; it cannot be changed without re-entering them. |
 | `THESES_SESSION_KEY` | Signs session cookies, CSRF tokens, and session and API token lookups. At least 32 bytes. Changing it signs everyone out. |
@@ -37,8 +37,7 @@ docker compose logs -f
 
 The container binds `:8080` inside and is published on `127.0.0.1:8080`, so
 nothing off the host reaches it directly. One volume, `theses-data`, is
-mounted at the data directory and holds the database, the markdown mirror and
-the thumbnail cache.
+mounted at the data directory and holds the database and the markdown mirror.
 
 ## Behind a reverse proxy
 
@@ -71,6 +70,40 @@ Before every commit:
 ```sh
 gofmt -l . && go vet ./... && go test ./...
 ```
+
+## Documents on disk
+
+Every document is mirrored to markdown under `docs/` in the data directory,
+one directory per proposition and one file per document. The file opens with
+the proposition, the document and the revision it was written at, and each
+block carries a comment above it with its id and its version, so an edit made
+at a terminal lands on exactly the block the browser would have written.
+
+A file changed by anything else is read back in. The watcher waits two seconds
+for the writing to settle, keeps a `pre-import` revision first, and applies
+what changed as ordinary block commands recorded against no person, so every
+open tab sees them arrive. Only paths this process has itself written are ever
+imported, and a file whose contents are what this process last wrote is its own
+echo and is left alone. A block the import could not take, because it had
+changed on both sides, is written back with a conflict marker above it and the
+version from the database in it.
+
+## Background work
+
+Six goroutines run beside the server and stop with it: the mail outbox, the
+nightly backup, the markdown mirror and its watcher, the upload sweep, and the
+notifier's two, one filling the notification outbox from every applied command
+and one emptying it with bounded retries.
+
+The sweep runs at startup and every hour after. It abandons an upload that has
+been silent for 48 hours, which is 48 hours since anybody last asked for part
+URLs rather than 48 hours of wall clock, and takes its parts out of the bucket
+with it.
+
+The notifier also runs one pass a day, a few minutes before the digest time set
+on `/settings`: the cards due tomorrow, the cards that have just gone overdue,
+and a release day tomorrow. The day it ran is recorded before the work, so a
+restart an hour later does not send everything again.
 
 ## Health
 
