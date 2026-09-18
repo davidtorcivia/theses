@@ -173,6 +173,11 @@ func User(id int64) Actor {
 	return Actor{Kind: "user", ID: strconv.FormatInt(id, 10), UserID: id}
 }
 
+// System is the actor for a change the app makes on its own: the backup
+// scheduler recording what its last run did is the only one, and recording it
+// as user zero would name a person who does not exist.
+func System() Actor { return Actor{Kind: "system"} }
+
 // Set validates values against the key's definition, stores it and writes an
 // activity row. values is the form's slice for that field: a list setting takes
 // every non-empty entry, everything else takes the first.
