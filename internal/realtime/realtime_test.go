@@ -53,10 +53,10 @@ func newRig(t *testing.T) *rig {
 	t.Cleanup(r.http.Close)
 
 	for _, u := range []struct{ handle, role string }{
-		{"dt", auth.RoleOwner}, {"df", auth.RoleEditor}, {"out", auth.RoleEditor},
+		{"ada", auth.RoleOwner}, {"grace", auth.RoleEditor}, {"stranger", auth.RoleEditor},
 	} {
 		id, err := store.CreateUser(ctx, db, &store.User{
-			Handle: u.handle, Email: u.handle + "@example.fm", Name: strings.ToUpper(u.handle),
+			Handle: u.handle, Email: u.handle + "@example.com", Name: strings.ToUpper(u.handle),
 			Initials: strings.ToUpper(u.handle), Colour: "#1100ff", Role: u.role, PasswordHash: "x",
 		})
 		if err != nil {
@@ -80,12 +80,12 @@ func newRig(t *testing.T) *rig {
 		}
 	}
 
-	e, err := boards.CreateProposition(ctx, r.actor("dt"), "Nature Is Not a Museum")
+	e, err := boards.CreateProposition(ctx, r.actor("ada"), "Tidal Power")
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.prop = e.EntityID
-	if _, err := boards.AddMember(ctx, r.actor("dt"), r.prop, r.users["df"].ID); err != nil {
+	if _, err := boards.AddMember(ctx, r.actor("ada"), r.prop, r.users["grace"].ID); err != nil {
 		t.Fatal(err)
 	}
 	if r.cols, err = board.ListColumns(ctx, db, r.prop); err != nil {
@@ -160,16 +160,16 @@ func send(t *testing.T, ws *websocket.Conn, cmd command) {
 func TestSocketCarriesPresenceCommandsAndEvents(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	card, err := r.boards.CreateCard(ctx, r.actor("dt"), r.cols[0].ID, "Call the botanist", nil)
+	card, err := r.boards.CreateCard(ctx, r.actor("ada"), r.cols[0].ID, "Call the engineer", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	mine := r.mustDial("dt")
-	if p := read(t, mine, "presence"); len(p.People) != 1 || p.People[0].ID != r.users["dt"].ID {
+	mine := r.mustDial("ada")
+	if p := read(t, mine, "presence"); len(p.People) != 1 || p.People[0].ID != r.users["ada"].ID {
 		t.Fatalf("presence is %+v", p.People)
 	}
-	theirs := r.mustDial("df")
+	theirs := r.mustDial("grace")
 	if p := read(t, mine, "presence"); len(p.People) != 2 {
 		t.Fatalf("the second tab did not show up: %+v", p.People)
 	}
@@ -178,7 +178,7 @@ func TestSocketCarriesPresenceCommandsAndEvents(t *testing.T) {
 	found := false
 	for i := 0; i < 3 && !found; i++ {
 		for _, p := range read(t, mine, "presence").People {
-			if p.ID == r.users["df"].ID && strings.HasPrefix(p.Where, "card:") {
+			if p.ID == r.users["grace"].ID && strings.HasPrefix(p.Where, "card:") {
 				found = true
 			}
 		}
@@ -205,7 +205,7 @@ func TestSocketCarriesPresenceCommandsAndEvents(t *testing.T) {
 	if echo.Event.Seq != ack.Event.Seq {
 		t.Errorf("the other tab saw seq %d, want %d", echo.Event.Seq, ack.Event.Seq)
 	}
-	if echo.Event.Actor.ID != r.users["dt"].ID {
+	if echo.Event.Actor.ID != r.users["ada"].ID {
 		t.Errorf("the event names actor %+v", echo.Event.Actor)
 	}
 }
@@ -213,7 +213,7 @@ func TestSocketCarriesPresenceCommandsAndEvents(t *testing.T) {
 func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	e, err := r.boards.CreateCard(ctx, r.actor("dt"), r.cols[0].ID, "Call the botanist", nil)
+	e, err := r.boards.CreateCard(ctx, r.actor("ada"), r.cols[0].ID, "Call the engineer", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,18 +222,18 @@ func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ws := r.mustDial("dt")
+	ws := r.mustDial("ada")
 	send(t, ws, command{ID: 1, Cmd: "card.title", Args: args{
-		Card: card.ID, Base: card.Version, Title: "Call the ecologist"}})
+		Card: card.ID, Base: card.Version, Title: "Call the surveyor"}})
 	read(t, ws, "ack")
 
 	send(t, ws, command{ID: 2, Cmd: "card.title", Args: args{
-		Card: card.ID, Base: card.Version, Title: "Call the geologist"}})
+		Card: card.ID, Base: card.Version, Title: "Call the hydrologist"}})
 	answer := read(t, ws, "conflict")
 	if answer.ID != 2 || answer.Conflict == nil {
 		t.Fatalf("the stale edit got %+v", answer)
 	}
-	if answer.Conflict.Current != "Call the ecologist" {
+	if answer.Conflict.Current != "Call the surveyor" {
 		t.Errorf("the conflict carries %q", answer.Conflict.Current)
 	}
 
@@ -247,7 +247,7 @@ func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 // of the proposition gets no socket at all.
 func TestSocketRefusesANonMemberAndAStrangeOrigin(t *testing.T) {
 	r := newRig(t)
-	if ws, err := r.dial("out"); err == nil {
+	if ws, err := r.dial("stranger"); err == nil {
 		ws.Close()
 		t.Error("a non member opened a socket on the proposition")
 	}
@@ -258,7 +258,7 @@ func TestSocketRefusesANonMemberAndAStrangeOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.Header.Set("Cookie", r.cookie["dt"])
+	config.Header.Set("Cookie", r.cookie["ada"])
 	if ws, err := websocket.DialConfig(config); err == nil {
 		ws.Close()
 		t.Error("a page on another origin opened a socket with the session cookie")
@@ -269,13 +269,13 @@ func TestSocketRefusesANonMemberAndAStrangeOrigin(t *testing.T) {
 // the first proposition goes through it.
 func TestSocketOnAnEmptyWorkspaceCanCreateTheFirstProposition(t *testing.T) {
 	r := newRig(t)
-	ws, err := r.dialProposition("dt", 0)
+	ws, err := r.dialProposition("ada", 0)
 	if err != nil {
 		t.Fatalf("an empty workspace could not open a socket: %v", err)
 	}
 	defer ws.Close()
 
-	send(t, ws, command{ID: 1, Cmd: "proposition.create", Args: args{Title: "Engineer the Climate"}})
+	send(t, ws, command{ID: 1, Cmd: "proposition.create", Args: args{Title: "Tide Tables"}})
 	ack := read(t, ws, "ack")
 	if ack.ID != 1 || ack.Event == nil || ack.Event.Action != "create" {
 		t.Fatalf("creating the first proposition got %+v", ack)
@@ -288,7 +288,7 @@ func TestSocketOnAnEmptyWorkspaceCanCreateTheFirstProposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Title != "Engineer the Climate" {
+	if p.Title != "Tide Tables" {
 		t.Errorf("the proposition is %+v", p)
 	}
 }
@@ -297,7 +297,7 @@ func TestSocketOnAnEmptyWorkspaceCanCreateTheFirstProposition(t *testing.T) {
 func TestLongPollServesTheSameStream(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.boards.CreateCard(ctx, r.actor("dt"), r.cols[0].ID, "Call the botanist", nil); err != nil {
+	if _, err := r.boards.CreateCard(ctx, r.actor("ada"), r.cols[0].ID, "Call the engineer", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -319,7 +319,7 @@ func TestLongPollServesTheSameStream(t *testing.T) {
 		return res
 	}
 
-	res := ask("dt", 0)
+	res := ask("ada", 0)
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("the fallback gave %d", res.StatusCode)
@@ -332,7 +332,7 @@ func TestLongPollServesTheSameStream(t *testing.T) {
 		t.Fatalf("the fallback returned %+v", got.Events)
 	}
 
-	refused := ask("out", 0)
+	refused := ask("stranger", 0)
 	defer refused.Body.Close()
 	if refused.StatusCode != http.StatusForbidden {
 		t.Errorf("a non member got %d from the fallback", refused.StatusCode)

@@ -71,7 +71,7 @@ func TestShellCarriesTheOpenBoardAndEscapesItSafely(t *testing.T) {
 	owner := h.owner()
 
 	// A title that would close the script element it is rendered into.
-	e, err := h.srv.board.CreateProposition(ctx, owner, `Nature </script><script>alert(1)</script>`)
+	e, err := h.srv.board.CreateProposition(ctx, owner, `Tide </script><script>alert(1)</script>`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestShellCarriesTheOpenBoardAndEscapesItSafely(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.srv.board.CreateCard(ctx, owner, cols[0].ID, "Call the botanist", nil); err != nil {
+	if _, err := h.srv.board.CreateCard(ctx, owner, cols[0].ID, "Call the engineer", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,7 +94,7 @@ func TestShellCarriesTheOpenBoardAndEscapesItSafely(t *testing.T) {
 	if len(state.Board.Columns) == 0 || len(state.Board.Cards) != 1 {
 		t.Fatalf("board is %+v", state.Board)
 	}
-	if state.Board.Cards[0].Title != "Call the botanist" {
+	if state.Board.Cards[0].Title != "Call the engineer" {
 		t.Errorf("card is %+v", state.Board.Cards[0])
 	}
 	if state.Board.Seq == 0 {
@@ -120,7 +120,7 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 	h.setupOwner()
 	owner := h.owner()
 
-	e, err := h.srv.board.CreateProposition(ctx, owner, "Nature Is Not a Museum")
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +138,8 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 	csrf := csrfRe.FindStringSubmatch(body)[1]
 
 	res, _ = h.post(path, url.Values{"csrf": {csrf}, "do": {"proposition"},
-		"title": {"Nature Is Not a Museum"}, "statement": {"Conservation is a story about people."},
-		"blurb": {"On parks."}})
+		"title": {"Tidal Power"}, "statement": {"The tide is a battery."},
+		"blurb": {"On the estuary."}})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("saving the proposition gave %d", res.StatusCode)
 	}
@@ -153,7 +153,7 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Statement != "Conservation is a story about people." || p.Status != "researching" {
+	if p.Statement != "The tide is a battery." || p.Status != "researching" {
 		t.Errorf("proposition is %+v", p)
 	}
 	if p.Episode == nil || *p.Episode != "11" {
@@ -172,7 +172,7 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 	if cols[len(cols)-1].Name != "Fact check" {
 		t.Errorf("columns are %+v", cols)
 	}
-	if _, err := h.srv.board.CreateCard(ctx, owner, cols[0].ID, "Call the botanist", nil); err != nil {
+	if _, err := h.srv.board.CreateCard(ctx, owner, cols[0].ID, "Call the engineer", nil); err != nil {
 		t.Fatal(err)
 	}
 	res, body = h.post(path, url.Values{"csrf": {csrf}, "do": {"columns"},

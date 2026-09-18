@@ -48,7 +48,7 @@ func setup(t *testing.T) *fixture {
 		f.who[u.handle] = core.Actor{Kind: core.KindUser, ID: id, Name: u.handle}
 	}
 
-	e, err := svc.CreateProposition(ctx, f.who["owner"], "Nature Is Not a Museum")
+	e, err := svc.CreateProposition(ctx, f.who["owner"], "Tidal Power")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestCreatePropositionSeedsColumnsAndRecordsIt(t *testing.T) {
 	if err := json.Unmarshal([]byte(after), &recorded); err != nil {
 		t.Fatal(err)
 	}
-	if recorded.Title != "Nature Is Not a Museum" {
+	if recorded.Title != "Tidal Power" {
 		t.Errorf("the activity row recorded %q", recorded.Title)
 	}
 }
@@ -117,7 +117,7 @@ func TestCreatePropositionSeedsColumnsAndRecordsIt(t *testing.T) {
 func TestAuthorisationRefusals(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)
-	card := f.mustCard(t, f.cols[0].ID, "Call the botanist")
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
 
 	// A guest reads and nothing more.
 	if _, err := f.SetCardDone(ctx, f.who["guest"], card.ID, true); !errors.Is(err, core.ErrForbidden) {
@@ -153,12 +153,12 @@ func TestAuthorisationRefusals(t *testing.T) {
 func TestStaleTitleEditIsRefusedWithTheCurrentValue(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)
-	card := f.mustCard(t, f.cols[0].ID, "Draft the cold open")
+	card := f.mustCard(t, f.cols[0].ID, "Draft the opening")
 
-	if _, err := f.EditCardTitle(ctx, f.who["editor"], card.ID, card.Version, "Draft the open"); err != nil {
+	if _, err := f.EditCardTitle(ctx, f.who["editor"], card.ID, card.Version, "Draft the open line"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.EditCardDescription(ctx, f.who["owner"], card.ID, card.Version, "from the archive")
+	_, err := f.EditCardDescription(ctx, f.who["owner"], card.ID, card.Version, "from the tide tables")
 	var conflict *core.ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("a stale edit went through: %v", err)
@@ -170,7 +170,7 @@ func TestStaleTitleEditIsRefusedWithTheCurrentValue(t *testing.T) {
 		t.Errorf("conflict carries %q as the current description, want the empty one", conflict.Current)
 	}
 	// Taking theirs means editing again from the version the refusal named.
-	if _, err := f.EditCardDescription(ctx, f.who["owner"], card.ID, conflict.Version, "from the archive"); err != nil {
+	if _, err := f.EditCardDescription(ctx, f.who["owner"], card.ID, conflict.Version, "from the tide tables"); err != nil {
 		t.Fatalf("the retry at the current version failed: %v", err)
 	}
 }
@@ -178,9 +178,9 @@ func TestStaleTitleEditIsRefusedWithTheCurrentValue(t *testing.T) {
 func TestUndoPutsTheTitleBackAndOnlyOnce(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)
-	card := f.mustCard(t, f.cols[0].ID, "Call the botanist")
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
 
-	edit, err := f.EditCardTitle(ctx, f.who["editor"], card.ID, card.Version, "Call the ecologist")
+	edit, err := f.EditCardTitle(ctx, f.who["editor"], card.ID, card.Version, "Call the surveyor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestUndoPutsTheTitleBackAndOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Title != "Call the botanist" {
+	if back.Title != "Call the engineer" {
 		t.Errorf("undo left the title as %q", back.Title)
 	}
 	if back.Version <= card.Version+1 {
@@ -267,7 +267,7 @@ func TestReorderKeepsStrictOrder(t *testing.T) {
 func TestColumnsRenameReorderAndRefuseToTakeCardsWithThem(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)
-	f.mustCard(t, f.cols[0].ID, "Call the botanist")
+	f.mustCard(t, f.cols[0].ID, "Call the engineer")
 
 	if _, err := f.DeleteColumn(ctx, f.who["owner"], f.cols[0].ID); !errors.Is(err, ErrColumnNotEmpty) {
 		t.Errorf("a column with a card in it was deleted: %v", err)
@@ -293,7 +293,7 @@ func TestColumnsRenameReorderAndRefuseToTakeCardsWithThem(t *testing.T) {
 func TestChecklistAssigneesAndNotes(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)
-	card := f.mustCard(t, f.cols[0].ID, "Call the botanist")
+	card := f.mustCard(t, f.cols[0].ID, "Call the engineer")
 	editor, researcher := f.who["editor"], f.who["researcher"]
 
 	item, err := f.AddChecklistItem(ctx, editor, card.ID, "find her number")
@@ -306,7 +306,7 @@ func TestChecklistAssigneesAndNotes(t *testing.T) {
 	if _, err := f.AssignCard(ctx, editor, card.ID, researcher.ID); err != nil {
 		t.Fatal(err)
 	}
-	note, err := f.PostComment(ctx, researcher, card.ID, "she is in Oaxaca until Friday")
+	note, err := f.PostComment(ctx, researcher, card.ID, "she is away until Friday")
 	if err != nil {
 		t.Fatal(err)
 	}
