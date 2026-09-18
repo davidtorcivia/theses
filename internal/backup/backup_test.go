@@ -33,9 +33,10 @@ type fake struct {
 	dir    string
 	bucket *blob.Client
 
-	mu      sync.Mutex
-	methods []string
-	deny    string // answered 403, which is how a key without a capability reads
+	mu         sync.Mutex
+	methods    []string
+	deny       string // the method the bucket refuses
+	denyStatus int    // and how: 403 is how a key without a capability reads
 }
 
 // newFake is the whole package against an in-process bucket: a real database in
@@ -55,7 +56,7 @@ func newFake(t *testing.T) *fake {
 		t.Fatal(err)
 	}
 
-	f := &fake{T: t, db: db, set: set, dir: dir}
+	f := &fake{T: t, db: db, set: set, dir: dir, denyStatus: http.StatusForbidden}
 	backend := s3mem.New()
 	if err := backend.CreateBucket("example-bucket"); err != nil {
 		t.Fatal(err)
@@ -64,10 +65,10 @@ func newFake(t *testing.T) *fake {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.methods = append(f.methods, r.Method)
-		deny := f.deny
+		deny, status := f.deny, f.denyStatus
 		f.mu.Unlock()
 		if deny != "" && r.Method == deny {
-			w.WriteHeader(http.StatusForbidden)
+			w.WriteHeader(status)
 			return
 		}
 		inner.ServeHTTP(w, r)
@@ -84,6 +85,14 @@ func newFake(t *testing.T) *fake {
 	f.b = New(&config.Config{DataDir: dir, SecretKey: []byte(envKey)}, db, set,
 		slog.New(slog.NewTextHandler(io.Discard, nil)), "test",
 		func(context.Context) (blob.Config, error) { return primary, nil })
+
+	// An account, because a restore refuses an archive taken before there was
+	// one to sign in with.
+	if _, err := db.ExecContext(ctx, `INSERT INTO users
+		(handle, email, name, initials, colour, role, password_hash, created_at)
+		VALUES ('ada', 'ada@example.com', 'Ada Lovelace', 'AL', '#1100ff', 'owner', 'x', unixepoch())`); err != nil {
+		t.Fatal(err)
+	}
 
 	f.save("backups.access_key", "backup-key")
 	f.save("backups.secret_key", "backup-secret")
@@ -219,10 +228,13 @@ func TestManifestSaysWhatIsInside(t *testing.T) {
 	if m.Schema != "001_initial.sql" {
 		t.Errorf("schema version is %q", m.Schema)
 	}
+	if m.Rows["users"] != 1 {
+		t.Errorf("users counted as %d", m.Rows["users"])
+	}
 	if m.Rows["settings"] != 2 { // the two halves of the backup key
 		t.Errorf("settings rows counted as %d", m.Rows["settings"])
 	}
-	if _, ok := m.Rows["users"]; !ok {
+	if _, ok := m.Rows["cards"]; !ok {
 		t.Error("an empty table is missing from the counts")
 	}
 	for name := range m.Rows {
@@ -337,6 +349,19 @@ func TestTheProbePassesOnlyWhenTheDeleteIsRefused(t *testing.T) {
 	if _, err := f.b.Probe(ctx); err == nil || !strings.Contains(err.Error(), "deleted its own probe object") {
 		t.Fatalf("a key that can delete passed the probe: %v", err)
 	}
+
+	// A bucket that fails the delete for any other reason has shown nothing
+	// about the key, and saying otherwise would be a security claim nothing
+	// supports.
+	f.mu.Lock()
+	f.deny, f.denyStatus = http.MethodDelete, http.StatusInternalServerError
+	f.mu.Unlock()
+	if _, err := f.b.Probe(ctx); err == nil || !strings.Contains(err.Error(), "neither refused nor allowed") {
+		t.Fatalf("a bucket that broke on the delete gave %v", err)
+	}
+	f.mu.Lock()
+	f.denyStatus = http.StatusForbidden
+	f.mu.Unlock()
 
 	// With the capability withheld, as B2 withholds it from a key created
 	// without deleteFiles, the refusal is the pass.

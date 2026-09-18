@@ -65,6 +65,14 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 			path.Base(key), sum, m.SHA256)
 	}
 
+	// An archive from before the owner account existed would leave a running
+	// app that nobody can sign in to and that never shows the setup page again,
+	// because the gate in front of it has already latched.
+	if m.Rows["users"] == 0 {
+		return fmt.Errorf("%s was taken before there was an account to sign in with, so restoring it would lock everyone out",
+			path.Base(key))
+	}
+
 	dbPath := filepath.Join(b.cfg.DataDir, "restore-"+stamp+".db")
 	docsPath := filepath.Join(b.cfg.DataDir, "restore-"+stamp+".docs")
 	defer os.Remove(dbPath)
@@ -81,9 +89,6 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	}
 	if err := check.Close(); err != nil {
 		return err
-	}
-	for _, suffix := range []string{"-wal", "-shm"} {
-		os.Remove(dbPath + suffix)
 	}
 
 	// From here the app answers writes with 503 until the files are in place.

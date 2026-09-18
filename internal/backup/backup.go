@@ -21,6 +21,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -597,9 +598,18 @@ func (b *Backup) Probe(ctx context.Context) (string, error) {
 	if !found {
 		return "", fmt.Errorf("the key wrote %s and then did not see it in the listing", key)
 	}
-	if err := client.Delete(ctx, key); err == nil {
+	err = client.Delete(ctx, key)
+	if err == nil {
 		return "", fmt.Errorf("the key deleted its own probe object, so it can delete backups too. "+
 			"Make an application key for the %s prefix with write and list but no delete, and turn Object Lock on.", Prefix)
+	}
+	// Only a refusal is a pass. A timeout or a 500 is the bucket failing to
+	// answer, and reporting that as "the delete was refused" would be a claim
+	// about the key that nothing has actually shown.
+	var refusal interface{ HTTPStatusCode() int }
+	if !errors.As(err, &refusal) ||
+		(refusal.HTTPStatusCode() != http.StatusForbidden && refusal.HTTPStatusCode() != http.StatusUnauthorized) {
+		return "", fmt.Errorf("the delete was neither refused nor allowed, so this says nothing about the key yet: %w", err)
 	}
 	return fmt.Sprintf("Wrote and listed %s, and the delete was refused. That refusal is the test: "+
 		"this key can add to the history and read it back, and cannot remove any of it.", key), nil

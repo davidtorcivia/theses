@@ -152,6 +152,11 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 		db.reopen()
 		return fmt.Errorf("move the restored database in: %w", err)
 	}
+	// Whatever the new file brought with it comes too, so that a write-ahead
+	// log left by whoever wrote it is replayed rather than orphaned.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Rename(from+suffix, db.path+suffix)
+	}
 	fresh, err := open(db.path)
 	if err == nil {
 		err = migrate(ctx, fresh)
