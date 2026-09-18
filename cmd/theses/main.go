@@ -14,6 +14,7 @@ import (
 
 	_ "time/tzdata" // so TZ works on a runtime image with no zone files
 
+	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/config"
 	"github.com/davidtorcivia/theses/internal/server"
 	"github.com/davidtorcivia/theses/internal/settings"
@@ -40,6 +41,12 @@ func run() error {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return fmt.Errorf("data directory: %w", err)
 	}
+	// Before anything opens the data directory, because this is the one moment
+	// nothing in it is in use.
+	if err := backup.Sweep(cfg.DataDir, log); err != nil {
+		return err
+	}
+
 	db, err := store.Open(filepath.Join(cfg.DataDir, "theses.db"))
 	if err != nil {
 		return err
@@ -58,6 +65,11 @@ func run() error {
 		return err
 	}
 
+	// Registered after the database is opened, so it runs before the database
+	// closes: a restore started from the settings page outlives the request and
+	// must not have the file pulled out from under it half way.
+	defer srv.Backups().Stop()
+
 	// The outbox worker stops with ctx. A send caught by the cancellation
 	// leaves its row untouched and goes out again on the next start; the
 	// shutdown path waits here so the goroutine is gone before the process is.
@@ -65,6 +77,14 @@ func run() error {
 	go func() {
 		defer close(mailDone)
 		srv.Mail().Run(ctx)
+	}()
+
+	// The scheduler stops with ctx too. It holds no row and writes nothing until
+	// the configured minute, so a cancellation between two ticks costs nothing.
+	backupDone := make(chan struct{})
+	go func() {
+		defer close(backupDone)
+		srv.Backups().Schedule(ctx)
 	}()
 
 	httpSrv := &http.Server{
@@ -100,6 +120,7 @@ func run() error {
 			return fmt.Errorf("shutdown: %w", err)
 		}
 		<-mailDone
+		<-backupDone
 		return <-done
 	}
 }

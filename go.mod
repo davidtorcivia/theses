@@ -3,6 +3,7 @@ module github.com/davidtorcivia/theses
 go 1.27.0
 
 require (
+	filippo.io/age v1.3.2
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/johannesboyne/gofakes3 v1.2.0
@@ -15,6 +16,7 @@ require (
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.3 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.3 // indirect

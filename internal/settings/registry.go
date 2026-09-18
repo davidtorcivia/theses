@@ -61,6 +61,21 @@ var Registry = []Def{
 	{Key: "storage.recordings.secret_key", Kind: KindString, Default: "", Secret: true, Label: "Secret key"},
 	{Key: "storage.recordings.public_base_url", Kind: KindString, Default: "", Label: "Public base URL"},
 
+	{Key: "backups.enabled", Kind: KindChoice, Default: "off", Choices: []string{"off", "on"}, Label: "Nightly backup"},
+	{Key: "backups.bucket", Kind: KindString, Default: "", Label: "Bucket", Hint: "Leave empty to write into the primary bucket under the backups/ prefix."},
+	{Key: "backups.access_key", Kind: KindString, Default: "", Secret: true, Label: "Access key"},
+	{Key: "backups.secret_key", Kind: KindString, Default: "", Secret: true, Label: "Secret key"},
+	{Key: "backups.time", Kind: KindString, Default: "03:30", Label: "Time of day", Hint: "24 hour, in the workspace time zone."},
+	{Key: "backups.keep", Kind: KindInt, Default: 30, Min: 1, Max: 3650, Label: "How many to keep", Hint: "Days of history the bucket's lifecycle rule and its Object Lock retention are set to. Nothing here deletes a backup."},
+
+	// What the last run did, written by the scheduler, read by the settings page
+	// and by readyz. Settings rather than a table because there is one of each
+	// and the page already reads settings.
+	{Key: "backups.last_at", Kind: KindInt, Default: 0, Label: "Last run"},
+	{Key: "backups.last_ok_at", Kind: KindInt, Default: 0, Label: "Last successful run"},
+	{Key: "backups.last_size", Kind: KindInt, Default: 0, Label: "Last archive size"},
+	{Key: "backups.last_error", Kind: KindText, Default: "", Label: "Last failure"},
+
 	{Key: "mail.host", Kind: KindString, Default: "", Label: "SMTP host"},
 	{Key: "mail.port", Kind: KindInt, Default: 587, Min: 1, Max: 65535, Label: "Port"},
 	{Key: "mail.tls", Kind: KindChoice, Default: "starttls", Choices: []string{"starttls", "tls", "none"}, Label: "TLS"},

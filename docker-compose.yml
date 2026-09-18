@@ -7,6 +7,10 @@ services:
     image: theses:${THESES_VERSION:-dev}
     container_name: theses
     restart: unless-stopped
+    # A restore started from the settings page keeps running while the process
+    # shuts down, and it must not be killed between replacing the database and
+    # rewriting the markdown mirror. The default ten seconds is not enough.
+    stop_grace_period: 60s
     # Published on loopback by default; a reverse proxy on the same host fronts it.
     ports:
       - "${THESES_BIND_HOST:-127.0.0.1}:${THESES_PORT:-8080}:8080"

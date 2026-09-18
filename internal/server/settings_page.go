@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
@@ -48,6 +50,24 @@ type bucketView struct {
 	Providers                []option
 	ProviderLabel            string
 	Origin, CORS             string
+}
+
+type backupView struct {
+	Prefix               string
+	Enabled              bool
+	Bucket               string
+	AccessSet, SecretSet bool
+	Running              bool
+	State                string // what the last run did, in one line
+	Failure              string // and why, when it failed
+	Restore              string // what the last restore said
+	Entries              []backupEntry
+	ListError            string
+}
+
+type backupEntry struct {
+	Key, Name, When, Size string
+	Complete              bool
 }
 
 type envRow struct{ Name, Value, Why string }
@@ -173,8 +193,116 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 		"Env":         s.envRows(),
 		"Outbox":      outbox,
 		"MailProblem": mailProblem,
+		"Backups":     s.backupSection(r, shown, isSet),
 	}
 	return s.page(r, "Settings", merge(data, extra)), nil
+}
+
+// backupSection is the Backups row. The listing is a request to the bucket, so
+// it is skipped while the key is missing and its failure is printed inside the
+// section rather than taken out on the whole page.
+func (s *Server) backupSection(r *http.Request, shown map[string]string, isSet map[string]bool) backupView {
+	v := backupView{
+		Prefix:    backup.Prefix,
+		Enabled:   shown["backups.enabled"] == "on",
+		Bucket:    shown["backups.bucket"],
+		AccessSet: isSet["backups.access_key"],
+		SecretSet: isSet["backups.secret_key"],
+		Running:   s.backups.Running(),
+		Restore:   s.backups.LastRestore(),
+		Failure:   settings.Get[string](s.settings, "backups.last_error"),
+	}
+	if at := settings.Get[int](s.settings, "backups.last_ok_at"); at > 0 {
+		v.State = fmt.Sprintf("Last backup %s, %s.", ago(int64(at), true),
+			size(int64(settings.Get[int](s.settings, "backups.last_size"))))
+	} else {
+		v.State = "No backup has been taken yet."
+	}
+	if !v.AccessSet || !v.SecretSet {
+		return v
+	}
+
+	// Shorter than the probe: this one is on the way to a page the owner is
+	// waiting for, not a button they pressed to test a bucket.
+	ctx, cancel := context.WithTimeout(r.Context(), listTimeout)
+	defer cancel()
+	entries, err := s.backups.List(ctx)
+	if err != nil {
+		v.ListError = err.Error()
+		return v
+	}
+	for _, e := range entries {
+		v.Entries = append(v.Entries, backupEntry{
+			Key:      e.Key,
+			Name:     strings.TrimPrefix(e.Key, backup.Prefix),
+			When:     e.When.Format("2 Jan 2006 15:04 UTC"),
+			Size:     size(e.Size),
+			Complete: e.Manifest != "",
+		})
+	}
+	return v
+}
+
+// size is a byte count as the page prints it, which is to two figures because
+// nobody reads the third.
+func size(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.0f kB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
+// postTestBackupKey runs the probe behind "Test backup key": it writes and
+// lists under the prefix and then tries to delete what it wrote. The refusal is
+// the pass, so the result says so in as many words.
+func (s *Server) postTestBackupKey(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	defer cancel()
+	msg, err := s.backups.Probe(ctx)
+	if err != nil {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"BackupResult": err.Error(), "BackupFailed": true,
+		})
+		return
+	}
+	s.renderSettings(w, r, http.StatusOK, map[string]any{"BackupResult": msg})
+}
+
+func (s *Server) postBackupNow(w http.ResponseWriter, r *http.Request) {
+	if err := s.backups.Now(r.Context()); err != nil {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"BackupResult": err.Error(), "BackupFailed": true,
+		})
+		return
+	}
+	s.renderSettings(w, r, http.StatusOK, map[string]any{
+		"BackupResult": "Started. It appears in the list below, and says here what it did, once it has finished.",
+	})
+}
+
+// postRestore starts a restore of one listed archive. It answers straight away
+// because the restore outlives the request; what it did is on this page after.
+func (s *Server) postRestore(w http.ResponseWriter, r *http.Request) {
+	key := r.PostFormValue("key")
+	if !strings.HasPrefix(key, backup.Prefix) || !strings.HasSuffix(key, ".tar.gz.age") {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if err := s.backups.RestoreNow(r.Context(), key, userOf(r).ID); err != nil {
+		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"BackupResult": err.Error(), "BackupFailed": true,
+		})
+		return
+	}
+	s.renderSettings(w, r, http.StatusOK, map[string]any{
+		"BackupResult": "Restoring " + strings.TrimPrefix(key, backup.Prefix) +
+			". Changes are refused until it is done, and this page says what happened when it is.",
+	})
 }
 
 func (s *Server) bucket(prefix string, shown map[string]string, isSet map[string]bool) bucketView {
@@ -299,6 +427,9 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 // probeTimeout bounds the whole three-call probe, so a bucket that accepts the
 // connection and then says nothing does not hold the settings page open.
 const probeTimeout = 30 * time.Second
+
+// listTimeout bounds the listing the Backups section renders.
+const listTimeout = 10 * time.Second
 
 func (s *Server) bucketConfig(ctx context.Context, prefix string) (blob.Config, error) {
 	get := func(name string) string { return settings.Get[string](s.settings, prefix+"."+name) }

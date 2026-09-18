@@ -1,7 +1,7 @@
 {{define "content"}}<section id="admin">
   <nav>
     <a href="#workspace">Workspace</a><a href="#defaults">Defaults</a><a href="#storage">Storage</a>
-    <a href="#mail">Mail</a><a href="#signin">Sign-in</a><a href="#team">Team</a><a href="#environment">Environment</a>
+    <a href="#mail">Mail</a><a href="#signin">Sign-in</a><a href="#backups">Backups</a><a href="#team">Team</a><a href="#environment">Environment</a>
     <a href="/" class="back">← Back to work</a>
   </nav>
   <div class="apane">
@@ -104,6 +104,53 @@
         </div>
       </section>
     </form>
+
+    <form class="form" method="post" action="/settings" id="backups">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <section class="fs">
+        <div class="fsh"><h3>Backups</h3><p>Every night the database and the markdown mirror go to the bucket under the <span class="mono">{{.Backups.Prefix}}</span> prefix, as one archive encrypted with a key derived from THESES_SECRET_KEY: a restore needs that variable and nothing else. Three things are set up on the bucket, because none of them can be done from here. One, an application key restricted to that prefix with write and list but no delete, which is the key below. Two, Object Lock in compliance mode with a retention of the keep window, so nothing, including the account owner, can remove a backup before it expires. Three, server-side encryption on the bucket. Old archives are expired by the bucket's lifecycle rule; nothing here ever deletes one.</p></div>
+        <div class="fsb">
+          <div class="row3">
+            <label class="f"><span class="l">Nightly backup</span><select name="backups.enabled"><option value="off"{{if not .Backups.Enabled}} selected{{end}}>Off</option><option value="on"{{if .Backups.Enabled}} selected{{end}}>On</option></select><small>The first one runs as soon as it is switched on.</small></label>
+            <label class="f"><span class="l">Time of day</span><input name="backups.time" value="{{index .S "backups.time"}}"><small>24 hour, in the workspace time zone.</small></label>
+            <label class="f"><span class="l">How many to keep</span><input name="backups.keep" value="{{index .S "backups.keep"}}"><small>Days the lifecycle rule and the Object Lock retention are set to.</small></label>
+          </div>
+          <div class="row3">
+            <label class="f"><span class="l">Bucket</span><input name="backups.bucket" value="{{.Backups.Bucket}}" spellcheck="false"><small>Leave empty to use the primary bucket.</small></label>
+            <label class="f"><span class="l">Access key</span><input type="password" name="backups.access_key" placeholder="{{if .Backups.AccessSet}}set, leave empty to keep{{end}}" autocomplete="off"></label>
+            <label class="f"><span class="l">Secret key</span><input type="password" name="backups.secret_key" placeholder="{{if .Backups.SecretSet}}set, leave empty to keep{{end}}" autocomplete="off"></label>
+          </div>
+          <button class="save" type="submit">Save</button>
+        </div>
+      </section>
+    </form>
+    <form class="form" method="post" action="/settings/test/backups">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      {{if .BackupResult}}<p class="notice{{if .BackupFailed}} bad{{end}}">{{.BackupResult}}</p>{{end}}
+      {{if .Backups.Restore}}<p class="notice">{{.Backups.Restore}}</p>{{end}}
+      <p class="small dim">{{.Backups.State}}{{if .Backups.Running}} One is running now.{{end}}{{if .Backups.Failure}} Last failure: <span class="mono">{{.Backups.Failure}}</span>{{end}}</p>
+      <button class="lnk" type="submit">Test backup key</button>
+      <button class="lnk" type="submit" formaction="/settings/backups/now">Back up now</button>
+      <p class="small dim">The test writes and lists one object under {{.Backups.Prefix}} and then tries to delete it. A refused delete is the pass: it is what says this key cannot take the history with it.</p>
+      {{if .Backups.ListError}}<p class="notice bad">{{.Backups.ListError}}</p>{{end}}
+      <ul class="pending">
+        {{range $i, $e := .Backups.Entries}}<li>
+          <span class="mono">{{$e.Name}}</span>
+          <span class="mono">{{$e.When}} · {{$e.Size}}{{if not $e.Complete}} · no manifest beside it, so it cannot be restored{{end}}</span>
+          {{if $e.Complete}}<button class="lnk" type="button" data-dialog="restore-{{$i}}">Restore</button>{{end}}
+        </li>{{else}}<li><span class="mono dim">Nothing under {{$.Backups.Prefix}} yet.</span></li>{{end}}
+      </ul>
+    </form>
+    {{range $i, $e := .Backups.Entries}}{{if $e.Complete}}<dialog id="restore-{{$i}}">
+      <h3>Restore {{$e.Name}}</h3>
+      <p>The backup taken on {{$e.When}} replaces the database and the markdown mirror. Everything written since is moved aside under a timestamp rather than removed, and changes are refused until it is done.</p>
+      <form method="post" action="/settings/backups/restore" class="acts">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="key" value="{{$e.Key}}">
+        <button class="lnk plain" type="button" data-close>Keep what is here</button>
+        <button class="lnk del" type="submit">Restore it</button>
+      </form>
+    </dialog>{{end}}{{end}}
 
     <section class="fs" id="team">
       <div class="fsh"><h3>Team</h3><p>Owners change roles and settings. Editors do everything else. Researchers cannot delete. Guests read.</p></div>

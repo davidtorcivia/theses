@@ -232,6 +232,21 @@ func (s *Server) offlinePage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// restoringPage is what a write gets while a restore is in progress. It says
+// the same thing the offline page says, because from the browser's side it is
+// the same situation: the change did not happen and can be made again shortly.
+func (s *Server) restoringPage(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, http.StatusServiceUnavailable, "error.html", map[string]any{
+		"Title":      "503",
+		"Code":       "503",
+		"Headline":   "Restoring a backup.",
+		"Lead":       "Changes are paused while the database is put back. Nothing you do now is kept.",
+		"ActionText": "Try again",
+		"ActionHref": r.URL.RequestURI(),
+		"ArtFrames":  []string{"19"},
+	})
+}
+
 // fail is the one place a handler's error becomes a response. It renders the
 // same 500 page as any other error page, and falls back to a static string only
 // when that template will not render either.

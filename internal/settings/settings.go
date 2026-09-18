@@ -51,6 +51,10 @@ func Open(ctx context.Context, db *store.DB, secretKey []byte) (*Settings, error
 	return s, s.reload(ctx)
 }
 
+// Reload reads the table again, for after a restore has replaced the file the
+// values were read from.
+func (s *Settings) Reload(ctx context.Context) error { return s.reload(ctx) }
+
 func (s *Settings) reload(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value_json, secret FROM settings`)
 	if err != nil {
@@ -172,6 +176,11 @@ type Actor struct {
 func User(id int64) Actor {
 	return Actor{Kind: "user", ID: strconv.FormatInt(id, 10), UserID: id}
 }
+
+// System is the actor for a change the app makes on its own: the backup
+// scheduler recording what its last run did is the only one, and recording it
+// as user zero would name a person who does not exist.
+func System() Actor { return Actor{Kind: "system"} }
 
 // Set validates values against the key's definition, stores it and writes an
 // activity row. values is the form's slice for that field: a list setting takes

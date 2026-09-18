@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,13 +31,31 @@ type Querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// DB is the pool and the file it is open on. The pool is behind a lock rather
+// than embedded because a restore replaces the file underneath it: Swap closes
+// the pool, moves the file and opens it again, and every query here holds the
+// read side for as long as it runs so the swap waits for the ones in flight.
 type DB struct {
-	*sql.DB
+	mu   sync.RWMutex
+	db   *sql.DB
+	path string
 }
 
 // Open connects to the SQLite file at path and applies any pending migrations.
 // The pragmas are in the DSN because they must be set on every pooled connection.
 func Open(path string) (*DB, error) {
+	sqldb, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := migrate(context.Background(), sqldb); err != nil {
+		sqldb.Close()
+		return nil, err
+	}
+	return &DB{db: sqldb, path: path}, nil
+}
+
+func open(path string) (*sql.DB, error) {
 	dsn := "file:" + filepath.ToSlash(path) + "?" + url.Values{
 		"_pragma": {"journal_mode(WAL)", "foreign_keys(ON)", "busy_timeout(5000)", "synchronous(NORMAL)"},
 		"_txlock": {"immediate"},
@@ -50,16 +71,159 @@ func Open(path string) (*DB, error) {
 	sqldb.SetMaxOpenConns(4)
 	sqldb.SetMaxIdleConns(4)
 
-	db := &DB{sqldb}
-	if err := db.PingContext(context.Background()); err != nil {
+	if err := sqldb.PingContext(context.Background()); err != nil {
 		sqldb.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	if err := db.Migrate(context.Background()); err != nil {
-		sqldb.Close()
-		return nil, err
+	return sqldb, nil
+}
+
+// Path is the file the pool is open on.
+func (db *DB) Path() string { return db.path }
+
+func (db *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.db.ExecContext(ctx, query, args...)
+}
+
+func (db *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.db.QueryContext(ctx, query, args...)
+}
+
+func (db *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.db.QueryRowContext(ctx, query, args...)
+}
+
+func (db *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.db.BeginTx(ctx, opts)
+}
+
+func (db *DB) PingContext(ctx context.Context) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.db.PingContext(ctx)
+}
+
+func (db *DB) Close() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.db.Close()
+}
+
+// drainWait is how long Swap gives connections that were checked out when the
+// pool closed. Closing a pool does not wait for them, and Windows refuses to
+// rename a file another handle still has open.
+//
+// It is a variable so that the test for a connection that never comes back does
+// not take ten seconds to make its point. While it is one, no test in this
+// package may call t.Parallel.
+var drainWait = 10 * time.Second
+
+// Swap replaces the database file with the one at from and opens it. The old
+// file is moved to aside rather than removed, so a bad restore is one rename
+// away from being undone, and every failure puts back what it found: a process
+// with no database can do nothing at all.
+//
+// Nothing can hold a connection across the rename. The write lock keeps any new
+// query from starting, because every call in this file takes the read side, and
+// the drain below refuses to move anything while a connection checked out
+// before that is still in use. A Rows or a Tx that outlives the drain therefore
+// fails the swap rather than having the file moved underneath it, which is why
+// reads are left alone while a restore runs: they cannot be caught halfway.
+func (db *DB) Swap(ctx context.Context, from, aside string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if err := db.db.Close(); err != nil {
+		db.reopen()
+		return fmt.Errorf("close the pool: %w", err)
 	}
-	return db, nil
+	if err := drain(db.db); err != nil {
+		db.reopen()
+		return err
+	}
+	// A clean close checkpoints the write-ahead log and removes it. Anything
+	// left goes with the file it belongs to rather than being deleted, because
+	// the copy moved aside is the one thing that can undo a bad restore.
+	moveSidecars(db.path, aside)
+	if err := os.Rename(db.path, aside); err != nil {
+		moveSidecars(aside, db.path)
+		db.reopen()
+		return fmt.Errorf("move the database aside: %w", err)
+	}
+	if err := os.Rename(from, db.path); err != nil {
+		os.Rename(aside, db.path)
+		moveSidecars(aside, db.path)
+		db.reopen()
+		return fmt.Errorf("move the restored database in: %w", err)
+	}
+	// Whatever the new file brought with it comes too, so that a write-ahead
+	// log left by whoever wrote it is replayed rather than orphaned.
+	moveSidecars(from, db.path)
+	fresh, err := open(db.path)
+	if err == nil {
+		err = migrate(ctx, fresh)
+		if err != nil {
+			fresh.Close()
+		}
+	}
+	if err != nil {
+		// The restored file and the log it came with both go, or the old
+		// database would be reopened beside a stranger's write-ahead log and
+		// replay it.
+		os.Remove(db.path)
+		removeSidecars(db.path)
+		os.Rename(aside, db.path)
+		moveSidecars(aside, db.path)
+		db.reopen()
+		return fmt.Errorf("open the restored database: %w", err)
+	}
+	db.db = fresh
+	return nil
+}
+
+// moveSidecars takes the write-ahead log and the shared memory file wherever
+// the database file they belong to is going. Both are absent after a clean
+// close, so both renames usually do nothing.
+func moveSidecars(from, to string) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Rename(from+suffix, to+suffix)
+	}
+}
+
+func removeSidecars(of string) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Remove(of + suffix)
+	}
+}
+
+// reopen puts a pool back on the current path after a failed swap. It is best
+// effort: if even this fails the pool stays closed and every query says so,
+// which is the honest answer.
+func (db *DB) reopen() {
+	if fresh, err := open(db.path); err == nil {
+		db.db = fresh
+	}
+}
+
+func drain(closed *sql.DB) error {
+	for deadline := time.Now().Add(drainWait); ; {
+		if closed.Stats().OpenConnections == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d connections were still open %s after the pool closed",
+				closed.Stats().OpenConnections, drainWait)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // OpenTemp is the database for a test: a real file in the test's temp directory,
@@ -76,6 +240,12 @@ func OpenTemp(t *testing.T) *DB {
 
 // Migrate applies every migration not yet recorded, each in its own transaction.
 func (db *DB) Migrate(ctx context.Context) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return migrate(ctx, db.db)
+}
+
+func migrate(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		name       TEXT PRIMARY KEY,
 		applied_at INTEGER NOT NULL
@@ -113,14 +283,14 @@ func (db *DB) Migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := db.applyMigration(ctx, name, string(body)); err != nil {
+		if err := applyMigration(ctx, db, name, string(body)); err != nil {
 			return fmt.Errorf("migration %s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func (db *DB) applyMigration(ctx context.Context, name, body string) error {
+func applyMigration(ctx context.Context, db *sql.DB, name, body string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

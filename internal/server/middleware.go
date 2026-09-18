@@ -24,7 +24,7 @@ const (
 )
 
 func (s *Server) chain(h http.Handler) http.Handler {
-	return s.logAndRecover(s.securityHeaders(s.browserSeed(s.setupGate(s.csrfGuard(h)))))
+	return s.logAndRecover(s.securityHeaders(s.browserSeed(s.setupGate(s.writeGate(s.csrfGuard(h))))))
 }
 
 // recorder keeps the status for the log line and tells the recoverer whether a
@@ -149,6 +149,24 @@ func (s *Server) setupGate(next http.Handler) http.Handler {
 			}
 		}
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+	})
+}
+
+// writeGate refuses mutations while a restore is replacing the database.
+// Reading still works throughout; anything that would write gets the page an
+// offline browser gets, with a 503 so a proxy, a script or the service worker
+// knows to come back rather than to treat it as done.
+func (s *Server) writeGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if s.backups.Frozen() {
+				s.restoringPage(w, r)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
