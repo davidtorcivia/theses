@@ -137,19 +137,23 @@ func (s *Server) postDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
 	// Counting first and deleting after let two owners delete themselves at the
 	// same moment and leave nobody, so the count is part of the delete.
-	deleted := false
 	if err := s.write(r, "user", itoa(u.ID), "delete", u.Handle, "", func(q store.Querier) error {
-		var err error
-		deleted, err = store.DeleteUserKeepingAnOwner(r.Context(), q, u.ID)
-		return err
+		deleted, err := store.DeleteUserKeepingAnOwner(r.Context(), q, u.ID)
+		if err != nil {
+			return err
+		}
+		if !deleted {
+			return errRefused
+		}
+		return nil
 	}); err != nil {
+		if errors.Is(err, errRefused) {
+			s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
+				"Error": "You are the last owner. Make someone else an owner first.",
+			})
+			return
+		}
 		s.fail(w, r, err)
-		return
-	}
-	if !deleted {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
-			"Error": "You are the last owner. Make someone else an owner first.",
-		})
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)

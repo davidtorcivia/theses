@@ -1178,3 +1178,69 @@ func TestAnOversizedFormIsRefused(t *testing.T) {
 		t.Errorf("an ordinary form gave %d", res.StatusCode)
 	}
 }
+
+// A refusal is not a mutation, so it should leave no trace in the activity log.
+// The guard ran inside the same transaction as the activity row but only the
+// statement was conditional, so the row was committed either way.
+func TestARefusedDeleteLeavesNoActivityRow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	before := activityCount(t, h, "delete")
+
+	res, body := h.post("/profile/delete", url.Values{"csrf": {h.csrf("/profile")}})
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "last owner") {
+		t.Fatalf("deleting the last owner gave %d", res.StatusCode)
+	}
+	if got := activityCount(t, h, "delete"); got != before {
+		t.Errorf("%d delete rows in the activity log, want %d", got, before)
+	}
+	if n, _ := store.CountUsers(ctx, h.db); n != 1 {
+		t.Error("the owner was deleted after all")
+	}
+}
+
+// The role change has the same shape but its refusal cannot be reached over
+// HTTP: only an owner may post to it, changing your own role is refused before
+// the guard, and any other owner being demoted means there are at least two. So
+// the rollback is checked on s.write itself, which is what both handlers use.
+func TestARefusedWriteCommitsNoActivityRow(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	owner, err := store.UserByHandle(context.Background(), h.db, "dt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := activityCount(t, h, "role")
+
+	r := httptest.NewRequest("POST", "/settings/team/role", nil)
+	r = r.WithContext(context.WithValue(r.Context(), userKey, owner))
+	err = h.srv.write(r, "user", itoa(owner.ID), "role", auth.RoleOwner, auth.RoleEditor,
+		func(q store.Querier) error { return errRefused })
+	if !errors.Is(err, errRefused) {
+		t.Fatalf("write returned %v, want errRefused", err)
+	}
+	if got := activityCount(t, h, "role"); got != before {
+		t.Errorf("%d role rows in the activity log, want %d", got, before)
+	}
+
+	// The same write that succeeds does record one.
+	err = h.srv.write(r, "user", itoa(owner.ID), "role", auth.RoleOwner, auth.RoleEditor,
+		func(q store.Querier) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := activityCount(t, h, "role"); got != before+1 {
+		t.Errorf("a write that went through recorded %d rows, want %d", got, before+1)
+	}
+}
+
+func activityCount(t *testing.T, h *harness, action string) int {
+	t.Helper()
+	var n int
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM activity WHERE action = ?`, action).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}

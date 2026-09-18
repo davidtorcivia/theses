@@ -248,19 +248,23 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	kept := false
 	if err := s.write(r, "user", itoa(id), "role", u.Role, role, func(q store.Querier) error {
-		var err error
-		kept, err = store.SetUserRoleKeepingAnOwner(r.Context(), q, id, role)
-		return err
+		kept, err := store.SetUserRoleKeepingAnOwner(r.Context(), q, id, role)
+		if err != nil {
+			return err
+		}
+		if !kept {
+			return errRefused
+		}
+		return nil
 	}); err != nil {
+		if errors.Is(err, errRefused) {
+			s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+				"Error": "That is the last owner. Make someone else an owner first.",
+			})
+			return
+		}
 		s.fail(w, r, err)
-		return
-	}
-	if !kept {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
-			"Error": "That is the last owner. Make someone else an owner first.",
-		})
 		return
 	}
 	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
@@ -361,6 +365,11 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 func (s *Server) activity(ctx context.Context, actorID int64, entity, entityID, action, before, after string) error {
 	return store.InsertActivity(ctx, s.db, "user", itoa(actorID), entity, entityID, action, before, after)
 }
+
+// errRefused is what a write closure returns when the statement it guards
+// changed nothing. It travels back through s.write so the activity row rolls
+// back with the write that did not happen.
+var errRefused = errors.New("the write was refused by its own guard")
 
 // write applies a mutation and its activity row in one transaction.
 func (s *Server) write(r *http.Request, entity, entityID, action, before, after string, apply func(store.Querier) error) error {
