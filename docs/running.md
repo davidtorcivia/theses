@@ -124,6 +124,11 @@ The consequence worth knowing: a tab left open across a deploy keeps running
 the old modules until it is reloaded, as it did before any of this. What it
 cannot do is come back tomorrow and still be served them.
 
+The one thing a deploy does not carry with it is the store browsers keep
+offline work in, which is at version 2 from this version on: rolling back to a
+build older than this one leaves whatever anybody had queued unreadable in
+their browser, though untouched, until the newer build is served again.
+
 ## Health
 
 `GET /healthz` answers 200 and the version as soon as the process is up. `GET

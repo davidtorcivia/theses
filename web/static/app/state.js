@@ -583,18 +583,34 @@ function write() {
 // changes out of the snapshot, which is the reload that most wants them.
 addEventListener('pagehide', () => { if (keeping) write(); });
 
+// askTwice tells a read that could not be made from one that was made and found
+// nothing. The database answers null for the first, which is what a tab holding
+// the version before this one causes, and undefined for the second. A block
+// lifts the moment that tab goes, and this page asks only once and then tells
+// somebody their work is not on this device, so the first is worth one more go.
+// The second is the answer, and asking again would only be slower.
+// The second ask is a second chance rather than a second full wait: a block that
+// has not lifted by now is one the boot should stop holding somebody up for,
+// and the page it draws instead says plainly that it has nothing.
+async function askTwice(read) {
+  const first = await read();
+  if (first !== null) return first;
+  await new Promise((r) => setTimeout(r, 500));
+  return Promise.race([read(), new Promise((r) => setTimeout(() => r(null), 1500))]);
+}
+
 // restore boots this page from what the last visit left behind. It answers
 // false when nothing was cached for the proposition asked for, which is what
 // the page says out loud rather than drawing an empty board.
 export async function restore(open) {
-  const row = await offline.cached(open);
+  const row = await askTwice(() => offline.cached(open));
   if (!row || row.v !== VERSION) return false;
   boot(row.payload);
   state.open = open;
   // The links and files are a row of their own, written by the only thing that
   // reads them. A proposition whose panes were never opened has none, and the
   // panes say so rather than the board refusing to draw.
-  const kept = await offline.cachedMaterial(open);
+  const kept = await askTwice(() => offline.cachedMaterial(open));
   const material = kept && kept.v === VERSION ? kept : {};
   state.links = material.links || [];
   state.files = material.files || [];
