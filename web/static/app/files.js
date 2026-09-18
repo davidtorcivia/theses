@@ -12,7 +12,7 @@ const DEFAULT_FOLDER = 'Documents';
 
 export function renderFiles(pane) {
   material().catch((err) => say(err.message));
-  resumeWhatIsLeft();
+  if (!asked) { asked = true; resumeWhatIsLeft(); }
 
   const rows = matching();
   pane.append(el('div', { class: 'ph' },
@@ -30,6 +30,16 @@ export function renderFiles(pane) {
     folderFacets()));
 
   const list = el('ul', { id: 'flist', class: 'list' });
+  // The files waiting for a connection sit at the top with nothing but a name:
+  // there is no row on the server to draw yet, and there will not be one until
+  // the bytes have gone.
+  for (const [id, held] of state.uploads) {
+    if (!held.queued) continue;
+    list.append(el('li', { class: 'row pending', 'data-id': id },
+      el('span', { class: 'k mono', text: 'waiting' }),
+      el('div', { class: 'main' }, el('span', { class: 't', text: held.name })),
+      el('span', { class: 'when mono', text: 'goes up when the connection is back' })));
+  }
   if (!rows.length) {
     list.append(el('li', {
       class: 'none',
@@ -87,6 +97,15 @@ async function take(chosen) {
 // as the bytes go.
 async function run(file, folder, replace) {
   let id = 0;
+  // Nothing can be uploaded with no connection: the bytes go to the bucket, and
+  // the bucket is on the far side of the same network. The file waits in the
+  // list instead and goes up when there is a line again.
+  if (!navigator.onLine) {
+    const held = await upload.hold(state.open, file, folder, replace);
+    state.uploads.set(held, { name: file.name, at: 0, queued: true });
+    emit();
+    return;
+  }
   try {
     const ready = await upload.start(state.open, file, folder, replace, {
       // The row exists before a byte has moved, so the list shows it filling
@@ -117,12 +136,25 @@ function put(row) {
 }
 
 // resumeWhatIsLeft picks up uploads this browser started and did not finish,
-// once per page. The server is asked which parts the bucket already has, so
-// nothing is sent twice.
-let resumed = false;
+// and starts the ones that were dropped with no connection to start them on.
+// The server is asked which parts the bucket already has, so nothing is sent
+// twice. It runs once when the pane is first drawn and again the moment the
+// browser says there is a network.
+let running = false;
+let asked = false;
 async function resumeWhatIsLeft() {
-  if (resumed || !state.open) return;
-  resumed = true;
+  if (running || !state.open || !navigator.onLine) return;
+  running = true;
+  try {
+    await carryOn();
+  } finally {
+    running = false;
+  }
+}
+
+addEventListener('online', () => { asked = true; resumeWhatIsLeft(); });
+
+async function carryOn() {
   let rows = [];
   try {
     rows = await upload.pending();
@@ -132,6 +164,15 @@ async function resumeWhatIsLeft() {
   for (const row of rows) {
     if (row.proposition !== state.open) continue;
     const name = row.handle ? row.handle.name : '';
+    // A file that waited for a connection has no server row yet, so it starts
+    // rather than resumes, and its placeholder leaves the list with it.
+    if (row.queued) {
+      state.uploads.delete(row.file);
+      await upload.forget(row.file);
+      if (row.handle) await run(row.handle, row.folder, row.replace);
+      emit();
+      continue;
+    }
     progress(row.file, name, 0);
     try {
       const ready = await upload.resume(row, {

@@ -4,63 +4,17 @@
 // it left off by asking the server which parts the bucket is still missing.
 
 import * as api from './api.js';
+import * as offline from './offline.js';
 
-const DB = 'theses-uploads';
-const STORE = 'uploads';
-
-// open is the one place IndexedDB is touched. A browser with storage blocked
-// or a private window that refuses gives null, and the upload runs without the
-// resume: what is lost is the ability to carry on after a reload, not the
-// upload itself.
-function open() {
-  return new Promise((resolve) => {
-    let req;
-    try {
-      req = indexedDB.open(DB, 1);
-    } catch {
-      resolve(null);
-      return;
-    }
-    req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(STORE)) {
-        req.result.createObjectStore(STORE, { keyPath: 'file' });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null);
-    req.onblocked = () => resolve(null);
-  });
-}
-
-async function withStore(mode, run) {
-  const db = await open();
-  if (!db) return null;
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const out = run(tx.objectStore(STORE));
-      tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
-  } catch {
-    return null;
-  } finally {
-    db.close();
-  }
-}
-
-// remember and forget keep the note of what is in flight. The file handle
-// itself is stored: a browser keeps a File across a reload as long as the file
-// on disk has not changed, which is what makes a resume possible without asking
-// the person to find it again.
-export const remember = (row) => withStore('readwrite', (store) => store.put(row));
-export const forget = (file) => withStore('readwrite', (store) => store.delete(file));
-
-export async function pending() {
-  const rows = await withStore('readonly', (store) => store.getAll());
-  return rows || [];
-}
+// remember and forget keep the note of what is in flight, in the same database
+// as the outbox and the cached proposition. The file handle itself is stored: a
+// browser keeps a File across a reload as long as the file on disk has not
+// changed, which is what makes a resume possible without asking the person to
+// find it again. A browser with storage blocked answers nothing and the upload
+// runs without the resume.
+export const remember = offline.remember;
+export const forget = offline.forget;
+export const pending = offline.uploads;
 
 // start uploads one file and returns the row the server marked ready. hooks
 // takes started, called with the row as soon as it exists so the list can show
@@ -76,6 +30,15 @@ export async function start(proposition, file, folder, replace, hooks) {
   await remember({ file: up.file.id, handle: file, folder, proposition });
   hooks.started(up.file);
   return carryOn(up, file, hooks.progress);
+}
+
+// hold keeps a file that was dropped with no connection. There is no file id
+// yet, because only the server gives those out, so the note is filed under a
+// negative one of this device's own making until the upload can start.
+export async function hold(proposition, file, folder, replace) {
+  const id = -Date.now();
+  await remember({ file: id, handle: file, folder, proposition, replace: replace || 0, queued: true });
+  return id;
 }
 
 // resume picks an upload up again from whatever the bucket already holds. The

@@ -3,6 +3,7 @@
 // came back from this tab's own command or arrived from somebody else's.
 
 import * as api from './api.js';
+import * as offline from './offline.js';
 
 export const state = {
   me: 0,
@@ -46,8 +47,18 @@ export const state = {
   folder: 'all',
   fileQuery: '',
   // uploads is what is in flight in this tab, by file id: a fraction and,
-  // when one went wrong, what to say about it.
+  // when one went wrong, what to say about it. A file dropped with nothing to
+  // upload it to waits in here under a negative id until there is.
   uploads: new Map(),
+
+  // The offline half. fromCache is a page the service worker handed back with
+  // no server behind it; waiting is how many commands the outbox is holding;
+  // panel is the activity drawer, with its rows and the refused replays.
+  fromCache: false,
+  waiting: 0,
+  panel: false,
+  activity: [],
+  refused: [],
 };
 
 export function boot(payload) {
@@ -308,5 +319,183 @@ export function apply(ev) {
       break;
     }
   }
+  remember();
   emit();
+}
+
+// The optimistic half. Every command the browser sends is drawn before the
+// server has answered and reconciled when it does: the echo carries the whole
+// row, so applying it after the guess is applying the guess again, and a
+// refusal puts back what was there.
+//
+// Only the commands that change a row already on the screen are in here. A
+// create has no id to draw under until the server has given it one, and waiting
+// the width of a socket round trip for one is not something anybody notices.
+const optimistic = {
+  'card.title': { entity: 'card', id: (a) => a.card, fields: (a) => ({ title: a.title }) },
+  'card.description': { entity: 'card', id: (a) => a.card, fields: (a) => ({ description_md: a.text }) },
+  'card.due': { entity: 'card', id: (a) => a.card, fields: (a) => ({ due_date: a.due }) },
+  'card.question': { entity: 'card', id: (a) => a.card, fields: (a) => ({ question: a.question }) },
+  'card.done': { entity: 'card', id: (a) => a.card, fields: (a) => ({ done_at: a.done ? seconds() : null }) },
+  'card.assign': {
+    entity: 'card', id: (a) => a.card,
+    fields: (a, row) => ({ assignees: [...new Set([...(row.assignees || []), a.user])] }),
+  },
+  'card.unassign': {
+    entity: 'card', id: (a) => a.card,
+    fields: (a, row) => ({ assignees: (row.assignees || []).filter((id) => id !== a.user) }),
+  },
+  'card.move': {
+    entity: 'card', id: (a) => a.card,
+    fields: (a, row) => ({ column_id: a.column, position: behind(a.after, row) }),
+  },
+  'column.rename': { entity: 'column', id: (a) => a.column, fields: (a) => ({ name: a.title }) },
+  'checklist.toggle': { entity: 'checklist_item', id: (a) => a.item, fields: (a) => ({ done: a.done }) },
+  'block.set': { entity: 'block', id: (a) => a.block, fields: (a) => ({ text: a.text }) },
+  'proposition.status': { entity: 'proposition', id: (a) => a.proposition, fields: (a) => ({ status: a.status }) },
+  'proposition.edit': {
+    entity: 'proposition', id: (a) => a.proposition,
+    fields: (a) => ({ title: a.title, statement: a.statement, blurb: a.blurb }),
+  },
+};
+
+const seconds = () => Math.floor(Date.now() / 1000);
+
+// behind is a position key that sorts just after the card the drop landed on.
+// Keys are base 62, so a tilde is above every character one can end in.
+//
+// ponytail: it is a guess, not the key the server will allocate, and a card
+// dropped above a neighbour whose key runs deeper than one character can land a
+// place out until the echo arrives with the real one. The upgrade is the
+// server's fractional key generator in the browser as well.
+function behind(after, row) {
+  if (!after) return '';
+  const previous = state.cards.get(after);
+  return previous ? previous.position + '~' : row.position;
+}
+
+function rowOf(entity, id) {
+  switch (entity) {
+    case 'card':
+      return state.cards.get(id) || null;
+    case 'column':
+      return state.columns.find((c) => c.id === id) || null;
+    case 'proposition':
+      return proposition(id);
+    case 'checklist_item':
+      for (const card of state.cards.values()) {
+        const item = (card.checklist || []).find((i) => i.id === id);
+        if (item) return item;
+      }
+      return null;
+    case 'block':
+      for (const doc of state.documents) {
+        const block = (doc.blocks || []).find((b) => b.id === id);
+        if (block) return block;
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+// predict draws one row as it will be, through the same path an event takes so
+// that there is one way into the state and not two. It answers the function
+// that puts the row back, which is what a refusal calls.
+export function predict(cmd, args) {
+  const spec = optimistic[cmd];
+  if (!spec) return null;
+  const row = rowOf(spec.entity, spec.id(args));
+  if (!row) return null;
+  const was = { ...row };
+  apply(local(spec.entity, { ...row, ...spec.fields(args, row) }));
+  // ponytail: the row goes back exactly as it was, so a refusal arriving after
+  // somebody else changed the same row puts the older value back until the next
+  // event corrects it. The upgrade is asking the event stream for that one row
+  // instead of remembering it.
+  return () => apply(local(spec.entity, was));
+}
+
+// local is an event this tab made up. Sequence zero, so it never moves the
+// stream's place: the real one arrives with a number on it.
+function local(entity, row) {
+  return { seq: 0, proposition: state.open, entity, entity_id: row.id, action: 'edit', after: row };
+}
+
+// baseText is what the field held before the change. It is kept beside a queued
+// command so a refusal an hour later can still say what this device was working
+// from, and it has to be read before the guess is applied.
+export function baseText(cmd, args) {
+  const spec = optimistic[cmd];
+  if (!spec) return null;
+  const row = rowOf(spec.entity, spec.id(args));
+  if (!row) return null;
+  if (cmd === 'block.set') return row.text || '';
+  if (cmd === 'card.title') return row.title || '';
+  if (cmd === 'card.description') return row.description_md || '';
+  return null;
+}
+
+// The snapshot is written in the shape the server renders into the page, so a
+// page the worker served with no payload in it boots from this unchanged.
+function snapshot() {
+  return {
+    me: state.me,
+    workspace: state.workspace,
+    statuses: state.statuses,
+    questions: state.questions,
+    question_labels: state.questionLabels,
+    can: state.can,
+    presence: [],
+    users: [...state.users.values()],
+    propositions: state.props,
+    open: state.open,
+    board: { columns: state.columns, cards: [...state.cards.values()], seq: state.seq },
+    documents: state.documents,
+  };
+}
+
+// ponytail: the whole snapshot is written again two seconds after the last
+// change rather than the rows that moved. At a few hundred cards that is a
+// millisecond; at a hundred thousand it would have to be one row at a time.
+let keeping = 0;
+export function remember() {
+  if (!state.open || keeping || state.fromCache) return;
+  keeping = setTimeout(() => {
+    keeping = 0;
+    offline.keep({
+      proposition: state.open,
+      at: Date.now(),
+      payload: snapshot(),
+      material: {
+        links: state.links,
+        files: state.files,
+        folders: state.folders,
+        kinds: state.kinds,
+        attachments: state.attachments,
+      },
+    });
+  }, 2000);
+}
+
+// restore boots this page from what the last visit left behind. It answers
+// false when nothing was cached for the proposition asked for, which is what
+// the page says out loud rather than drawing an empty board.
+export async function restore(open) {
+  const row = await offline.cached(open);
+  if (!row) return false;
+  boot(row.payload);
+  state.open = open;
+  const material = row.material || {};
+  state.links = material.links || [];
+  state.files = material.files || [];
+  state.folders = material.folders || [];
+  state.kinds = material.kinds || [];
+  state.attachments = material.attachments || { links: [], files: [] };
+  // The material is what was cached, so material() must not go looking for it.
+  state.loaded = open;
+  // Only the proposition this device saw last can be changed offline. The rest
+  // are read only from whatever was cached, which is what the plan asks for.
+  if ((await offline.newest()) !== open) state.can = { ...state.can, edit: false };
+  return true;
 }

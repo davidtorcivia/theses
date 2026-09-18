@@ -4,7 +4,7 @@
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
 import { state, user, emit, hold, canEdit, material } from './state.js';
-import { send } from './net.js';
+import { send, queueLink } from './net.js';
 import * as api from './api.js';
 
 export function renderLinks(pane) {
@@ -45,6 +45,15 @@ function addLine() {
     if (e.key !== 'Enter') return;
     const url = field.value.trim();
     if (!url) return;
+    // Reading the page is the server's job, so with no connection the URL goes
+    // in the outbox and the title, the author and the date are fetched on the
+    // way back up.
+    if (!navigator.onLine) {
+      field.value = '';
+      queueLink(state.open, url);
+      say('That link is kept on this device. It is read when the connection is back.');
+      return;
+    }
     field.disabled = true;
     field.value = 'Reading ' + url + '…';
     try {
