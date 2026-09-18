@@ -9,8 +9,8 @@ and the API and MCP listings report it the same way rather than returning it.
 ## Workspace
 
 The name the workspace is known by, the number episode numbering starts at,
-the release day and release time, and the IANA time zone the release time is
-read in.
+the release day and release time, and the IANA time zone the release time and
+the digest schedule are read in.
 
 ## Defaults
 
@@ -47,10 +47,30 @@ puts every unsent message back at the front of the outbox.
 
 ## Sign-in
 
-How many days a sign-in lasts before it has to be repeated, and the shortest
-account name allowed. Both are applied. The choice of whether everyone or only
-owners has to enrol an authenticator is stored but not yet enforced: setup and
-the invitation flow enrol everyone.
+Whether an authenticator is required of everyone or of owners only, how many
+days a sign-in lasts before it has to be repeated, and the shortest account
+name allowed. Owners always enrol, whatever the first is set to.
+
+## Notifications
+
+The defaults a new account starts with, so that someone who changes nothing
+still hears about what is addressed to them, and the workspace-wide pieces the
+per-account channels borrow: the shared application token for the push
+service, the notification server URL, and the workspace-level webhooks that
+fire regardless of who did the thing. Each account picks its own channels and
+rules on its profile page.
+
+## Integrations
+
+One row per integration, with connect, configure and disconnect. Each stores
+its tokens as secrets, on the same terms as the rest of this page.
+
+## Backups
+
+The destination, the time of day the nightly run starts, how many archives to
+keep, a button that runs one now, and the list of archives with a restore
+beside each. See [running.md](running.md) for what an archive contains and
+what a restore does.
 
 ## Team
 
@@ -60,8 +80,8 @@ link is also shown once on the page, for the owner to pass on by hand; neither
 link is written to the activity log. Resending mints a new token and kills the
 old link.
 
-API tokens are created here too. A token is shown once, carries the
-permissions of the account that made it, and can be revoked. See
+API tokens and MCP clients are managed here too. A token is shown once,
+carries the permissions of the account that made it, and can be revoked. See
 [api.md](api.md).
 
 ## Environment

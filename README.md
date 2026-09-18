@@ -4,7 +4,7 @@ A workspace per proposition: a board on top, shared markdown documents underneat
 
 ## Status
 
-Pre-alpha. Shipped so far: accounts with authenticator enrolment, invitations and password reset by mail, the settings registry with encrypted secrets, scoped API tokens, the REST API and the MCP server, search, and the S3 client with its CORS rule and probe. Coming next: the board, documents, links and files, live editing, and backups.
+Pre-alpha. Under active development; parts of this document describe what is being built.
 
 ## How it works
 

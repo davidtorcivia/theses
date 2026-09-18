@@ -5,7 +5,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 
 | Route | What it is |
 | --- | --- |
-| `GET /` | The app shell. |
+| `GET /` | The app shell. It hosts the workspace views itself, in the browser. |
 | `GET POST /setup` | First run only: create the owner. Every other route redirects here until one exists. |
 | `GET POST /setup/authenticator` | Scan the QR code and confirm a code. The account is written only when the code matches. |
 | `GET POST /login` | Account name, password and authenticator code, in one form. |
@@ -32,7 +32,21 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /settings/team/invite/{id}/revoke` | Delete the invitation. |
 | `POST /settings/tokens` | Create an API token. It is shown once. |
 | `POST /settings/tokens/{id}/revoke` | Revoke one. |
+| `GET /ws` | One websocket per tab, on the session cookie, subscribed to the open proposition: presence, and every command as it is applied. |
 | `GET /offline` | What the service worker will serve when the server is unreachable. |
 | `GET /healthz` | Always 200. |
-| `GET /readyz` | Runs the readiness checks. The database now; the object store and the backup age later. |
+| `GET /readyz` | Runs the readiness checks: the database, the object store, and the age of the newest backup. |
 | `GET /static/{hash}/...` | Content-hashed assets, cached for a year. |
+
+## Inside the shell
+
+The workspace is one page. The shell renders its views in the browser and
+reads and writes through `/api/v1` and the websocket, so they are not separate
+server routes.
+
+Per proposition: the board, with the proposition's documents beneath it; the
+links; the files; and the proposition's own settings, which is its members and
+its status.
+
+Per account: the profile, the team, the workspace defaults, and the
+integrations.
