@@ -271,6 +271,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /settings", s.requireOwner(s.getSettings))
 	mux.HandleFunc("POST /settings", s.requireOwner(s.postSettings))
 	mux.HandleFunc("POST /settings/test/storage", s.requireOwner(s.postTestStorage))
+	mux.HandleFunc("POST /settings/cors", s.requireOwner(s.postApplyCORS))
 	mux.HandleFunc("POST /settings/test/mail", s.requireOwner(s.postTestMail))
 	mux.HandleFunc("POST /settings/mail/retry", s.requireOwner(s.postMailRetry))
 	mux.HandleFunc("POST /settings/test/backups", s.requireOwner(s.postTestBackupKey))

@@ -30,15 +30,22 @@ public base URL is optional, for a CDN in front of the bucket.
 
 The browser uploads to the bucket directly over a presigned URL, so the bucket
 needs a CORS rule allowing `PUT`, `GET` and `HEAD` from the origin in
-`THESES_BASE_URL`. The section prints the exact rule for the chosen provider;
-apply it on the bucket before the first upload. `POST /settings/test/storage`
-writes, reads and deletes a probe object and reports what happened.
+`THESES_BASE_URL`. The section prints the exact rule for the chosen provider.
+**Apply the CORS rule**, beside the printed rule, sets it on that bucket with
+the saved keys through `POST /settings/cors` and reads it back, so the notice
+says what the bucket holds rather than what was sent to it. It replaces any
+rule already on the bucket, and it is there for each bucket that has a name, so
+a separate recordings bucket gets its own. A key that may not write bucket
+settings is refused by the provider, and the section prints that sentence with
+a reminder that the rule can still be pasted into the B2 CLI or API or the R2
+dashboard by hand. `POST /settings/test/storage` writes, reads and deletes a
+probe object and reports what happened.
 
-The second button is the half the server cannot do for itself: the page asks
-for a presigned PUT, has this browser try it against the bucket the way an
-upload does, and then asks again to have the probe object removed. A bucket
-whose CORS rule is missing or names another origin fails here rather than on
-somebody's first upload.
+**Check CORS from this browser** is the half the server cannot do for itself:
+the page asks for a presigned PUT, has this browser try it against the bucket
+the way an upload does, and then asks again to have the probe object removed.
+A bucket whose CORS rule is missing or names another origin fails here rather
+than on somebody's first upload.
 
 Changing a bucket does not move what is already in the old one.
 

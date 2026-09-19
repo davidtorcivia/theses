@@ -528,6 +528,57 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// postApplyCORS sets the printed rule on the bucket with the saved keys and
+// reads it back, so the answer is what the bucket holds rather than what was
+// sent to it. A key without the capability is refused by the provider, whose
+// sentence is printed with the reminder that the rule can still be pasted in.
+func (s *Server) postApplyCORS(w http.ResponseWriter, r *http.Request) {
+	prefix := r.PostFormValue("prefix")
+	if prefix != "storage.primary" && prefix != "storage.recordings" {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	cfg, err := s.bucketConfig(r.Context(), prefix)
+	refuse := func(msg string) {
+		s.back(w, r, "/settings#storage", map[string]any{
+			"StorageResult": mail.Redact(msg, cfg.SecretKey) + " " + corsByHand,
+			"StorageFailed": true,
+		})
+	}
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	c, err := blob.New(cfg)
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	defer cancel()
+	origin := s.origin()
+	if err := c.PutCORS(ctx, origin); err != nil {
+		refuse(err.Error())
+		return
+	}
+	allowed, err := c.CORSAllows(ctx, origin)
+	if err != nil {
+		refuse(err.Error())
+		return
+	}
+	if !allowed {
+		refuse("The rule went to " + cfg.Bucket + " and reading it back did not find " + origin + ".")
+		return
+	}
+	s.back(w, r, "/settings#storage", map[string]any{
+		"StorageResult": "Applied the rule to " + cfg.Bucket + ", which now allows " + origin + ".",
+	})
+}
+
+// corsByHand ends every refusal: the button is a convenience, and the rule
+// above it is still there to paste into the provider's own tools.
+const corsByHand = "The rule can still be applied by hand."
+
 // probeTimeout bounds the whole three-call probe, so a bucket that accepts the
 // connection and then says nothing does not hold the settings page open.
 const probeTimeout = 30 * time.Second
