@@ -1,12 +1,13 @@
 // The board: columns that wrap, cards that drag between and within them, the
 // inline form that assigns by account name, and the All, Mine and Open filter.
 
-import { $, $$, el, clear, initials, say, editable, handles, stripHandles } from './dom.js';
+import { $, el, clear, initials, say, editable, handles, stripHandles } from './dom.js';
 import { state, user, emit, hold, columnCards, canEdit } from './state.js';
 import { send } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { openCard } from './drawer.js';
 import { activate } from './keys.js';
+import { movable, carrying } from './drag.js';
 
 // A due date is an ISO calendar day, so late compares two of those and never
 // two instants: a card due today is not late at any hour of it. The day it is
@@ -74,26 +75,33 @@ function cardNode(card) {
   });
   const node = el('article', {
     class: 'card' + (card.done_at ? ' done' : '') + (mine ? ' mine' : ''),
-    draggable: canEdit() ? 'true' : null, 'data-id': card.id,
+    'data-id': card.id,
   }, who, el('div', { class: 'cb' },
     el('div', { class: 'ct', text: card.title }),
     el('div', { class: 'cm' }, meta(card), canEdit() && tick)));
 
-  node.addEventListener('click', () => openCard(card.id));
+  node.addEventListener('click', () => {
+    // The pointer that has just carried a card ends in a click as well, and
+    // that one finishes the drag rather than asking to read the card.
+    if (carrying()) return;
+    openCard(card.id);
+  });
   activate(node, () => openCard(card.id));
-  node.addEventListener('dragstart', (e) => {
-    node.classList.add('dragging');
-    // A change arriving mid drag would rebuild the board and take the card out
-    // of the hand holding it, so rendering waits until the drop.
-    hold(true);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(card.id));
-  });
-  node.addEventListener('dragend', () => {
-    node.classList.remove('dragging');
-    for (const c of $$('.col.over')) c.classList.remove('over');
-    hold(false);
-  });
+  // Cards are carried by the pointer, because a phone fires no drag event from
+  // a finger. A card let go anywhere but over a column moves nothing.
+  if (canEdit()) {
+    movable(node, {
+      zone: '.col', list: (col) => $('.cards', col), over: 'over',
+      drop: (col) => {
+        const previous = node.previousElementSibling;
+        send('card.move', {
+          card: card.id,
+          column: Number(col.dataset.col),
+          after: previous ? Number(previous.dataset.id) : 0,
+        }).catch((err) => { say(err.message); emit(); });
+      },
+    });
+  }
   return node;
 }
 
@@ -141,33 +149,7 @@ function columnNode(column) {
       onclick: () => inlineAdd(column, cards),
     }));
 
-  if (canEdit()) dropZone(section, column, cards);
   return section;
-}
-
-function dropZone(section, column, cards) {
-  section.addEventListener('dragover', (e) => {
-    const dragging = $('#board .card.dragging');
-    if (!dragging) return;
-    e.preventDefault();
-    section.classList.add('over');
-    const after = [...cards.querySelectorAll('.card:not(.dragging)')]
-      .find((c) => e.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
-    after ? cards.insertBefore(dragging, after) : cards.append(dragging);
-  });
-  section.addEventListener('dragleave', () => section.classList.remove('over'));
-  section.addEventListener('drop', (e) => {
-    e.preventDefault();
-    section.classList.remove('over');
-    const dragging = $('#board .card.dragging');
-    if (!dragging) return;
-    const previous = dragging.previousElementSibling;
-    send('card.move', {
-      card: Number(dragging.dataset.id),
-      column: column.id,
-      after: previous ? Number(previous.dataset.id) : 0,
-    }).catch((err) => { say(err.message); emit(); });
-  });
 }
 
 // inlineAdd is the one place a card is written straight onto the board. An

@@ -5,6 +5,7 @@ import { $, $$, el, clear, num, ask, say, editable } from './dom.js';
 import { state, emit, hold } from './state.js';
 import { send } from './net.js';
 import { activate } from './keys.js';
+import { movable, carrying } from './drag.js';
 
 function groups() {
   const statuses = state.statuses;
@@ -34,7 +35,7 @@ function entry(p) {
   const menu = el('div', { class: 'menu', hidden: true });
   const li = el('li', {
     class: 'ws' + (p.archived_at ? ' arch' : '') + (p.id === state.open ? ' on' : ''),
-    'data-n': p.id, 'data-status': p.status, draggable: p.archived_at ? null : 'true',
+    'data-n': p.id, 'data-status': p.status,
   }, el('span', { class: 'no', text: num(p.number) }), title);
 
   if (state.can.edit) {
@@ -59,18 +60,24 @@ function entry(p) {
   }
 
   li.addEventListener('click', (e) => {
-    if (e.target.closest('.menu') || e.target.closest('.more') || title.isContentEditable) return;
+    if (carrying() || e.target.closest('.menu') || e.target.closest('.more') || title.isContentEditable) return;
     go(p.id);
   });
   activate(li, () => { if (!title.isContentEditable) go(p.id); });
+  // The same pointer drag the board uses, for the same reason: a finger fires
+  // no drag event, so the rail could not be ordered on a phone either. An
+  // archived proposition has no place in the order and so is not carried.
   if (!p.archived_at) {
-    li.addEventListener('dragstart', (e) => {
-      li.classList.add('dragging');
-      hold(true);
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(p.id));
+    movable(li, {
+      zone: '#rail ul.order',
+      drop: () => {
+        const previous = li.previousElementSibling;
+        send('proposition.move', {
+          proposition: p.id,
+          after: previous ? Number(previous.dataset.n) : 0,
+        }).catch((err) => { say(err.message); emit(); });
+      },
     });
-    li.addEventListener('dragend', () => { li.classList.remove('dragging'); hold(false); });
   }
   return li;
 }
@@ -107,27 +114,6 @@ export function go(id) {
   if (id !== state.open) location.href = '/p/' + id;
 }
 
-function droppable(list) {
-  list.addEventListener('dragover', (e) => {
-    const dragging = $('#rail .ws.dragging');
-    if (!dragging) return;
-    e.preventDefault();
-    const after = [...list.querySelectorAll('.ws:not(.dragging)')]
-      .find((x) => e.clientY < x.getBoundingClientRect().top + x.offsetHeight / 2);
-    after ? list.insertBefore(dragging, after) : list.append(dragging);
-  });
-  list.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const dragging = $('#rail .ws.dragging');
-    if (!dragging) return;
-    const previous = dragging.previousElementSibling;
-    send('proposition.move', {
-      proposition: Number(dragging.dataset.n),
-      after: previous ? Number(previous.dataset.n) : 0,
-    }).catch((err) => { say(err.message); emit(); });
-  });
-}
-
 export function renderRail() {
   // The rail is built again from nothing on every render, so a row holding the
   // keyboard goes with it. Its number is taken now and the focus put back at
@@ -150,9 +136,10 @@ export function renderRail() {
   for (const group of groups()) {
     const items = group.items.filter((p) => !state.railFilter || p.status === state.railFilter);
     if (!items.length) continue;
-    const list = el('ul', {});
+    // The lists that hold an order. The archived one below is not one of them,
+    // so nothing can be carried into it.
+    const list = el('ul', { class: 'order' });
     for (const p of items) list.append(entry(p));
-    droppable(list);
     rail.append(el('div', { class: 'group', id: group.id },
       el('h4', { text: group.name + ' ' }, el('i', { text: String(items.length) })),
       list));
