@@ -12,7 +12,9 @@
 html{-webkit-text-size-adjust:100%}
 body{margin:0;min-height:100vh;display:grid;grid-template-columns:var(--railw) minmax(0,1fr);grid-template-rows:auto 1fr;grid-template-areas:"top top" "rail work"}
 a{color:inherit;text-decoration:none}
-button{all:unset;cursor:pointer;font:inherit;color:inherit}
+/* all:unset takes the border box with it, and a button that sets a height
+   or a floor wants its padding counted inside that, like everything else. */
+button{all:unset;box-sizing:border-box;cursor:pointer;font:inherit;color:inherit}
 input,textarea,select{font:inherit;color:inherit;background:transparent;border:0;outline:0;width:100%;padding:0;margin:0}
 textarea{resize:vertical}
 [hidden]{display:none!important}
@@ -81,8 +83,11 @@ textarea{resize:vertical}
 .list .note{margin:.2rem 0 0}
 .list .none{padding:1rem 0}
 #drop{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
-/* forms: aligned sections */
-.form{max-width:1040px}
+/* forms: aligned sections. The width cap belongs to the section, not to the
+   form around it: Team, Integrations and Environment are sections with no form
+   of their own, so without it their rule, their table and their invite row ran
+   out to the pane edge while every other section stopped at the same column. */
+.form,.fs{max-width:1040px}
 .fs{display:grid;grid-template-columns:220px minmax(0,1fr);gap:0 3rem;align-items:start}
 .fsh{min-width:0}
 .fsh h3{margin:0}
@@ -91,7 +96,9 @@ textarea{resize:vertical}
 .f{display:block}
 .f .l{display:block}
 .f>small{display:block}
-.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.2rem}
+/* A row carries the space a field would have carried, because the fields in
+   it have theirs taken away; otherwise two stacked rows touch. */
+.row3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1.2rem;margin-bottom:1rem}
 .row3 .f{margin-bottom:0}
 .chk{display:flex;align-items:flex-start;gap:.7rem}
 .chk input{width:auto;margin:.3em 0 0}
@@ -471,6 +478,10 @@ dialog .acts{display:flex;gap:1.2rem;justify-content:flex-end;align-items:baseli
 .notice{border-left:2px solid var(--y);padding:.5rem 0 .5rem .8rem;margin:0 0 1.2rem;color:var(--dim);max-width:60ch}
 .notice.bad{border-left-color:#ff5a3c}
 .notice .mono{color:var(--p);word-break:break-all}
+/* A Save sits under a row of fields, a list, a table or a checkbox, and only
+   some of those carry a margin of their own. Whatever is above it leaves the
+   space, so the filled button never lands on the border of the last field. */
+.fsb :has(+.save){margin-bottom:1rem}
 .save{background:var(--y);color:var(--k);font-weight:800;padding:.5rem 1.1rem;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%;font-size:12px}
 .save:hover{background:var(--p)}
 .fsb form+form{margin-top:1.2rem}
@@ -558,13 +569,11 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   #drawer .comments .lnk,#drawer .check .lnk,#drawer .cf .lnk,#drawer .cf select{
     display:inline-flex;align-items:center;min-height:40px}
 
-  /* The same floor for the account link and the rail toggle, and for the
-     answer buttons of every dialog. */
+  /* The same floor for the account link and the rail toggle, for the search
+     button, and for the answer buttons of every dialog. */
   #top .acct,#railtoggle{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px}
   dialog .acts button{display:inline-flex;align-items:center;min-height:40px}
-  /* button{all:unset} takes the border box with it, so the padding and the
-     border are added to a min height rather than counted inside it. */
-  #top .search{box-sizing:border-box;min-height:40px}
+  #top .search{min-height:40px}
 }
 /* A focus ring where button{all:unset} took one
    away, the top bar's workspace label, the account page links, the heading
@@ -592,10 +601,14 @@ body.plain #top .show{display:inline;margin-right:auto;min-width:0;overflow:hidd
 .act{display:inline-block;border:1px solid var(--y);color:var(--y);padding:.4rem .9rem;font-weight:800;font-size:12px;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%}
 .act:hover{background:var(--y);color:var(--k)}
 .tests{display:flex;flex-wrap:wrap;gap:.6rem 1.6rem;align-items:baseline;margin:.6rem 0}
-/* Fields carry labels, so the button lines up with the bottom of a field. */
+/* Fields carry labels, so the button lines up with the bottom of a field. One
+   height for all three, because an input, a select and a button each measure
+   their own line differently and the row came out ragged. */
 .invite{align-items:flex-end}
 .invite .f{flex:1 1 200px;margin:0}
 .invite .f select{width:100%}
+.invite .f input,.invite .f select,.invite .act{height:2.25rem}
+.invite .act{display:inline-flex;align-items:center}
 /* A value the page shows once, selectable in one click beside its Copy. */
 .once{display:block;font-family:var(--monof);font-size:12px;letter-spacing:.05em;color:var(--p);overflow-wrap:anywhere;user-select:all;margin:.4rem 0 .3rem}
 /* Below 640 the account link hid its own initials along with the

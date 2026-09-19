@@ -13,7 +13,7 @@
 html{-webkit-text-size-adjust:100%}
 body{margin:0;min-height:100vh;background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",Helvetica,Arial,sans-serif;font-size:15px;line-height:1.3}
 a{color:inherit;text-decoration:none}
-button{all:unset;cursor:pointer;font:inherit;color:inherit}
+button{all:unset;box-sizing:border-box;cursor:pointer;font:inherit;color:inherit}
 button:focus-visible{outline:2px solid var(--y);outline-offset:2px}
 input{font:inherit;color:inherit;background:transparent;border:0;outline:0;width:100%;padding:0;margin:0}
 .mono{font-family:var(--monof);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
@@ -50,7 +50,7 @@ h1{margin:0 0 .6rem;font-weight:800;font-size:clamp(30px,3.4vw,44px);line-height
 .f.pw{position:relative}
 .f.pw label{display:block}
 .f.pw .forgot{position:absolute;right:0;top:0}
-.btn{display:block;box-sizing:border-box;width:100%;text-align:center;background:var(--y);color:var(--k);font-weight:800;padding:.8rem 1rem;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%;font-size:14px;margin-top:1.4rem}
+.btn{display:block;width:100%;text-align:center;background:var(--y);color:var(--k);font-weight:800;padding:.8rem 1rem;letter-spacing:.06em;text-transform:uppercase;font-stretch:85%;font-size:14px;margin-top:1.4rem}
 .btn:hover{background:var(--p)}
 .btn.ghost{background:transparent;color:var(--p);border:1px solid var(--p);margin-top:.7rem}
 .btn.ghost:hover{border-color:var(--y);color:var(--y)}
