@@ -161,7 +161,12 @@ textarea{resize:vertical}
 #admin nav .back{margin-left:auto}
 .team{width:100%;border-collapse:collapse}
 .team td,.team th{text-align:left;vertical-align:middle}
-.team td:first-child{display:flex;align-items:center;gap:.6rem}
+/* The cell stays a table cell so its border sits on the row's line with the
+   others; the chip and the name align inside it instead. */
+.team td:first-child{white-space:nowrap}
+.team td:first-child .u{vertical-align:middle;margin-right:.6rem}
+.team td:first-child span:not(.u){vertical-align:middle}
+.team td form{display:inline-flex;align-items:center;gap:.6rem}
 .team select{width:auto}
 .ints{list-style:none;margin:0;padding:0}
 .ints li{display:grid;grid-template-columns:9em 8em minmax(0,1fr) auto;gap:1rem;align-items:baseline}
