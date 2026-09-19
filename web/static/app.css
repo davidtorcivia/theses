@@ -542,6 +542,11 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   #drawer .x,#drawer .props .lnk,#drawer .props .rm,#drawer .linked .lnk,#drawer .linked a,
   #drawer .comments .lnk,#drawer .check .lnk,#drawer .cf .lnk,#drawer .cf select{
     display:inline-flex;align-items:center;min-height:40px}
+
+  /* The same floor for the account link and the rail toggle, and for the
+     answer buttons of every dialog. */
+  #top .acct,#railtoggle{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px}
+  dialog .acts button{display:inline-flex;align-items:center;min-height:40px}
 }
 /* A focus ring where button{all:unset} took one
    away, the top bar's workspace label, the account page links, the heading
