@@ -17,15 +17,26 @@ if (location.hash === '#activity') openPanel();
 
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
+// found is the way back to whatever in the work area has the keyboard, written
+// down before the rebuild throws it away. Everything here that takes the focus
+// and is not a form control carries something to find it again by: the title
+// and the statement their ids, a card its number, a column name the column's.
+function found(work) {
+  const node = document.activeElement;
+  if (!node || !work.contains(node)) return '';
+  if (node.id === 'wtitle' || node.id === 'wstate') return '#' + node.id;
+  if (node.classList.contains('card')) return `#board .card[data-id="${node.dataset.id}"]`;
+  const column = node.tagName === 'H3' ? node.closest('.col') : null;
+  return column ? `#board .col[data-col="${column.dataset.col}"] h3` : '';
+}
+
 export function renderWork() {
-  // The whole work area is built again from nothing, so a card holding the
-  // keyboard is thrown away with the rest of it. Its id is taken now and the
-  // focus put back on the new node at the end, or somebody who had just reached
-  // a card would find the keyboard on the body the moment anybody else touched
-  // this proposition.
-  const focused = document.activeElement;
-  const had = focused && focused.classList && focused.classList.contains('card')
-    ? focused.dataset.id : '';
+  // The whole work area is built again from nothing, so whatever held the
+  // keyboard is thrown away with the rest of it and the focus goes back on the
+  // new node at the end. Without this, somebody who had just reached a card, a
+  // column name or the title would find the keyboard on the body the moment
+  // anybody else touched this proposition.
+  const back = found($('#work'));
   const work = clear($('#work'));
   const p = open();
   if (!p) {
@@ -35,9 +46,9 @@ export function renderWork() {
   document.title = `${num(p.number)} ${p.title} · THESES`;
   work.append(head(p));
   work.append(pane(p));
-  if (had) {
-    const card = $(`#board .card[data-id="${had}"]`);
-    if (card) card.focus();
+  if (back) {
+    const node = $(back);
+    if (node) node.focus();
   }
 }
 

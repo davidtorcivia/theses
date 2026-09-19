@@ -53,7 +53,7 @@ function linked(card) {
   for (const link of attachedLinks(card.id)) {
     list.append(el('li', {},
       el('a', { href: link.url, target: '_blank', rel: 'noopener noreferrer',
-        text: link.title || host(link.url) }),
+        'data-k': 'linkl' + link.id, text: link.title || host(link.url) }),
       el('span', { class: 'mono dim', text: ' ' + (link.kind || 'link') + ' · ' }),
       canEdit() ? el('button', { class: 'lnk del', type: 'button', text: 'Detach',
         'data-k': 'detachl' + link.id,
