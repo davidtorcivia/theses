@@ -166,6 +166,11 @@ func TestOriginOf(t *testing.T) {
 		{"", ""},
 		{"   ", ""},
 		{"not a url", ""},
+		{"*", ""},
+		{"*.example.com", ""},
+		{"file:/etc/passwd", ""},
+		{"s3 example.com", ""},
+		{":9000", ""},
 		{"javascript:alert(1)", ""},
 		{"file:///etc", ""},
 	} {

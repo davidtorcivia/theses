@@ -96,7 +96,7 @@ func originOf(raw string) string {
 		raw = "https://" + raw
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if err != nil || !blob.ValidHost(u.Host) || (u.Scheme != "http" && u.Scheme != "https") {
 		return ""
 	}
 	return u.Scheme + "://" + u.Host
