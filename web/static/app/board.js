@@ -74,27 +74,178 @@ function cardNode(card) {
   });
   const node = el('article', {
     class: 'card' + (card.done_at ? ' done' : '') + (mine ? ' mine' : ''),
-    draggable: canEdit() ? 'true' : null, 'data-id': card.id,
+    'data-id': card.id,
   }, who, el('div', { class: 'cb' },
     el('div', { class: 'ct', text: card.title }),
     el('div', { class: 'cm' }, meta(card), canEdit() && tick)));
 
-  node.addEventListener('click', () => openCard(card.id));
+  node.addEventListener('click', () => {
+    // The pointer that has just carried a card ends in a click as well, and
+    // that one finishes the drag rather than asking to read the card.
+    if (carried) return;
+    openCard(card.id);
+  });
   activate(node, () => openCard(card.id));
-  node.addEventListener('dragstart', (e) => {
-    node.classList.add('dragging');
-    // A change arriving mid drag would rebuild the board and take the card out
-    // of the hand holding it, so rendering waits until the drop.
-    hold(true);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(card.id));
-  });
-  node.addEventListener('dragend', () => {
-    node.classList.remove('dragging');
-    for (const c of $$('.col.over')) c.classList.remove('over');
-    hold(false);
-  });
+  if (canEdit()) drag(node, card);
   return node;
+}
+
+// A phone fires no HTML5 drag event from a finger, so on one that mechanism
+// cannot reach the board at all. Pointer events are the single path that
+// carries a mouse, a pen and a finger, and this is the whole of the drag.
+//
+// Only the moment a drag begins differs between them. A mouse with the button
+// down that has moved a few pixels is dragging, because a mouse never scrolls
+// the page this way. A finger is doing one of three things, and they are told
+// apart in time: one that stays put long enough for the press to be meant is
+// carrying the card, one that moves before then is scrolling the page, and one
+// that lifts before then has tapped to open the card.
+const PRESS = 300;
+const SLOP = 6;
+
+// How near an edge brings the page up to meet the finger, and how fast.
+const EDGE = 64;
+const SPEED = 12;
+
+let carried = false;
+
+function drag(node, card) {
+  node.addEventListener('pointerdown', (e) => {
+    carried = false;
+    // The tick and the assign button answer for themselves, and a second
+    // button is not a drag.
+    if (e.button !== 0 || e.target.closest('button')) return;
+
+    const mouse = e.pointerType === 'mouse';
+    const from = { x: e.clientX, y: e.clientY };
+    let at = { ...from };
+    let grab = null;
+    let ghost = null;
+    let on = false;
+    let edge = 0;
+    let frame = 0;
+    let press = mouse ? 0 : setTimeout(start, PRESS);
+
+    // Neither value of touch-action answers this. The browser reads the rule
+    // when the finger lands, a third of a second before the press that picks
+    // the card up, so a rule written at either moment is read too late to stop
+    // the scroll. Refusing the first touchmove of the drag does stop it: the
+    // press needed the finger still, so no scroll has begun to refuse.
+    const still = (ev) => ev.preventDefault();
+    // Android answers a long press with a context menu and cancels the pointer
+    // behind it, which would drop the card in the moment it was picked up.
+    const quiet = (ev) => ev.preventDefault();
+
+    node.setPointerCapture(e.pointerId);
+    addEventListener('pointermove', moved);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', end);
+    addEventListener('contextmenu', quiet);
+    // Ahead of the listener on the document, which would read the same key as
+    // a request to close whatever else is open.
+    addEventListener('keydown', abandon, true);
+
+    function start() {
+      press = 0;
+      on = true;
+      const box = node.getBoundingClientRect();
+      grab = { x: at.x - box.left, y: at.y - box.top };
+      ghost = node.cloneNode(true);
+      ghost.classList.add('ghost');
+      ghost.removeAttribute('tabindex');
+      ghost.style.width = box.width + 'px';
+      document.body.append(ghost);
+      node.classList.add('dragging');
+      // A change arriving mid drag would rebuild the board and take the card
+      // out of the hand holding it, so rendering waits until the drop.
+      hold(true);
+      addEventListener('touchmove', still, { passive: false });
+      frame = requestAnimationFrame(tick);
+      follow();
+    }
+
+    function follow() {
+      ghost.style.left = (at.x - grab.x) + 'px';
+      ghost.style.top = (at.y - grab.y) + 'px';
+    }
+
+    // place puts the card where the pointer is, by the rule the mockup drew:
+    // among the cards of the column under the pointer, above the first one
+    // whose middle the pointer has not reached.
+    function place() {
+      const col = document.elementFromPoint(at.x, at.y)?.closest('.col');
+      if (!col) return;
+      for (const other of $$('.col.over')) if (other !== col) other.classList.remove('over');
+      col.classList.add('over');
+      const cards = $('.cards', col);
+      const after = [...cards.querySelectorAll('.card:not(.dragging)')]
+        .find((c) => at.y < c.getBoundingClientRect().top + c.offsetHeight / 2);
+      after ? cards.insertBefore(node, after) : cards.append(node);
+    }
+
+    // A finger at the edge of a phone cannot reach the column below the fold,
+    // so the page comes to it. The pointer holds still while this runs and the
+    // board moves under it, so the card is placed again on every frame.
+    function tick() {
+      if (edge) { scrollBy(0, edge); place(); }
+      frame = requestAnimationFrame(tick);
+    }
+
+    function moved(ev) {
+      if (ev.pointerId !== e.pointerId) return;
+      at = { x: ev.clientX, y: ev.clientY };
+      if (!on) {
+        if (Math.abs(at.x - from.x) <= SLOP && Math.abs(at.y - from.y) <= SLOP) return;
+        if (mouse) start(); else end();
+        return;
+      }
+      follow();
+      place();
+      edge = mouse ? 0 : at.y < EDGE ? -SPEED : at.y > innerHeight - EDGE ? SPEED : 0;
+    }
+
+    function up(ev) {
+      if (ev.pointerId !== e.pointerId) return;
+      if (on) {
+        carried = true;
+        const previous = node.previousElementSibling;
+        send('card.move', {
+          card: card.id,
+          column: Number(node.closest('.col').dataset.col),
+          after: previous ? Number(previous.dataset.id) : 0,
+        }).catch((err) => { say(err.message); emit(); });
+      }
+      end();
+    }
+
+    // Escape puts the card down. Nothing is sent, and the render held through
+    // the drag draws the board back out of the state, which is where the card
+    // never stopped being.
+    function abandon(ev) {
+      if (ev.key !== 'Escape' || !on) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      end();
+    }
+
+    function end() {
+      clearTimeout(press);
+      cancelAnimationFrame(frame);
+      removeEventListener('pointermove', moved);
+      removeEventListener('pointerup', up);
+      removeEventListener('pointercancel', end);
+      removeEventListener('contextmenu', quiet);
+      removeEventListener('keydown', abandon, true);
+      removeEventListener('touchmove', still);
+      if (node.hasPointerCapture(e.pointerId)) node.releasePointerCapture(e.pointerId);
+      if (!on) return;
+      on = false;
+      ghost.remove();
+      node.classList.remove('dragging');
+      for (const col of $$('.col.over')) col.classList.remove('over');
+      hold(false);
+    }
+  });
 }
 
 function assign(card, anchor) {
@@ -141,33 +292,7 @@ function columnNode(column) {
       onclick: () => inlineAdd(column, cards),
     }));
 
-  if (canEdit()) dropZone(section, column, cards);
   return section;
-}
-
-function dropZone(section, column, cards) {
-  section.addEventListener('dragover', (e) => {
-    const dragging = $('#board .card.dragging');
-    if (!dragging) return;
-    e.preventDefault();
-    section.classList.add('over');
-    const after = [...cards.querySelectorAll('.card:not(.dragging)')]
-      .find((c) => e.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
-    after ? cards.insertBefore(dragging, after) : cards.append(dragging);
-  });
-  section.addEventListener('dragleave', () => section.classList.remove('over'));
-  section.addEventListener('drop', (e) => {
-    e.preventDefault();
-    section.classList.remove('over');
-    const dragging = $('#board .card.dragging');
-    if (!dragging) return;
-    const previous = dragging.previousElementSibling;
-    send('card.move', {
-      card: Number(dragging.dataset.id),
-      column: column.id,
-      after: previous ? Number(previous.dataset.id) : 0,
-    }).catch((err) => { say(err.message); emit(); });
-  });
 }
 
 // inlineAdd is the one place a card is written straight onto the board. An

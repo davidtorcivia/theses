@@ -58,8 +58,11 @@ textarea{resize:vertical}
 .col header{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem}
 .col h3{margin:0;outline:0;min-width:0}
 .col .cards{min-height:2.5rem}
-.card{cursor:grab}
-.card.dragging{opacity:.35}
+/* A pointer carries the card, so a press on one is never a selection, and the
+   card left behind is never what is under the pointer. */
+.card{cursor:grab;-webkit-user-select:none;user-select:none}
+.card.dragging{opacity:.35;pointer-events:none}
+.card.ghost{position:fixed;z-index:40;pointer-events:none;opacity:.92;background:var(--k);padding-left:.6rem;padding-right:.6rem;outline:1px solid var(--y)}
 .card:active{cursor:grabbing}
 .cm{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .6rem}
 .u{display:inline-flex;align-items:center;justify-content:center;font-family:var(--monof);font-size:10px;letter-spacing:.04em;width:1.9em;height:1.9em;line-height:1}
