@@ -485,6 +485,9 @@ pre.cors{font-family:var(--monof);font-size:11px;line-height:1.6;color:var(--dim
 /* The document's conflict notice and its history. The mockup drew neither,
    because nothing in it could refuse a write or remember an older version. */
 .doc-ph .dlinks{margin-left:auto;display:flex;gap:1.2rem;align-items:baseline;padding-bottom:.7rem}
+/* The links in this row are black, which is what the row is for. The one that
+   throws the document away is the app's red instead, as it is in the drawer. */
+.doc-ph .lnk.del{color:#c0392b}
 .blk .notice{border-left-color:#c0392b;color:rgba(0,0,0,.65);font-size:14px;max-width:none;margin:0 0 .6rem}
 .blk .notice .theirs{font-family:var(--monof);font-size:12px;color:var(--k);overflow-wrap:anywhere}
 .blk .notice .choices{display:block;margin-top:.4rem}

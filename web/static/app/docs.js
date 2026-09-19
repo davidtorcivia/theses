@@ -6,7 +6,7 @@
 // version the editor started from, so somebody else's change in between is
 // merged on the server or comes back as a choice.
 
-import { $, el, add, clear, inline, say, editable } from './dom.js';
+import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit } from './state.js';
 import { send, where, Conflict } from './net.js';
 
@@ -50,9 +50,9 @@ export function renderDocument() {
   if (doc) state.document = doc.id;
   const head = el('div', { class: 'ph doc-ph' }, tabs(doc), summary(doc));
   if (doc) {
-    // The two links sit together at the right. One auto margin each would
-    // share the space between them and put History in the middle of the row.
-    head.append(el('div', { class: 'dlinks' },
+    // The links sit together at the right. One auto margin each would share
+    // the space between them and put History in the middle of the row.
+    const links = el('div', { class: 'dlinks' },
       el('button', {
         class: 'lnk', type: 'button', id: 'dhistory', text: 'History',
         onclick: () => openHistory(doc),
@@ -61,7 +61,9 @@ export function renderDocument() {
         class: 'lnk', type: 'button', id: 'docmode',
         text: state.docSource ? 'Rendered' : 'Source',
         onclick: () => { state.docSource = !state.docSource; emit(); },
-      })));
+      }));
+    if (canEdit() && state.can.delete) links.append(deleteDocument(doc));
+    head.append(links);
   }
 
   const body = el('div', { id: 'docwrap', class: state.docSource ? 'source' : '' });
@@ -103,6 +105,7 @@ export function afterRender() {
     // left to write to.
     editing = null;
     conflict = null;
+    where(docWhere());
     return;
   }
   const { selectionStart, selectionEnd } = editing.area;
@@ -163,6 +166,24 @@ function renameTab(tab) {
       say(err.message);
       emit();
     });
+  });
+}
+
+// deleteDocument is the control the tabs never had. A researcher may not
+// delete, so they are not offered it. The last document of a proposition goes
+// like any other, because nothing on the server holds one back: the pane says
+// the proposition has none and the + above starts the next one.
+function deleteDocument(doc) {
+  return el('button', {
+    class: 'lnk del', type: 'button', id: 'docdel', text: 'Delete this document',
+    onclick: () => ask(`Delete ${doc.name}?`,
+      'Its blocks and the markdown file it is mirrored to go with it. The record of the deletion stays in activity.',
+      'Delete permanently').then((yes) => {
+      if (!yes) return;
+      send('document.delete', { document: doc.id })
+        .then(() => where(docWhere()))
+        .catch((err) => say(err.message));
+    }),
   });
 }
 
