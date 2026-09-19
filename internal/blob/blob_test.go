@@ -746,3 +746,11 @@ func TestGetSaysWhenTheObjectIsNotThere(t *testing.T) {
 		t.Fatalf("get of a missing object gave %v", err)
 	}
 }
+
+// An empty origin would go to the bucket as a rule allowing nothing, which
+// reads on the page as a rule that is there and works.
+func TestPutCORSRefusesAnEmptyOrigin(t *testing.T) {
+	if err := fake(t).PutCORS(context.Background(), ""); err == nil {
+		t.Error("an empty origin was accepted")
+	}
+}

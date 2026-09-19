@@ -30,15 +30,27 @@ public base URL is optional, for a CDN in front of the bucket.
 
 The browser uploads to the bucket directly over a presigned URL, so the bucket
 needs a CORS rule allowing `PUT`, `GET` and `HEAD` from the origin in
-`THESES_BASE_URL`. The section prints the exact rule for the chosen provider;
-apply it on the bucket before the first upload. `POST /settings/test/storage`
-writes, reads and deletes a probe object and reports what happened.
+`THESES_BASE_URL`. The section prints the exact rule for the chosen provider.
+**Apply the CORS rule**, with the test buttons under the fields, sets it on
+that bucket with the saved keys through `POST /settings/cors` and reads it
+back, so the notice says what the bucket holds rather than what was sent to it.
+It applies what is saved, not what is typed, so save the fields first. It
+replaces any rule already on the bucket, and there is one button per bucket
+that has a name, so a separate recordings bucket gets its own. A key that may
+not write bucket settings is refused by the provider, and the section prints
+that sentence and "The rule can still be applied by hand." A put the provider
+takes but will not read back is not a failure: the notice says the rule went
+and to look again in a minute. On Backblaze, a rule set through the native API
+is neither returned by `GetBucketCors` nor replaced by `PutBucketCors`, so a
+read back may find nothing where the native API shows a rule.
+`POST /settings/test/storage` writes, reads and deletes a probe object and
+reports what happened.
 
-The second button is the half the server cannot do for itself: the page asks
-for a presigned PUT, has this browser try it against the bucket the way an
-upload does, and then asks again to have the probe object removed. A bucket
-whose CORS rule is missing or names another origin fails here rather than on
-somebody's first upload.
+**Check CORS from this browser** is the half the server cannot do for itself:
+the page asks for a presigned PUT, has this browser try it against the bucket
+the way an upload does, and then asks again to have the probe object removed.
+A bucket whose CORS rule is missing or names another origin fails here rather
+than on somebody's first upload.
 
 Changing a bucket does not move what is already in the old one.
 

@@ -66,9 +66,11 @@
         <button class="lnk" type="submit" name="prefix" value="storage.recordings">Test the recordings bucket</button>
         <button class="lnk" type="button" data-cors="storage.primary">Check CORS from this browser</button>
         <button class="lnk" type="button" data-cors="storage.recordings">Check CORS on recordings</button>
+        {{if .Primary.Bucket}}<button class="lnk" type="submit" formaction="/settings/cors" name="prefix" value="storage.primary">Apply the CORS rule</button>{{end}}
+        {{if .Recordings.Bucket}}<button class="lnk" type="submit" formaction="/settings/cors" name="prefix" value="storage.recordings">Apply the CORS rule on recordings</button>{{end}}
       </div>
       <p class="notice" id="corsresult" hidden></p>
-      <p class="small dim">The first two write, read and delete one probe object with the saved keys. The other two upload a probe object from this page the way the browser does, which is the only way to find out whether the CORS rule below lets this origin through.</p>
+      <p class="small dim">The first two write, read and delete one probe object with the saved keys. The next two upload a probe object from this page the way the browser does, which is the only way to find out whether the CORS rule above lets this origin through. The last two set that rule on the bucket, also with the saved keys, so save anything typed into the fields above before pressing one.</p>
     </form>
 
     <form class="form" method="post" action="/settings" id="mail">
@@ -386,4 +388,4 @@
 <label class="f"><span class="l">Public base URL</span><input name="{{.Prefix}}.public_base_url" value="{{.PublicBaseURL}}" spellcheck="false"><small>Optional, for a CDN in front of the bucket.</small></label>
 <div class="f"><span class="l">CORS rule for {{.ProviderLabel}}</span>
 <pre class="cors">{{.CORS}}</pre>
-<small>Apply this on the bucket before the browser can upload to it. The origin is {{.Origin}}, from THESES_BASE_URL. B2 takes it through its CLI or API, R2 through the dashboard.</small></div>{{end}}
+<small>The bucket needs this before the browser can upload to it. The origin is {{.Origin}}, from THESES_BASE_URL. The Apply the CORS rule button below sets it with the saved keys and reads it back, replacing any rule the bucket already has; otherwise B2 takes it through its CLI or API and R2 through the dashboard.</small></div>{{end}}

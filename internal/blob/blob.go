@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -513,4 +514,45 @@ func flatten(h http.Header) map[string]string {
 		m[k] = strings.Join(v, ", ")
 	}
 	return m
+}
+
+// PutCORS sets the rule the browser needs on the bucket: origin may GET, HEAD
+// and PUT with any header and read the ETag back. It is the printed rule
+// applied for the owner, and like the call underneath it, it replaces whatever
+// rule the bucket had rather than adding to it. It goes in the AWS form, with
+// the checksum header the SDK puts on a call that requires one; a provider
+// that will not take that is a refusal like any other and the sentence it
+// gives reaches the page.
+func (c *Client) PutCORS(ctx context.Context, origin string) error {
+	if origin == "" {
+		return errors.New("blob: origin is empty")
+	}
+	if _, err := c.s3.PutBucketCors(ctx, &s3.PutBucketCorsInput{
+		Bucket: aws.String(c.bucket),
+		CORSConfiguration: &types.CORSConfiguration{CORSRules: []types.CORSRule{{
+			AllowedOrigins: []string{origin},
+			AllowedMethods: []string{"GET", "HEAD", "PUT"},
+			AllowedHeaders: []string{"*"},
+			ExposeHeaders:  []string{"ETag"},
+			MaxAgeSeconds:  aws.Int32(corsMaxAge),
+		}}},
+	}); err != nil {
+		return fmt.Errorf("blob: put cors on %q: %w", c.bucket, err)
+	}
+	return nil
+}
+
+// CORSAllows reads the bucket's rule back and reports whether origin is in it,
+// so the page says what the bucket holds rather than what was sent to it.
+func (c *Client) CORSAllows(ctx context.Context, origin string) (bool, error) {
+	out, err := c.s3.GetBucketCors(ctx, &s3.GetBucketCorsInput{Bucket: aws.String(c.bucket)})
+	if err != nil {
+		return false, fmt.Errorf("blob: get cors on %q: %w", c.bucket, err)
+	}
+	for _, rule := range out.CORSRules {
+		if slices.Contains(rule.AllowedOrigins, origin) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

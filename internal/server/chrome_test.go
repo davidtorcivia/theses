@@ -189,6 +189,8 @@ func TestEveryFormRedirectsToItsSection(t *testing.T) {
 			url.Values{"prefix": {"storage.primary"}}},
 		{"the recordings bucket test", "/settings/test/storage", "/settings#storage",
 			url.Values{"prefix": {"storage.recordings"}}},
+		{"the CORS rule on the primary bucket", "/settings/cors", "/settings#storage",
+			url.Values{"prefix": {"storage.primary"}}},
 		{"a test message", "/settings/test/mail", "/settings#mail", url.Values{}},
 		{"the outbox retry", "/settings/mail/retry", "/settings#mail", url.Values{}},
 		{"the backup key test", "/settings/test/backups", "/settings#backups", url.Values{}},
