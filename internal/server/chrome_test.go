@@ -46,7 +46,7 @@ func TestTheLayoutFlagDropsTheRailAndTheSearchBox(t *testing.T) {
 		if got := strings.Contains(body, `<body class="dirB plain">`); got != c.plain {
 			t.Errorf("%s: plain body = %v, want %v", c.path, got, c.plain)
 		}
-		// Finding 12: the top bar label is the mockup's class, not the rail
+		// The top bar label is the mockup's class, not the rail
 		// row's, which is what gave it a border, a grid and a pointer.
 		if !strings.Contains(body, `<span class="show">`) || strings.Contains(body, `<span class="ws">`) {
 			t.Errorf("%s: the top bar label is not .show", c.path)
@@ -54,7 +54,7 @@ func TestTheLayoutFlagDropsTheRailAndTheSearchBox(t *testing.T) {
 	}
 }
 
-// Finding 13: the only route to the workspace settings was typing the address.
+// The only route to the workspace settings was typing the address.
 func TestTheSettingsLinkIsThereForOwnersOnly(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
@@ -76,7 +76,7 @@ func TestTheSettingsLinkIsThereForOwnersOnly(t *testing.T) {
 	}
 }
 
-// Finding 16: signed in, there is nothing to sign in to, and the one action is
+// Signed in, there is nothing to sign in to, and the one action is
 // the way back. An editor asking for the owners' page is the 403 with a live
 // session; the same two addresses after signing out are the pair without one.
 func TestTheErrorPageActionFollowsTheSession(t *testing.T) {
@@ -116,7 +116,7 @@ func TestTheErrorPageActionFollowsTheSession(t *testing.T) {
 	}
 }
 
-// Finding 8: every form on these two pages answers with a redirect to the
+// Every form on these two pages answers with a redirect to the
 // section it posted from, so the browser never sits on an address that only
 // accepts POST and never lands at the top of a page thousands of pixels long.
 // Every form on both pages is here, in the order that lets one row make what
@@ -284,7 +284,7 @@ func TestTheInviteRateLimitStillRefusesAndSaysSo(t *testing.T) {
 	t.Errorf("twenty five invitations and none was refused:\n%s", firstNotice(body))
 }
 
-// Finding 1 of the second pass: the notice belongs in the section the form
+// The notice belongs in the section the form
 // posted from, because the page the browser lands on is scrolled to it and the
 // heading at the top of the page is thousands of pixels away.
 func TestTheNoticeIsPrintedInsideItsOwnSection(t *testing.T) {
@@ -341,7 +341,7 @@ func TestTheOneTimeValuesSurviveTheRedirectOnlyOnce(t *testing.T) {
 		t.Error("the flash was not spent: the token is on the next load too")
 	}
 
-	// Finding 20: the invitation says which of the three things happened to the
+	// The invitation says which of the three things happened to the
 	// mail, and no mail server is configured here.
 	_, body = h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {auth.RoleEditor},
