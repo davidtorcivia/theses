@@ -58,11 +58,17 @@ textarea{resize:vertical}
 .col header{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem}
 .col h3{margin:0;outline:0;min-width:0}
 .col .cards{min-height:2.5rem}
-/* A pointer carries the card, so a press on one is never a selection, and the
-   card left behind is never what is under the pointer. */
-.card{cursor:grab;-webkit-user-select:none;user-select:none}
-.card.dragging{opacity:.35;pointer-events:none}
-.card.ghost{position:fixed;z-index:40;pointer-events:none;opacity:.92;background:var(--k);padding-left:.6rem;padding-right:.6rem;outline:1px solid var(--y)}
+/* A pointer carries a card and a rail row, so dragging one is never selecting
+   the words on it, and the row left behind is never what the pointer is over.
+   The class is set by the drag itself, so a board nobody may edit keeps its
+   text selectable. */
+.movable{-webkit-user-select:none;user-select:none}
+.card{cursor:grab}
+.card.dragging,.ws.dragging{pointer-events:none}
+.card.dragging{opacity:.35}
+.ghost{position:fixed;z-index:40;pointer-events:none;opacity:.92}
+.card.ghost{background:var(--k);outline:1px solid var(--y);padding-left:.6rem;padding-right:.6rem}
+.ws.ghost{background:var(--y);outline:1px solid var(--k)}
 .card:active{cursor:grabbing}
 .cm{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .6rem}
 .u{display:inline-flex;align-items:center;justify-content:center;font-family:var(--monof);font-size:10px;letter-spacing:.04em;width:1.9em;height:1.9em;line-height:1}
@@ -629,3 +635,16 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
 /* The palette is one yellow frame around its own field; a second inside it is
    a frame too many. */
 #palette input:focus-visible{outline:0}
+/* Nothing reveals itself on hover where there is no hover. The tick, the plus
+   that assigns and the rail row's menu are drawn at full strength on a phone
+   and still appear on hover at 1440. */
+@media (hover:none){
+  .card .asg,.card .cm .tick,.ws .more{opacity:1}
+}
+/* The board's hint tells a mouse to drag and a finger to press and hold, and
+   each reader is shown the one that is true for them. */
+.ph .hint.press{display:none}
+@media (max-width:640px){
+  .ph .hint{display:none}
+  .ph .hint.press{display:inline}
+}

@@ -155,7 +155,10 @@ function pane(p) {
       el('h2', { text: 'Board' }),
       el('span', { id: 'bsum', class: 'mono', text: boardSummary() }),
       filters,
-      el('span', { class: 'hint mono', text: 'Drag cards between columns. Click a name to rename a column. + on a card assigns.' })),
+      // Both are drawn and the stylesheet shows the one that is true for the
+      // reader, because a phone is told to press rather than to drag.
+      el('span', { class: 'hint mono', text: 'Drag cards between columns. Click a name to rename a column. + on a card assigns.' }),
+      el('span', { class: 'hint press mono', text: 'Press and hold a card to move it.' })),
     board,
     renderDocument());
 }
