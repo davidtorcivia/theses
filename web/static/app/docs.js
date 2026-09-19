@@ -105,6 +105,7 @@ export function afterRender() {
     // left to write to.
     editing = null;
     conflict = null;
+    where(docWhere());
     return;
   }
   const { selectionStart, selectionEnd } = editing.area;
