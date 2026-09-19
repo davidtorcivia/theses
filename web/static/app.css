@@ -536,8 +536,7 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   .tabs .tab.on{padding-left:.5rem}
 
   /* A finger is not a pointer. Everything in the drawer that does something is
-     at least forty pixels tall here, and untouched at 1440. The invite row in
-     */
+     at least forty pixels tall here, and untouched at 1440. */
   #drawer .props dd,#drawer .check li,#drawer .linked li,#drawer .comments li,
   #drawer .props select,#drawer .props input.inline,#drawer .newitem{min-height:40px}
   #drawer .x,#drawer .props .lnk,#drawer .props .rm,#drawer .linked .lnk,#drawer .linked a,
