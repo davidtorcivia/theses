@@ -731,8 +731,8 @@ func TestPropositionSettingsOffersTheInviteRowToOwnersOnly(t *testing.T) {
 			if !strings.Contains(body, `id="members"`) {
 				t.Error("the Members section has no anchor to land on")
 			}
-			if got := strings.Contains(body, `action="/settings/team/invite"`); got != tc.offer {
-				t.Errorf("the invite row is drawn %v for a %s", got, tc.role)
+			if got := strings.Contains(body, `<a class="lnk" href="/settings#team">Invite someone from workspace settings</a>`); got != tc.offer {
+				t.Errorf("the way to invite somebody is offered %v for a %s", got, tc.role)
 			}
 		})
 	}
