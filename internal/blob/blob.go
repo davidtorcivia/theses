@@ -519,9 +519,10 @@ func flatten(h http.Header) map[string]string {
 // PutCORS sets the rule the browser needs on the bucket: origin may GET, HEAD
 // and PUT with any header and read the ETag back. It is the printed rule
 // applied for the owner, and like the call underneath it, it replaces whatever
-// rule the bucket had rather than adding to it. B2 and R2 both take this call
-// and the read back in the AWS form; what they refuse on an object PUT is the
-// aws-chunked body, not the checksum header a call like this one carries.
+// rule the bucket had rather than adding to it. It goes in the AWS form, with
+// the checksum header the SDK puts on a call that requires one; a provider
+// that will not take that is a refusal like any other and the sentence it
+// gives reaches the page.
 func (c *Client) PutCORS(ctx context.Context, origin string) error {
 	if origin == "" {
 		return errors.New("blob: origin is empty")

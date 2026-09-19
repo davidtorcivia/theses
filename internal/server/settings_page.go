@@ -532,6 +532,9 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 // reads it back, so the answer is what the bucket holds rather than what was
 // sent to it. A key without the capability is refused by the provider, whose
 // sentence is printed with the reminder that the rule can still be pasted in.
+// Once the put has gone through, nothing after it is a failure to apply the
+// rule: the bucket has it, and a read back that says otherwise is the bucket
+// being slow or keeping the rule somewhere this API cannot see.
 func (s *Server) postApplyCORS(w http.ResponseWriter, r *http.Request) {
 	prefix := r.PostFormValue("prefix")
 	if prefix != "storage.primary" && prefix != "storage.recordings" {
@@ -561,23 +564,36 @@ func (s *Server) postApplyCORS(w http.ResponseWriter, r *http.Request) {
 		refuse(err.Error())
 		return
 	}
+	s.log.Info("cors rule applied", "bucket", cfg.Bucket, "origin", origin)
+	went := "The rule went to " + cfg.Bucket + ". "
+	unconfirmed := func(msg string) {
+		s.back(w, r, "/settings#storage", map[string]any{
+			"StorageResult": went + mail.Redact(msg, cfg.SecretKey) + " " + corsSoon,
+		})
+	}
 	allowed, err := c.CORSAllows(ctx, origin)
 	if err != nil {
-		refuse(err.Error())
+		unconfirmed("Reading it back failed: " + err.Error() + ".")
 		return
 	}
 	if !allowed {
-		refuse("The rule went to " + cfg.Bucket + " and reading it back did not find " + origin + ".")
+		unconfirmed("Reading it back did not find " + origin + " yet.")
 		return
 	}
 	s.back(w, r, "/settings#storage", map[string]any{
-		"StorageResult": "Applied the rule to " + cfg.Bucket + ", which now allows " + origin + ".",
+		"StorageResult": went + "It now allows " + origin + ".",
 	})
 }
 
-// corsByHand ends every refusal: the button is a convenience, and the rule
-// above it is still there to paste into the provider's own tools.
+// corsByHand ends a refusal, which is a rule that never reached the bucket:
+// the button is a convenience, and the rule printed in the fields above is
+// still there to paste into the provider's own tools.
 const corsByHand = "The rule can still be applied by hand."
+
+// corsSoon ends a put the provider took and would not read back. Neither B2
+// nor R2 promises the rule is readable the instant it is written, and saying
+// to do by hand what is already done is worse than asking to look again.
+const corsSoon = "Try again in a minute; changes can take that long to show."
 
 // probeTimeout bounds the whole three-call probe, so a bucket that accepts the
 // connection and then says nothing does not hold the settings page open.

@@ -37,39 +37,64 @@ func fakeCORSBucket(t *testing.T, name string, cors http.Handler) string {
 	return srv.URL
 }
 
-// corsRules is a bucket's rule document: a PUT keeps it, a GET gives it back.
-// deny, when set, is the sentence the provider refuses every call with, the
-// way a key that may not write bucket settings does. answer, when set, is what
-// a GET reports whatever was put, which is a provider quietly keeping the rule
-// it already had.
-func corsRules(deny, answer string) http.Handler {
-	var mu sync.Mutex
-	var held string
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		w.Header().Set("Content-Type", "application/xml")
-		switch {
-		case deny != "":
-			w.WriteHeader(http.StatusForbidden)
-			io.WriteString(w, "<Error><Code>AccessDenied</Code><Message>"+deny+"</Message></Error>")
-		case r.Method == http.MethodPut:
-			b, err := io.ReadAll(r.Body)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			held = string(b)
-		case answer != "":
-			io.WriteString(w, answer)
-		case held == "":
-			w.WriteHeader(http.StatusNotFound)
-			io.WriteString(w, "<Error><Code>NoSuchCORSConfiguration</Code>"+
-				"<Message>The CORS configuration does not exist</Message></Error>")
-		default:
-			io.WriteString(w, held)
+// corsFake is a bucket's rule document: a PUT keeps it, a GET gives it back,
+// and a GET before any PUT says there is none, the way a bucket with no rule
+// does. put and get replace either answer, which is how a provider that
+// refuses the call, or takes it and will not read it back, is tested.
+type corsFake struct {
+	put, get corsAnswer
+	mu       sync.Mutex
+	held     string
+}
+
+// corsAnswer is one canned reply: status, when set, is the refusal, and body
+// is what goes with it, or what a GET reports instead of the document held.
+type corsAnswer struct {
+	status int
+	body   string
+}
+
+// corsError is the shape a provider refuses in, so the sentence in it is the
+// one the SDK lifts out and the page has to print.
+func corsError(code, message string) string {
+	return "<Error><Code>" + code + "</Code><Message>" + message + "</Message></Error>"
+}
+
+func (f *corsFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	said := f.get
+	if r.Method == http.MethodPut {
+		said = f.put
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	switch {
+	case said.status != 0:
+		w.WriteHeader(said.status)
+		io.WriteString(w, said.body)
+	case r.Method == http.MethodPut:
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
-	})
+		f.held = string(b)
+	case said.body != "":
+		io.WriteString(w, said.body)
+	case f.held == "":
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, corsError("NoSuchCORSConfiguration", "The CORS configuration does not exist"))
+	default:
+		io.WriteString(w, f.held)
+	}
+}
+
+// rule is the document the bucket is holding, for a test that wants to see
+// what was actually sent to it.
+func (f *corsFake) rule() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.held
 }
 
 // bucketSecret is distinctive so a test can tell it from the word "secret" the
@@ -172,21 +197,46 @@ func TestApplyCORS(t *testing.T) {
 	// The origin is THESES_BASE_URL's, which the harness sets to this.
 	const origin = "http://localhost:8080"
 	for _, c := range []struct {
-		name, deny, answer, want string
-		failed                   bool
+		name, want  string
+		put, get    corsAnswer // what the fake bucket answers, when not the truth
+		rule        []string   // what the bucket is holding afterwards
+		byHand, bad bool
 	}{
 		{name: "the rule is put and read back",
-			want: "Applied the rule to theses, which now allows " + origin + "."},
-		{name: "the bucket keeps a rule for somebody else",
-			answer: "<CORSConfiguration><CORSRule><AllowedOrigin>https://elsewhere.example.com" +
-				"</AllowedOrigin><AllowedMethod>GET</AllowedMethod></CORSRule></CORSConfiguration>",
-			want: "reading it back did not find " + origin, failed: true},
+			want: "The rule went to theses. It now allows " + origin + ".",
+			rule: []string{
+				"<AllowedOrigin>" + origin + "</AllowedOrigin>",
+				"<AllowedMethod>GET</AllowedMethod>",
+				"<AllowedMethod>HEAD</AllowedMethod>",
+				"<AllowedMethod>PUT</AllowedMethod>",
+				"<AllowedHeader>*</AllowedHeader>",
+				"<ExposeHeader>ETag</ExposeHeader>",
+				"<MaxAgeSeconds>3600</MaxAgeSeconds>",
+			}},
 		{name: "the key may not write bucket settings",
-			deny: "this key cannot write bucket settings",
-			want: "this key cannot write bucket settings", failed: true},
+			put: corsAnswer{status: http.StatusForbidden,
+				body: corsError("AccessDenied", "this key cannot write bucket settings")},
+			want: "this key cannot write bucket settings", byHand: true, bad: true},
+
+		// Everything below took the put, so the rule is on the bucket whatever
+		// the read back says and none of it sends the owner off to do it again.
+		{name: "the bucket keeps a rule for somebody else",
+			get: corsAnswer{body: "<CORSConfiguration><CORSRule><AllowedOrigin>" +
+				"https://elsewhere.example.com</AllowedOrigin><AllowedMethod>GET</AllowedMethod>" +
+				"</CORSRule></CORSConfiguration>"},
+			want: "The rule went to theses. Reading it back did not find " + origin + " yet. " + corsSoon},
+		{name: "the read back is refused",
+			get: corsAnswer{status: http.StatusForbidden,
+				body: corsError("AccessDenied", "this key cannot read bucket settings")},
+			want: "this key cannot read bucket settings"},
+		{name: "the bucket says it has no rule",
+			get: corsAnswer{status: http.StatusNotFound,
+				body: corsError("NoSuchCORSConfiguration", "The CORS configuration does not exist")},
+			want: "The rule went to theses. Reading it back failed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			endpoint := fakeCORSBucket(t, "theses", corsRules(c.deny, c.answer))
+			fake := &corsFake{put: c.put, get: c.get}
+			endpoint := fakeCORSBucket(t, "theses", fake)
 			h := newHarness(t)
 			h.setupOwner()
 			h.configureBucket(endpoint, "theses")
@@ -200,15 +250,39 @@ func TestApplyCORS(t *testing.T) {
 			if !strings.Contains(body, c.want) {
 				t.Errorf("the page does not say %q:\n%s", c.want, firstNotice(body))
 			}
-			byHand := strings.Contains(body, corsByHand)
-			if byHand != c.failed {
-				t.Errorf("the by hand line is %v, want %v:\n%s", byHand, c.failed, firstNotice(body))
+			if got := strings.Contains(body, corsByHand); got != c.byHand {
+				t.Errorf("the by hand line is %v, want %v:\n%s", got, c.byHand, firstNotice(body))
+			}
+			if got := strings.Contains(noticeClass(body, c.want), "bad"); got != c.bad {
+				t.Errorf("the notice is a failure: %v, want %v:\n%s", got, c.bad, firstNotice(body))
+			}
+			for _, want := range c.rule {
+				if !strings.Contains(fake.rule(), want) {
+					t.Errorf("the rule on the bucket has no %s:\n%s", want, fake.rule())
+				}
 			}
 			if strings.Contains(body, bucketSecret) {
 				t.Error("the secret key is on the page")
 			}
 		})
 	}
+}
+
+// noticeClass is the class list of the notice carrying text. The page has
+// notices from other sections on it, and only the one holding the answer to
+// this button says whether it failed.
+func noticeClass(body, text string) string {
+	i := strings.Index(body, text)
+	if i < 0 {
+		return ""
+	}
+	const open = `<p class="`
+	at := strings.LastIndex(body[:i], open)
+	if at < 0 {
+		return ""
+	}
+	rest := body[at+len(open):]
+	return rest[:strings.Index(rest, `"`)]
 }
 
 func TestApplyCORSRefusesAnUnknownBucketName(t *testing.T) {
@@ -227,13 +301,16 @@ func TestApplyCORSRefusesAnUnknownBucketName(t *testing.T) {
 func TestTheApplyButtonWaitsForABucket(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
+	// The hint beside the printed rule names the button, so it is the element
+	// itself that is looked for.
+	const button = `value="storage.primary">Apply the CORS rule<`
 	_, body := h.get("/settings")
-	if strings.Contains(body, "Apply the CORS rule") {
+	if strings.Contains(body, button) {
 		t.Errorf("the button is printed with no bucket configured:\n%s", body)
 	}
 	h.configureBucket("https://s3.example.com", "theses")
 	_, body = h.get("/settings")
-	if !strings.Contains(body, "Apply the CORS rule") {
+	if !strings.Contains(body, button) {
 		t.Error("the button is missing for the configured bucket")
 	}
 }
