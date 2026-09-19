@@ -20,6 +20,7 @@ textarea{resize:vertical}
 #netbar{position:fixed;left:1rem;right:1rem;bottom:1rem;z-index:35;padding:.6rem 1rem;width:fit-content;margin-inline:auto}
 #top .search{flex:1 1 200px;max-width:520px;display:flex;justify-content:space-between;align-items:center;gap:1rem}
 #top .presence{display:flex;align-items:center;gap:.35rem;margin-left:auto}
+#top .presence .more{display:none}
 #top .acct{display:inline-flex;align-items:center;gap:.5rem}
 #railtoggle{display:none}
 #rail{grid-area:rail;position:sticky;top:var(--toph);height:calc(100vh - var(--toph));overflow:auto;display:flex;flex-direction:column}
@@ -183,7 +184,11 @@ textarea{resize:vertical}
   .matrix th{font-size:10px;letter-spacing:.04em}
   .matrix td:first-child,.matrix th:first-child{font-size:13px}
   #top .search span{display:none}
-  #top .presence .mono:not(.more){display:none}
+  /* The bar shows two sets of initials and a count of the rest here, and all
+     of them with a count of everybody here above. Both are always drawn, so
+     turning the phone sideways needs nothing but this rule. */
+  #top .presence .u:nth-child(n+3),#top .presence .mono:not(.more){display:none}
+  #top .presence .more{display:inline}
   #top .acct span{display:none}
   /* Settings is a row on the profile page and an entry in the palette, and the
      bar has no room for a third word beside two controls of forty pixels. */

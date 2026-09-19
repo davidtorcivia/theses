@@ -68,20 +68,17 @@ function register() {
 }
 
 // The initials in the top bar are who else is on this proposition right now.
-// Two of them, and a count of the rest: four people at 390 pushed the bar wider
-// than the screen, and a row of initials nobody can read is worth less than the
-// number. The names of everybody here are on the bar as its title either way.
-const shownPresence = 2;
-
 function renderPresence() {
   const bar = clear($('#top .presence'));
-  const hidden = Math.max(state.presence.length - shownPresence, 0);
-  for (const p of state.presence.slice(0, shownPresence)) bar.append(initials(user(p.id), 'on'));
-  // The count of the rest stays at 390, where the one saying how many are here
-  // is the one thing on the bar that has room to go.
-  if (hidden) bar.append(el('span', { class: 'mono more', text: '+' + hidden }));
-  else if (state.presence.length > 1) {
+  for (const p of state.presence) bar.append(initials(user(p.id), 'on'));
+  if (state.presence.length > 1) {
     bar.append(el('span', { class: 'mono', text: state.presence.length + ' here' }));
+  }
+  // A count of everybody past the second, for the narrow bar to show in place
+  // of the initials it has no room for. Which of the two labels is drawn is the
+  // stylesheet's to decide, so a phone turned sideways needs no render.
+  if (state.presence.length > 2) {
+    bar.append(el('span', { class: 'mono more', text: '+' + (state.presence.length - 2) }));
   }
   bar.title = state.presence.map((p) => user(p.id).name).join(', ');
 
