@@ -20,6 +20,7 @@ textarea{resize:vertical}
 #netbar{position:fixed;left:1rem;right:1rem;bottom:1rem;z-index:35;padding:.6rem 1rem;width:fit-content;margin-inline:auto}
 #top .search{flex:1 1 200px;max-width:520px;display:flex;justify-content:space-between;align-items:center;gap:1rem}
 #top .presence{display:flex;align-items:center;gap:.35rem;margin-left:auto}
+#top .presence .more{display:none}
 #top .acct{display:inline-flex;align-items:center;gap:.5rem}
 #railtoggle{display:none}
 #rail{grid-area:rail;position:sticky;top:var(--toph);height:calc(100vh - var(--toph));overflow:auto;display:flex;flex-direction:column}
@@ -183,8 +184,15 @@ textarea{resize:vertical}
   .matrix th{font-size:10px;letter-spacing:.04em}
   .matrix td:first-child,.matrix th:first-child{font-size:13px}
   #top .search span{display:none}
-  #top .presence .mono{display:none}
+  /* The bar shows two sets of initials and a count of the rest here, and all
+     of them with a count of everybody here above. Both are always drawn, so
+     turning the phone sideways needs nothing but this rule. */
+  #top .presence .u:nth-child(n+3),#top .presence .mono:not(.more){display:none}
+  #top .presence .more{display:inline}
   #top .acct span{display:none}
+  /* Settings is a row on the profile page and an entry in the palette, and the
+     bar has no room for a third word beside two controls of forty pixels. */
+  #top .setgs{display:none}
   .ph .hint{display:none}
 }
 @media (prefers-reduced-motion:no-preference){.card,.ws{transition:background .15s,border-color .15s}}
@@ -282,6 +290,10 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .dtab:first-child{padding-left:0}
 .dtab.on{color:var(--k);border-bottom-color:var(--k)}
 .dtab:hover:not(.on){color:var(--k)}
+/* Clicking the tab you are already on renames the document, which the tab has
+   to say before it is clicked: the title, and the rail's own underline while
+   the pointer is over it. It goes away while the name is being typed. */
+.dtab.on[title]:not([contenteditable=true]):hover{cursor:text;text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:.25em}
 .dtab.new{color:var(--k);font-size:18px;padding:.4rem .6rem .5rem;font-weight:700}
 .doc-ph .mono,.doc-ph .lnk{padding-bottom:.7rem}
 .doc-ph .mono{color:rgba(0,0,0,.55)}
@@ -542,6 +554,14 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   #drawer .x,#drawer .props .lnk,#drawer .props .rm,#drawer .linked .lnk,#drawer .linked a,
   #drawer .comments .lnk,#drawer .check .lnk,#drawer .cf .lnk,#drawer .cf select{
     display:inline-flex;align-items:center;min-height:40px}
+
+  /* The same floor for the account link and the rail toggle, and for the
+     answer buttons of every dialog. */
+  #top .acct,#railtoggle{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px}
+  dialog .acts button{display:inline-flex;align-items:center;min-height:40px}
+  /* button{all:unset} takes the border box with it, so the padding and the
+     border are added to a min height rather than counted inside it. */
+  #top .search{box-sizing:border-box;min-height:40px}
 }
 /* A focus ring where button{all:unset} took one
    away, the top bar's workspace label, the account page links, the heading

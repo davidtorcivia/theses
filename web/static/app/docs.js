@@ -116,6 +116,10 @@ function tabs(doc) {
     const on = doc && d.id === doc.id;
     bar.append(el('button', {
       type: 'button', class: 'dtab' + (on ? ' on' : ''), 'data-d': d.id, text: d.name,
+      // Clicking the tab you are already on is how the mockup renames a
+      // document, and the tab said nothing about it. The stylesheet hangs the
+      // hover underline off this attribute, so the two arrive together.
+      title: on && canEdit() ? 'Click again to rename' : null,
       onclick: (e) => {
         if (on) { if (canEdit()) renameTab(e.currentTarget); return; }
         state.document = d.id;

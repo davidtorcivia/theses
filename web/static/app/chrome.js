@@ -74,6 +74,12 @@ function renderPresence() {
   if (state.presence.length > 1) {
     bar.append(el('span', { class: 'mono', text: state.presence.length + ' here' }));
   }
+  // A count of everybody past the second, for the narrow bar to show in place
+  // of the initials it has no room for. Which of the two labels is drawn is the
+  // stylesheet's to decide, so a phone turned sideways needs no render.
+  if (state.presence.length > 2) {
+    bar.append(el('span', { class: 'mono more', text: '+' + (state.presence.length - 2) }));
+  }
   bar.title = state.presence.map((p) => user(p.id).name).join(', ');
 
   // The cached shell is rendered with no account and no workspace name on it,

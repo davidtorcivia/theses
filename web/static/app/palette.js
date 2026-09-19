@@ -79,7 +79,7 @@ function newProposition() {
 // belongs to one proposition, and reaching it from another proposition's page
 // is a navigation rather than a drawer.
 function remote(hit) {
-  const row = { kind: hit.kind, label: hit.title, snippet: hit.snippet, go: null };
+  const row = { kind: hit.kind, label: hit.title, snippet: aside(hit), go: null };
   // A drawer to open it in is the other half of being on the right page: the
   // per proposition settings page carries the palette and none of the panes.
   const here = hit.proposition_id === state.open && Boolean($('#drawer'));
@@ -101,6 +101,20 @@ function remote(hit) {
   // A comment's card is not in the hit, so the board is as close as this gets.
   else row.go = () => { closePalette(); location.hash = ''; };
   return row;
+}
+
+// aside is the dim half of a row. The same book saved in two propositions is
+// two hits with one title, and the palette drew them as the same row twice, so
+// a hit outside the open proposition says which one it is in. A snippet that is
+// the title over again says nothing and is left out.
+function aside(hit) {
+  const parts = [];
+  const p = hit.kind === 'proposition' ? null : state.props.find((x) => x.id === hit.proposition_id);
+  if (p && p.id !== state.open) parts.push(num(p.number) + ' ' + p.title);
+  // The ellipsis is where the snippet was cut, so a cut title still matches it.
+  const text = (hit.snippet || '').replace(/…/g, '').trim();
+  if (text && !hit.title.includes(text)) parts.push(hit.snippet);
+  return parts.join(' · ');
 }
 
 function pane(tab, open) {

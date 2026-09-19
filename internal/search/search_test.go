@@ -239,3 +239,56 @@ func TestABusyPropositionDoesNotHideTheReadersOwnHits(t *testing.T) {
 		t.Errorf("an owner asking for %d cards got %d", MaxLimit, cards)
 	}
 }
+
+// One link is one hit. A link attached to a card, and a link carrying the term
+// in more than one indexed column, are each returned once: the query joins no
+// attachment table and FTS5 answers per row rather than per matching column.
+func TestSearchReturnsALinkOnce(t *testing.T) {
+	cases := []struct {
+		name, title, author, note, text string
+		onCards                         int
+	}{
+		{name: "attached to two cards", title: "After Geoengineering", onCards: 2},
+		{name: "title and author", title: "After Geoengineering", author: "Geoengineering, H."},
+		{name: "every column", title: "After Geoengineering", author: "Geoengineering, H.",
+			note: "geoengineering note", text: "geoengineering body"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			db := store.OpenTemp(t)
+			ex := func(q string, args ...any) {
+				t.Helper()
+				if _, err := db.ExecContext(ctx, q, args...); err != nil {
+					t.Fatalf("%s: %v", q, err)
+				}
+			}
+			ex(`INSERT INTO propositions (id, number, title, status, position, created_at)
+				VALUES (1, 4, 'Engineer the climate', 'idea', 'V', 0)`)
+			ex(`INSERT INTO columns (id, proposition_id, name, position) VALUES (1, 1, 'Research', 'V')`)
+			ex(`INSERT INTO links (id, proposition_id, url, title, author, note_md, text_for_search, created_at)
+				VALUES (1, 1, 'https://example.com/g', ?, ?, ?, ?, 0)`, c.title, c.author, c.note, c.text)
+			// More than one attachment, so a join over card_links would hand
+			// the same link back once per card it hangs on.
+			for card := 1; card <= c.onCards; card++ {
+				ex(`INSERT INTO cards (id, proposition_id, column_id, position, title, created_at)
+					VALUES (?, 1, 1, ?, 'Read the book', 0)`, card, "V"+strconv.Itoa(card))
+				ex(`INSERT INTO card_links (card_id, link_id) VALUES (?, 1)`, card)
+			}
+
+			groups, err := Search(ctx, db, "Geoengineering", 0, Everything())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var links []Hit
+			for _, g := range groups {
+				if g.Kind == KindLink {
+					links = g.Hits
+				}
+			}
+			if len(links) != 1 || links[0].ID != 1 {
+				t.Fatalf("link hits = %+v, want the one link once", links)
+			}
+		})
+	}
+}
