@@ -246,9 +246,9 @@ func TestABusyPropositionDoesNotHideTheReadersOwnHits(t *testing.T) {
 func TestSearchReturnsALinkOnce(t *testing.T) {
 	cases := []struct {
 		name, title, author, note, text string
-		onCard                          bool
+		onCards                         int
 	}{
-		{name: "attached to a card", title: "After Geoengineering", onCard: true},
+		{name: "attached to two cards", title: "After Geoengineering", onCards: 2},
 		{name: "title and author", title: "After Geoengineering", author: "Geoengineering, H."},
 		{name: "every column", title: "After Geoengineering", author: "Geoengineering, H.",
 			note: "geoengineering note", text: "geoengineering body"},
@@ -266,12 +266,14 @@ func TestSearchReturnsALinkOnce(t *testing.T) {
 			ex(`INSERT INTO propositions (id, number, title, status, position, created_at)
 				VALUES (1, 4, 'Engineer the climate', 'idea', 'V', 0)`)
 			ex(`INSERT INTO columns (id, proposition_id, name, position) VALUES (1, 1, 'Research', 'V')`)
-			ex(`INSERT INTO cards (id, proposition_id, column_id, position, title, created_at)
-				VALUES (1, 1, 1, 'V', 'Read the book', 0)`)
 			ex(`INSERT INTO links (id, proposition_id, url, title, author, note_md, text_for_search, created_at)
 				VALUES (1, 1, 'https://example.com/g', ?, ?, ?, ?, 0)`, c.title, c.author, c.note, c.text)
-			if c.onCard {
-				ex(`INSERT INTO card_links (card_id, link_id) VALUES (1, 1)`)
+			// More than one attachment, so a join over card_links would hand
+			// the same link back once per card it hangs on.
+			for card := 1; card <= c.onCards; card++ {
+				ex(`INSERT INTO cards (id, proposition_id, column_id, position, title, created_at)
+					VALUES (?, 1, 1, ?, 'Read the book', 0)`, card, "V"+strconv.Itoa(card))
+				ex(`INSERT INTO card_links (card_id, link_id) VALUES (?, 1)`, card)
 			}
 
 			groups, err := Search(ctx, db, "Geoengineering", 0, Everything())

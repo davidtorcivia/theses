@@ -183,8 +183,11 @@ textarea{resize:vertical}
   .matrix th{font-size:10px;letter-spacing:.04em}
   .matrix td:first-child,.matrix th:first-child{font-size:13px}
   #top .search span{display:none}
-  #top .presence .mono{display:none}
+  #top .presence .mono:not(.more){display:none}
   #top .acct span{display:none}
+  /* Settings is a row on the profile page and an entry in the palette, and the
+     bar has no room for a third word beside two controls of forty pixels. */
+  #top .setgs{display:none}
   .ph .hint{display:none}
 }
 @media (prefers-reduced-motion:no-preference){.card,.ws{transition:background .15s,border-color .15s}}
@@ -551,6 +554,9 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
      answer buttons of every dialog. */
   #top .acct,#railtoggle{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px}
   dialog .acts button{display:inline-flex;align-items:center;min-height:40px}
+  /* button{all:unset} takes the border box with it, so the padding and the
+     border are added to a min height rather than counted inside it. */
+  #top .search{box-sizing:border-box;min-height:40px}
 }
 /* A focus ring where button{all:unset} took one
    away, the top bar's workspace label, the account page links, the heading
