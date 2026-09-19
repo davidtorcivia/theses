@@ -69,8 +69,8 @@ func (h *harness) saveSecret(key, value string) {
 func TestDriveConnectNeedsAClientFirst(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
-	res, body := h.post("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	res, body := h.postBack("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("connect with nothing configured gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "client id and secret first") {
@@ -115,8 +115,8 @@ func TestDriveOAuthFlow(t *testing.T) {
 	}
 
 	// A code that comes back with the wrong state is not exchanged at all.
-	res, body := h.get(driveCallback + "?code=the-code&state=somebody-elses")
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	res, body := h.getBack(driveCallback + "?code=the-code&state=somebody-elses")
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a wrong state gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "press Connect again") {
@@ -171,7 +171,7 @@ func TestDriveOAuthFlow(t *testing.T) {
 	}
 
 	// The test button lists the root folder.
-	res, page = h.post("/settings/test/drive", url.Values{"csrf": {h.csrf("/settings")}})
+	res, page = h.postBack("/settings/test/drive", url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusOK || !strings.Contains(page, "1 of them folders") {
 		t.Fatalf("the test button gave %d: %s", res.StatusCode, firstNotice(page))
 	}
@@ -199,8 +199,8 @@ func TestDriveCallbackReportsWhatGoogleRefused(t *testing.T) {
 
 	res, _ := h.post("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
 	sent, _ := url.Parse(res.Header.Get("Location"))
-	res, body := h.get(driveCallback + "?code=bad&state=" + url.QueryEscape(sent.Query().Get("state")))
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	res, body := h.getBack(driveCallback + "?code=bad&state=" + url.QueryEscape(sent.Query().Get("state")))
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a refused exchange gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "connect it again") {
@@ -229,7 +229,7 @@ func TestTransistorTestButton(t *testing.T) {
 	h.saveSecret("integrations.transistor.api_key", "the-key")
 	h.saveSecret("integrations.transistor.show_id", "1")
 
-	res, body := h.post("/settings/test/transistor", url.Values{"csrf": {h.csrf("/settings")}})
+	res, body := h.postBack("/settings/test/transistor", url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Connected to Workspace.") {
 		t.Fatalf("the test button gave %d: %s", res.StatusCode, firstNotice(body))
 	}
@@ -306,8 +306,8 @@ func TestDriveCallbackWhenTheOwnerSaysNo(t *testing.T) {
 	sent, _ := url.Parse(res.Header.Get("Location"))
 	state := url.QueryEscape(sent.Query().Get("state"))
 
-	res, body := h.get(driveCallback + "?error=access_denied&state=" + state)
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	res, body := h.getBack(driveCallback + "?error=access_denied&state=" + state)
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a refused consent gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "Google refused the connection: access_denied") {
@@ -320,8 +320,8 @@ func TestDriveCallbackWhenTheOwnerSaysNo(t *testing.T) {
 		t.Fatal("a token was stored")
 	}
 	// The cookie was spent, so pressing Connect again is what is left.
-	res, body = h.get(driveCallback + "?code=the-code&state=" + state)
-	if res.StatusCode != http.StatusUnprocessableEntity ||
+	res, body = h.getBack(driveCallback + "?code=the-code&state=" + state)
+	if res.StatusCode != http.StatusOK ||
 		!strings.Contains(body, "press Connect again") {
 		t.Fatalf("the spent state gave %d: %q", res.StatusCode, firstNotice(body))
 	}
@@ -338,8 +338,8 @@ func TestDriveCallbackWithNoCode(t *testing.T) {
 
 	res, _ := h.post("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
 	sent, _ := url.Parse(res.Header.Get("Location"))
-	res, body := h.get(driveCallback + "?state=" + url.QueryEscape(sent.Query().Get("state")))
-	if res.StatusCode != http.StatusUnprocessableEntity ||
+	res, body := h.getBack(driveCallback + "?state=" + url.QueryEscape(sent.Query().Get("state")))
+	if res.StatusCode != http.StatusOK ||
 		!strings.Contains(body, "no authorization code") {
 		t.Fatalf("gave %d: %q", res.StatusCode, firstNotice(body))
 	}

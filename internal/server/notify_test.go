@@ -76,12 +76,12 @@ func TestAChannelIsAddedRemovedAndBelongsToItsAccount(t *testing.T) {
 	// A webhook inside the deployment is refused by the address check, so its
 	// test fails: it is stored, and stays unverified rather than silent.
 	// The address is a literal, so nothing here asks a resolver.
-	res, body := h.post("/profile/notifications/channel", url.Values{
+	res, body := h.postBack("/profile/notifications/channel", url.Values{
 		"csrf": {h.csrf("/profile")}, "id": {"0"}, "kind": {"webhook"},
 		"url": {"https://127.0.0.1:1/hook"}, "secret": {"s3cret"},
 		"quiet_from": {"23:00"}, "quiet_to": {"07:00"},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("adding an unreachable webhook gave %d", res.StatusCode)
 	}
 	if strings.Contains(body, "s3cret") {
@@ -103,11 +103,11 @@ func TestAChannelIsAddedRemovedAndBelongsToItsAccount(t *testing.T) {
 	}
 
 	// Quiet hours that are not times are refused rather than stored.
-	res, _ = h.post("/profile/notifications/channel", url.Values{
+	res, _ = h.postBack("/profile/notifications/channel", url.Values{
 		"csrf": {h.csrf("/profile")}, "id": {"0"}, "kind": {"ntfy"},
 		"topic": {"alerts"}, "quiet_from": {"tonight"}, "quiet_to": {"07:00"},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	if res.StatusCode != http.StatusOK {
 		t.Errorf("quiet hours that are not times gave %d", res.StatusCode)
 	}
 
@@ -154,11 +154,11 @@ func TestMovingOnlyTheQuietHoursKeepsAChannelProven(t *testing.T) {
 	}
 
 	// Moving the topic does take it away, and the test that follows fails.
-	res, _ = h.post("/profile/notifications/channel", url.Values{
+	res, _ = h.postBack("/profile/notifications/channel", url.Values{
 		"csrf": {h.csrf("/profile")}, "id": {itoa(proven.ID)}, "kind": {"ntfy"},
 		"server": {"https://127.0.0.1:1"}, "topic": {"somewhere-else"},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("moving the channel gave %d, want the failed test", res.StatusCode)
 	}
 	if back, _ = notify.GetChannel(ctx, h.db, h.srv.settings, proven.ID); back.Verified() {
@@ -277,10 +277,10 @@ func TestSettingsHoldsTheSharedCredentialsAndTheWebhooks(t *testing.T) {
 	}
 
 	// A webhook that fires on nothing is refused before it is stored.
-	res, _ = h.post("/settings/integrations/webhook", url.Values{
+	res, _ = h.postBack("/settings/integrations/webhook", url.Values{
 		"csrf": {h.csrf("/settings")}, "id": {"0"}, "url": {"https://example.com/hook"},
 	})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	if res.StatusCode != http.StatusOK {
 		t.Errorf("a webhook with no events gave %d", res.StatusCode)
 	}
 	hooks, err := notify.ListChannels(ctx, h.db, h.srv.settings, 0)

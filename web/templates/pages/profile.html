@@ -1,14 +1,15 @@
 {{define "content"}}<section id="admin">
-  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a><a href="/" class="back">← Back to work</a></nav>
+  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a>{{if .IsOwner}}<a href="/settings">Workspace settings</a>{{end}}<a href="/" class="back">← Back to work</a></nav>
   <div class="apane">
     <h2>Profile</h2>
-    {{template "notice" .}}
+    {{if not .Section}}{{template "notice" .}}{{end}}
 
     <form class="form" method="post" action="/profile" id="you">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <section class="fs">
         <div class="fsh"><h3>You</h3><p>How you appear on cards, in the document margin and in activity.</p></div>
         <div class="fsb">
+          {{if eq .Section "you"}}{{template "notice" .}}{{end}}
           <div class="row3">
             <label class="f"><span class="l">Account name</span><input name="handle" value="{{.User.Handle}}" spellcheck="false"><small>How you sign in.</small></label>
             <label class="f"><span class="l">Name</span><input name="name" value="{{.User.Name}}"></label>
@@ -24,6 +25,7 @@
     <section class="fs" id="security">
       <div class="fsh"><h3>Security</h3><p>Your password, your authenticator and every browser you are signed in on.</p></div>
       <div class="fsb">
+        {{if eq .Section "security"}}{{template "notice" .}}{{end}}
         <form class="form" method="post" action="/profile/password">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <div class="row3">
@@ -47,6 +49,7 @@
     <section class="fs" id="notifications">
       <div class="fsh"><h3>Notifications</h3><p>Where they reach you, and which ones. Being mentioned always reaches at least one channel, whatever the rest of this says.</p></div>
       <div class="fsb">
+        {{if eq .Section "notifications"}}{{template "notice" .}}{{end}}
         {{if .NotifyResult}}<p class="notice{{if .NotifyFailed}} bad{{end}}">{{.NotifyResult}}</p>{{end}}
         <ul class="chans">
           {{range .Channels}}<li>
@@ -57,7 +60,7 @@
           </li>{{end}}
           {{range .ChannelForms}}{{if not .ID}}<li>
             <b>{{.KindLabel}}</b><span class="mono dim">not set</span><span></span>
-            <span class="chanacts"><button class="lnk" type="button" data-dialog="{{.DialogID}}">Add</button></span>
+            <span class="chanacts"><button class="act" type="button" data-dialog="{{.DialogID}}">Add channel</button></span>
           </li>{{end}}{{end}}
         </ul>
         {{range .Channels}}<form method="post" action="/profile/notifications/channel/{{.ID}}/test" id="test-{{.ID}}" hidden><input type="hidden" name="csrf" value="{{$.CSRF}}"></form>{{end}}
@@ -78,7 +81,7 @@
 
     <section class="fs last" id="danger">
       <div class="fsh"><h3>Danger</h3><p>This is not undoable from here.</p></div>
-      <div class="fsb"><div class="danger"><button class="lnk del" type="button" data-dialog="delete-account">Delete my account</button></div></div>
+      <div class="fsb">{{if eq .Section "danger"}}{{template "notice" .}}{{end}}<div class="danger"><button class="lnk del" type="button" data-dialog="delete-account">Delete my account</button></div></div>
     </section>
   </div>
 

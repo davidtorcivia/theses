@@ -177,10 +177,10 @@ func (s *Server) postNotificationRules(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, err)
 			return
 		}
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, "/profile#notifications", map[string]any{"Error": err.Error()})
 		return
 	}
-	http.Redirect(w, r, "/profile?saved=1#notifications", http.StatusSeeOther)
+	http.Redirect(w, r, profileTo("notifications", true), http.StatusSeeOther)
 }
 
 // channelFrom reads a channel out of a posted form, keeping the secrets that
@@ -254,17 +254,16 @@ func (s *Server) postChannel(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.saveAndTest(w, r, c, u.Email, s.renderProfile, "/profile?saved=1#notifications")
+	s.saveAndTest(w, r, c, u.Email, "/profile#notifications", profileTo("notifications", true))
 }
 
 // saveAndTest is the one path a channel is written by, whoever it belongs to.
-func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Channel, email string,
-	refuse func(http.ResponseWriter, *http.Request, int, map[string]any), back string) {
+func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Channel, email, section, saved string) {
 	// Anything that is new, or that now points somewhere else, has to prove it
 	// works before anything is sent to it, and saying so is the save's job.
 	// Email is the exception, verified by SaveChannel because the address is
 	// the account's own.
-	saved, err := notify.SaveChannel(r.Context(), s.db, s.settings, c)
+	channel, err := notify.SaveChannel(r.Context(), s.db, s.settings, c)
 	if errors.Is(err, store.ErrNotFound) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
@@ -274,19 +273,19 @@ func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Ch
 		return
 	}
 	if err != nil {
-		refuse(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, section, map[string]any{"Error": err.Error()})
 		return
 	}
-	if saved.Kind != notify.KindEmail && !saved.Verified() {
-		if err := s.notify.Test(r.Context(), saved, email); err != nil {
-			refuse(w, r, http.StatusUnprocessableEntity, map[string]any{
+	if channel.Kind != notify.KindEmail && !channel.Verified() {
+		if err := s.notify.Test(r.Context(), channel, email); err != nil {
+			s.back(w, r, section, map[string]any{
 				"NotifyResult": "Saved, but nothing reached it: " + err.Error(),
 				"NotifyFailed": true,
 			})
 			return
 		}
 	}
-	http.Redirect(w, r, back, http.StatusSeeOther)
+	http.Redirect(w, r, saved, http.StatusSeeOther)
 }
 
 func (s *Server) postChannelTest(w http.ResponseWriter, r *http.Request) {
@@ -296,12 +295,12 @@ func (s *Server) postChannelTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.notify.Test(r.Context(), c, u.Email); err != nil {
-		s.renderProfile(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/profile#notifications", map[string]any{
 			"NotifyResult": err.Error(), "NotifyFailed": true,
 		})
 		return
 	}
-	s.renderProfile(w, r, http.StatusOK, map[string]any{
+	s.back(w, r, "/profile#notifications", map[string]any{
 		"NotifyResult": "Sent. If it did not arrive, the destination took it and dropped it.",
 	})
 }
@@ -315,7 +314,7 @@ func (s *Server) postChannelDelete(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/profile?saved=1#notifications", http.StatusSeeOther)
+	http.Redirect(w, r, profileTo("notifications", true), http.StatusSeeOther)
 }
 
 // channelOf reads the channel a path names and refuses one that is not the
@@ -350,10 +349,10 @@ func (s *Server) postNotifyDefaults(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.settings.Set(r.Context(), "notify.defaults",
 		[]string{strings.Join(chosen, "\n")}, userOf(r).ID); err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, "/settings#notifications", map[string]any{"Error": err.Error()})
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#notifications", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("notifications", true), http.StatusSeeOther)
 }
 
 // postWorkspaceWebhook saves one of the workspace's webhooks, which belong to
@@ -370,12 +369,12 @@ func (s *Server) postWorkspaceWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	c.Kind = notify.KindWebhook
 	if len(c.Config.Events) == 0 {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/settings#integrations", map[string]any{
 			"Error": "A webhook that fires on nothing is a webhook nobody needs. Tick at least one event.",
 		})
 		return
 	}
-	s.saveAndTest(w, r, c, "", s.renderSettings, "/settings?saved=1#integrations")
+	s.saveAndTest(w, r, c, "", "/settings#integrations", settingsTo("integrations", true))
 }
 
 func (s *Server) postWorkspaceWebhookTest(w http.ResponseWriter, r *http.Request) {
@@ -384,12 +383,12 @@ func (s *Server) postWorkspaceWebhookTest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.notify.Test(r.Context(), c, ""); err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/settings#integrations", map[string]any{
 			"NotifyResult": err.Error(), "NotifyFailed": true,
 		})
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"NotifyResult": "The webhook took it."})
+	s.back(w, r, "/settings#integrations", map[string]any{"NotifyResult": "The webhook took it."})
 }
 
 func (s *Server) postWorkspaceWebhookDelete(w http.ResponseWriter, r *http.Request) {
@@ -401,5 +400,5 @@ func (s *Server) postWorkspaceWebhookDelete(w http.ResponseWriter, r *http.Reque
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }

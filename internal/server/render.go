@@ -209,27 +209,44 @@ var errorPages = map[int]struct {
 	http.StatusInternalServerError:   {code: "500", headline: "Something broke.", actText: "Try again", art: []string{"10"}, retry: true},
 }
 
-func errorData(status int, r *http.Request) map[string]any {
+func errorData(status int, r *http.Request, signedIn bool) map[string]any {
 	p, ok := errorPages[status]
 	if !ok {
 		p = errorPages[http.StatusInternalServerError]
 	}
-	href := "/login"
-	if p.retry {
+	href, text := "/login", p.actText
+	switch {
+	case p.retry:
 		href = r.URL.RequestURI()
+	case signedIn:
+		// Somebody already signed in has nothing to sign in to. The one action
+		// is the way back, and the root is the only address it can name without
+		// knowing what this person is allowed to see.
+		href, text = "/", "Back to work"
 	}
 	return map[string]any{
 		"Title":      p.code,
 		"Code":       p.code,
 		"Headline":   p.headline,
-		"ActionText": p.actText,
+		"ActionText": text,
 		"ActionHref": href,
 		"ArtFrames":  p.art,
 	}
 }
 
+// signedIn answers for the error pages. The 404 from the unclaimed route and
+// the 403 from the CSRF check both run before requireUser, so the context
+// usually holds nobody and the cookie has to be read here.
+func (s *Server) signedIn(r *http.Request) bool {
+	if userOf(r) != nil {
+		return true
+	}
+	_, err := s.auth.SessionUser(r.Context(), r)
+	return err == nil
+}
+
 func (s *Server) errorPage(w http.ResponseWriter, r *http.Request, status int) {
-	s.render(w, r, status, "error.html", errorData(status, r))
+	s.render(w, r, status, "error.html", errorData(status, r, s.signedIn(r)))
 }
 
 func (s *Server) offlinePage(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +280,10 @@ func (s *Server) restoringPage(w http.ResponseWriter, r *http.Request) {
 // when that template will not render either.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
-	body, rerr := s.renderTo("error.html", errorData(http.StatusInternalServerError, r))
+	// Not signedIn, whatever the cookie says: the action on 500 is to try the
+	// same address again, and asking the database that has just failed who this
+	// is would only fail again.
+	body, rerr := s.renderTo("error.html", errorData(http.StatusInternalServerError, r, false))
 	if rerr != nil {
 		s.log.Error("the error page will not render either", "err", rerr)
 		body = brokenPage

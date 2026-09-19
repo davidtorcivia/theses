@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -89,20 +90,115 @@ var providerLabels = []option{
 }
 
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
-	extra := map[string]any{}
-	if r.URL.Query().Get("saved") != "" {
-		extra["Notice"] = "Saved."
-	}
-	s.renderSettings(w, r, http.StatusOK, extra)
-}
-
-func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, status int, extra map[string]any) {
-	data, err := s.settingsData(r, extra)
+	data, err := s.settingsData(r, nil)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.render(w, r, status, "settings.html", data)
+	s.render(w, r, http.StatusOK, "settings.html", s.said(w, r, data, settingsSections))
+}
+
+// settingsSections are the anchors a form on the settings page may send the
+// browser back to. Anything else is dropped rather than put in a Location.
+var settingsSections = map[string]bool{
+	"workspace": true, "defaults": true, "storage": true, "mail": true, "signin": true,
+	"backups": true, "team": true, "tokens": true, "notifications": true, "integrations": true,
+}
+
+// settingsTo is where a form on the settings page sends the browser: the
+// section it posted from, with the saved notice on the way if it saved. The
+// section is in the query as well as the fragment, because the fragment never
+// reaches this process and the notice has to be printed in the right section.
+func settingsTo(section string, saved bool) string {
+	return pageTo("/settings", section, settingsSections[section], saved)
+}
+
+func pageTo(path, section string, known, saved bool) string {
+	if !known {
+		section = ""
+	}
+	to := path
+	if saved {
+		to += "?saved=" + cmp.Or(section, "1")
+	}
+	if section != "" {
+		to += "#" + section
+	}
+	return to
+}
+
+// sectionOf is which section of the page a form posted from, taken from the
+// address a redirect built.
+func sectionOf(to string, known map[string]bool) string {
+	_, section, _ := strings.Cut(to, "#")
+	if !known[section] {
+		return ""
+	}
+	return section
+}
+
+// said adds what the last form had to say to a page that is about to render:
+// the saved notice the address carries, and the flash. The flash is spent here
+// rather than at the top of the handler so that a page which cannot be built
+// does not eat the one thing it was meant to print.
+func (s *Server) said(w http.ResponseWriter, r *http.Request, data map[string]any, known map[string]bool) map[string]any {
+	if v := r.URL.Query().Get("saved"); v != "" {
+		data["Notice"] = "Saved."
+		if known[v] {
+			data["Section"] = v
+		}
+	}
+	if f := s.pending.takeFlash(w, r, s.cfg.CookieSecure, userOf(r).ID); f != nil {
+		data["Section"] = f.Section
+		merge(data, f.Say)
+	}
+	return data
+}
+
+// flashValueMax is how much of one value the cookie carries. A provider is
+// free to answer with kilobytes, and a cookie over about four of them is one
+// the browser drops without a word, taking the whole notice with it.
+const flashValueMax = 1024
+
+// cutForFlash is one value shortened to what the cookie can carry. The cut is
+// by byte and a provider answers in whatever alphabet it likes, so the rune the
+// cut lands inside goes rather than half of it, which would reach the page as a
+// replacement character or not at all.
+func cutForFlash(text string) string {
+	if len(text) <= flashValueMax {
+		return text
+	}
+	return strings.ToValidUTF8(text[:flashValueMax], "") + "… The rest is in the log."
+}
+
+// back is how every form on the settings and profile pages answers. The
+// browser goes to the section it posted from, carrying what the form has to
+// say in a one-time cookie. Rendering the answer instead left it on an address
+// that only accepts POST, at the top of a page thousands of pixels long, where
+// a reload or the Back button found nothing at all.
+func (s *Server) back(w http.ResponseWriter, r *http.Request, to string, say map[string]any) {
+	if len(say) > 0 {
+		path, _, _ := strings.Cut(to, "#")
+		path, _, _ = strings.Cut(path, "?")
+		known := settingsSections
+		if path == "/profile" {
+			known = profileSections
+		}
+		for k, v := range say {
+			text, ok := v.(string)
+			if !ok || len(text) <= flashValueMax {
+				continue
+			}
+			s.log.Warn("a notice was too long for the page to carry", "key", k, "said", text)
+			say[k] = cutForFlash(text)
+		}
+		f := &flash{UserID: userOf(r).ID, Path: path, Section: sectionOf(to, known), Say: say}
+		if err := s.pending.putFlash(w, s.cfg.CookieSecure, f); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
 func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string]any, error) {
@@ -180,6 +276,8 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 	}
 
 	data := map[string]any{
+		"Plain":       true,
+		"Section":     "",
 		"S":           shown,
 		"Set":         isSet,
 		"Days":        []string{"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"},
@@ -270,22 +368,22 @@ func (s *Server) postTestBackupKey(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	msg, err := s.backups.Probe(ctx)
 	if err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/settings#backups", map[string]any{
 			"BackupResult": err.Error(), "BackupFailed": true,
 		})
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"BackupResult": msg})
+	s.back(w, r, "/settings#backups", map[string]any{"BackupResult": msg})
 }
 
 func (s *Server) postBackupNow(w http.ResponseWriter, r *http.Request) {
 	if err := s.backups.Now(r.Context()); err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/settings#backups", map[string]any{
 			"BackupResult": err.Error(), "BackupFailed": true,
 		})
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{
+	s.back(w, r, "/settings#backups", map[string]any{
 		"BackupResult": "Started. It appears in the list below, and says here what it did, once it has finished.",
 	})
 }
@@ -299,12 +397,12 @@ func (s *Server) postRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.backups.RestoreNow(r.Context(), key, userOf(r).ID); err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/settings#backups", map[string]any{
 			"BackupResult": err.Error(), "BackupFailed": true,
 		})
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{
+	s.back(w, r, "/settings#backups", map[string]any{
 		"BackupResult": "Restoring " + strings.TrimPrefix(key, backup.Prefix) +
 			". Changes are refused until it is done, and this page says what happened when it is.",
 	})
@@ -378,6 +476,7 @@ func (s *Server) envRows() []envRow {
 // handler serves all five field sections.
 func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	me := userOf(r)
+	section := r.PostFormValue("section")
 	for _, d := range settings.Registry {
 		values, ok := r.PostForm[d.Key]
 		if !ok {
@@ -387,11 +486,11 @@ func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 			continue // an empty secret field means keep what is stored
 		}
 		if err := s.settings.Set(r.Context(), d.Key, values, me.ID); err != nil {
-			s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+			s.back(w, r, settingsTo(section, false), map[string]any{"Error": err.Error()})
 			return
 		}
 	}
-	http.Redirect(w, r, "/settings?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo(section, true), http.StatusSeeOther)
 }
 
 // postTestStorage writes, heads and deletes one probe object with the saved
@@ -405,7 +504,7 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := s.bucketConfig(r.Context(), prefix)
 	refuse := func(msg string) {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+		s.back(w, r, "/settings#storage", map[string]any{
 			"StorageResult": mail.Redact(msg, cfg.SecretKey), "StorageFailed": true,
 		})
 	}
@@ -424,7 +523,7 @@ func (s *Server) postTestStorage(w http.ResponseWriter, r *http.Request) {
 		refuse(err.Error())
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{
+	s.back(w, r, "/settings#storage", map[string]any{
 		"StorageResult": "Wrote, read and deleted a probe object in " + cfg.Bucket + ".",
 	})
 }
@@ -462,9 +561,7 @@ func (s *Server) bucketConfig(ctx context.Context, prefix string) (blob.Config, 
 func (s *Server) postTestMail(w http.ResponseWriter, r *http.Request) {
 	me := userOf(r)
 	refuse := func(msg string) {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
-			"MailResult": msg, "MailFailed": true,
-		})
+		s.back(w, r, "/settings#mail", map[string]any{"MailResult": msg, "MailFailed": true})
 	}
 	if me.Email == "" {
 		refuse("Your account has no email address, so there is nowhere to send it. Add one on your profile first.")
@@ -484,7 +581,7 @@ func (s *Server) postTestMail(w http.ResponseWriter, r *http.Request) {
 		refuse(mail.Redact(err.Error(), sender.Password))
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"MailResult": "Sent to " + me.Email + "."})
+	s.back(w, r, "/settings#mail", map[string]any{"MailResult": "Sent to " + me.Email + "."})
 }
 
 func (s *Server) postMailRetry(w http.ResponseWriter, r *http.Request) {
@@ -492,7 +589,7 @@ func (s *Server) postMailRetry(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{
+	s.back(w, r, "/settings#mail", map[string]any{
 		"MailResult": "Every unsent message is back at the front of the queue.",
 	})
 }
@@ -505,9 +602,7 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id == userOf(r).ID {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
-			"Error": "You cannot change your own role.",
-		})
+		s.back(w, r, "/settings#team", map[string]any{"Error": "You cannot change your own role."})
 		return
 	}
 	u, err := store.UserByID(r.Context(), s.db, id)
@@ -530,7 +625,7 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}); err != nil {
 		if errors.Is(err, errRefused) {
-			s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			s.back(w, r, "/settings#team", map[string]any{
 				"Error": "That is the last owner. Make someone else an owner first.",
 			})
 			return
@@ -538,37 +633,51 @@ func (s *Server) postRole(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("team", true), http.StatusSeeOther)
 }
 
 func (s *Server) postInviteCreate(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.PostFormValue("email"))
 	if !s.auth.Allow(auth.BucketInvite, s.auth.ClientIP(r), strings.ToLower(email)) {
-		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
+		s.back(w, r, "/settings#team", map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
 	role := r.PostFormValue("role")
 	id, token, err := s.auth.CreateInvitation(r.Context(), email, role, userOf(r).ID)
 	if err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, "/settings#team", map[string]any{"Error": err.Error()})
 		return
 	}
 	// ponytail: the invitation row is already committed by auth on its own
 	// handle, so this is a second transaction and a failure here leaves an
 	// invitation with no mail; give CreateInvitation and ReissueInvitation a
 	// store.Querier and pass this one when auth is next opened.
-	if err := s.write(r, "invitation", email, "create", "", role, func(q store.Querier) error {
+	said := s.inviteMailSaid(r, s.write(r, "invitation", email, "create", "", role, func(q store.Querier) error {
 		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, email, role, token),
 			s.auth.Now().Add(auth.InviteValidity), inviteRef(id))
-	}); err != nil {
-		s.fail(w, r, err)
-		return
-	}
+	}), email)
 	s.mail.Nudge()
 	s.logInvite(email)
-	// Rendered rather than redirected, for the same reason as a new API token:
-	// this is the only time the link exists anywhere it can be read from.
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewInvite": s.inviteURL(token)})
+	// The link travels in the flash rather than in the address, for the same
+	// reason as a new API token: this is the only time it exists anywhere it
+	// can be read from.
+	s.back(w, r, "/settings#team", map[string]any{"NewInvite": s.inviteURL(token), "InviteSaid": said})
+}
+
+// inviteMailSaid is the line above a new invitation link. The invitation is
+// made whether or not the mail goes out, so the notice has to say which of the
+// three happened: sent, waiting in the outbox because no mail server is set up
+// yet, or not queued at all because the write failed. In every one of them the
+// link beside it is what gets the person in.
+func (s *Server) inviteMailSaid(r *http.Request, enqueued error, to string) string {
+	if enqueued != nil {
+		s.log.Error("the invitation mail could not be queued", "err", enqueued)
+		return "The invitation was made, but no mail could be queued for it."
+	}
+	if _, err := s.mail.Sender(r.Context()); err != nil {
+		return "Mail is not configured, so the invitation is queued and nothing has gone out to " + to + " yet."
+	}
+	return "An invitation is on its way to " + to + "."
 }
 
 func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
@@ -578,7 +687,7 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.auth.Allow(auth.BucketInvite, s.auth.ClientIP(r), "invitation "+itoa(id)) {
-		s.renderSettings(w, r, http.StatusTooManyRequests, map[string]any{"Error": auth.ErrRateLimited.Error()})
+		s.back(w, r, "/settings#team", map[string]any{"Error": auth.ErrRateLimited.Error()})
 		return
 	}
 	// Read before the reissue, because the mail needs the address and the role
@@ -605,18 +714,15 @@ func (s *Server) postInviteResend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// ponytail: the reissued token is committed separately, as on create.
-	if err := s.write(r, "invitation", itoa(id), "resend", "", "", func(q store.Querier) error {
+	said := s.inviteMailSaid(r, s.write(r, "invitation", itoa(id), "resend", "", "", func(q store.Querier) error {
 		// The ref abandons the mail from the last time, whose link the reissue
 		// above has just killed.
 		return mail.Enqueue(r.Context(), q, s.inviteMessage(r, inv.Email, inv.Role, token),
 			s.auth.Now().Add(auth.InviteValidity), inviteRef(id))
-	}); err != nil {
-		s.fail(w, r, err)
-		return
-	}
+	}), inv.Email)
 	s.mail.Nudge()
 	s.logInvite("invitation " + itoa(id))
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewInvite": s.inviteURL(token)})
+	s.back(w, r, "/settings#team", map[string]any{"NewInvite": s.inviteURL(token), "InviteSaid": said})
 }
 
 func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
@@ -635,7 +741,7 @@ func (s *Server) postInviteRevoke(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("team", true), http.StatusSeeOther)
 }
 
 func (s *Server) inviteURL(token string) string { return s.cfg.BaseURL + "/invite/" + token }
@@ -665,15 +771,16 @@ func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
 	scopes := strings.Fields(r.PostFormValue("scopes"))
 	token, err := s.auth.CreateAPIToken(r.Context(), userOf(r).ID, strings.TrimSpace(r.PostFormValue("name")), scopes)
 	if err != nil {
-		s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{"Error": err.Error()})
+		s.back(w, r, "/settings#tokens", map[string]any{"Error": err.Error()})
 		return
 	}
 	if err := s.activity(r.Context(), userOf(r).ID, "api_token", r.PostFormValue("name"), "create", "", r.PostFormValue("scopes")); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	// Rendered rather than redirected: the token is shown once and nowhere else.
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"NewToken": token})
+	// The token is shown once and nowhere else, so it reaches the page it is
+	// printed on in the flash rather than in the address.
+	s.back(w, r, "/settings#tokens", map[string]any{"NewToken": token})
 }
 
 func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
@@ -688,7 +795,7 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#team", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("tokens", true), http.StatusSeeOther)
 }
 
 // activity records a mutation that could not share a transaction with its

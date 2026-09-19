@@ -48,13 +48,8 @@
           <div class="members-list">{{range .Members}}<label class="mem"><input type="checkbox" name="member" value="{{.ID}}"{{if .On}} checked{{end}}{{if not $.CanEdit}} disabled{{end}}><span class="u {{.Colour}}" title="{{.Name}}">{{.Initials}}</span><span class="n">{{.Name}}</span><span class="mono role">{{.Role}}</span></label>{{end}}</div>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </form>
-        {{if .IsOwner}}<form class="invite" method="post" action="/settings/team/invite">
-          <input type="hidden" name="csrf" value="{{.CSRF}}">
-          <input type="email" name="email" placeholder="Invite by email" spellcheck="false" required>
-          <select name="role">{{range .InviteRoles}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select>
-          <button class="lnk" type="submit">Send invite</button>
-        </form>
-        <p class="small dim">An invitation brings somebody into the workspace. Once they have accepted, tick them above to put them on this proposition.</p>{{end}}
+        {{if .IsOwner}}<p><a class="lnk" href="/settings#team">Invite someone from workspace settings</a></p>
+        <p class="small dim">An invitation brings somebody into the workspace rather than onto this proposition. Once they have accepted, tick them above.</p>{{end}}
       </div>
     </section>
 

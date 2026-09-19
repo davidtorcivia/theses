@@ -91,7 +91,7 @@ func TestInvitationQueuesItsMailAndStillShowsTheLinkOnce(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	_, page := h.post("/settings/team/invite", url.Values{
+	_, page := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	m := inviteLinkRe.FindStringSubmatch(page)
@@ -117,7 +117,7 @@ func TestInvitationQueuesItsMailAndStillShowsTheLinkOnce(t *testing.T) {
 func TestInvitationResendQueuesTheNewLink(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
-	h.post("/settings/team/invite", url.Values{
+	h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	if _, err := h.db.ExecContext(context.Background(), `DELETE FROM mail_outbox`); err != nil {
@@ -129,7 +129,7 @@ func TestInvitationResendQueuesTheNewLink(t *testing.T) {
 		`SELECT id FROM invitations`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	_, page := h.post("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
+	_, page := h.postBack("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
 	m := inviteLinkRe.FindStringSubmatch(page)
 	if m == nil {
 		t.Fatalf("resend did not show the new link:\n%s", page)
@@ -254,7 +254,7 @@ func TestTestSendGoesThroughTheConfiguredServer(t *testing.T) {
 	h.setupOwner()
 	h.configureMail(f.port)
 
-	res, body := h.post("/settings/test/mail", url.Values{"csrf": {h.csrf("/settings")}})
+	res, body := h.postBack("/settings/test/mail", url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Sent to ada@example.com.") {
 		t.Fatalf("test send gave %d:\n%s", res.StatusCode, body)
 	}
@@ -278,8 +278,8 @@ func TestTestSendShowsTheErrorWithoutThePassword(t *testing.T) {
 	h.setupOwner()
 	h.configureMail(deadPort(t))
 
-	res, body := h.post("/settings/test/mail", url.Values{"csrf": {h.csrf("/settings")}})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	res, body := h.postBack("/settings/test/mail", url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a refused connection gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "mail: dial 127.0.0.1:") {
@@ -305,7 +305,7 @@ func TestRetryNowPutsUnsentRowsBackAtTheFront(t *testing.T) {
 		t.Fatalf("a row past the day is not reported as given up:\n%s", body)
 	}
 
-	_, body = h.post("/settings/mail/retry", url.Values{"csrf": {h.csrf("/settings")}})
+	_, body = h.postBack("/settings/mail/retry", url.Values{"csrf": {h.csrf("/settings")}})
 	if !strings.Contains(body, "back at the front of the queue") {
 		t.Fatalf("retry said nothing:\n%s", body)
 	}
@@ -329,7 +329,7 @@ func TestResendingAnAcceptedInvitationIsRefused(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	h.setupOwner()
-	h.post("/settings/team/invite", url.Values{
+	h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	var id int64
@@ -345,7 +345,7 @@ func TestResendingAnAcceptedInvitationIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, _ := h.post("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
+	res, _ := h.postBack("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("resending an accepted invitation gave %d", res.StatusCode)
 	}
@@ -396,7 +396,7 @@ func TestResendReplacesTheInvitationMailStillQueued(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
-	_, page := h.post("/settings/team/invite", url.Values{
+	_, page := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	dead := inviteLinkRe.FindStringSubmatch(page)[1]
@@ -405,7 +405,7 @@ func TestResendReplacesTheInvitationMailStillQueued(t *testing.T) {
 	if err := h.db.QueryRowContext(ctx, `SELECT id FROM invitations`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	_, page = h.post("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
+	_, page = h.postBack("/settings/team/invite/"+itoa(id)+"/resend", url.Values{"csrf": {h.csrf("/settings")}})
 	live := inviteLinkRe.FindStringSubmatch(page)[1]
 	if live == dead {
 		t.Fatal("the resend handed out the same token")
@@ -498,7 +498,7 @@ func (h *harness) drainUntil(f *fakeSMTP, canary string) {
 // for once a server exists. It returns the invitation's id and its link.
 func (h *harness) inviteThenCanary() (int64, string) {
 	h.Helper()
-	_, page := h.post("/settings/team/invite", url.Values{
+	_, page := h.postBack("/settings/team/invite", url.Values{
 		"csrf": {h.csrf("/settings")}, "email": {"mara@example.com"}, "role": {"editor"},
 	})
 	m := inviteLinkRe.FindStringSubmatch(page)

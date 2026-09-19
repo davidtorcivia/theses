@@ -23,13 +23,21 @@ var (
 	quietArt  = []string{"17"}
 )
 
-// page seeds what every template needs.
+// page seeds what every template needs. IsOwner is what puts the Settings link
+// in the top bar, and it asks the same question of the role that requireOwner
+// asks of the route the link leads to. An auth page has no user at all, so the
+// question is asked of the empty role and answered no.
 func (s *Server) page(r *http.Request, title string, extra map[string]any) map[string]any {
+	role := ""
+	if u := userOf(r); u != nil {
+		role = u.Role
+	}
 	d := map[string]any{
 		"Title":     title,
 		"Workspace": settings.Get[string](s.settings, "workspace.name"),
 		"CSRF":      s.auth.CSRFToken(seedOf(r)),
 		"User":      userOf(r),
+		"IsOwner":   auth.Can(role, auth.CanSettings),
 	}
 	for k, v := range extra {
 		d[k] = v
@@ -128,6 +136,9 @@ func (s *Server) postLogout(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	// Whatever the last form had to say goes with the session, so the next
+	// person to use this browser is not handed it.
+	s.pending.clearFlash(w, s.cfg.CookieSecure)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 

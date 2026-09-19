@@ -79,7 +79,7 @@ function renderPresence() {
   // The cached shell is rendered with no account and no workspace name on it,
   // so the top bar is filled in here from what the snapshot knew.
   if (!state.fromCache || !state.me) return;
-  $('#top .ws').textContent = state.workspace;
+  $('#top .show').textContent = state.workspace;
   const me = user(state.me);
   const acct = clear($('#top .acct'));
   acct.append(initials(me), el('span', { text: me.name.split(' ')[0] }));

@@ -194,7 +194,7 @@ func (s *Server) getDriveCallback(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }
 
 // postDriveDisconnect throws the token away. The client id and secret stay, so
@@ -204,7 +204,7 @@ func (s *Server) postDriveDisconnect(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }
 
 func (s *Server) postTransistorDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +212,7 @@ func (s *Server) postTransistorDisconnect(w http.ResponseWriter, r *http.Request
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/settings?saved=1#integrations", http.StatusSeeOther)
+	http.Redirect(w, r, settingsTo("integrations", true), http.StatusSeeOther)
 }
 
 func (s *Server) postTestDrive(w http.ResponseWriter, r *http.Request) {
@@ -244,14 +244,14 @@ func (s *Server) integrationResult(w http.ResponseWriter, r *http.Request, said 
 		s.integrationRefused(w, r, err)
 		return
 	}
-	s.renderSettings(w, r, http.StatusOK, map[string]any{"IntegrationResult": said})
+	s.back(w, r, "/settings#integrations", map[string]any{"IntegrationResult": said})
 }
 
 // integrationRefused prints why on the section rather than taking the whole
 // page out. Whatever the message carries is redacted against the secrets this
 // section holds, because a provider is free to quote back what it was sent.
 func (s *Server) integrationRefused(w http.ResponseWriter, r *http.Request, err error) {
-	s.renderSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+	s.back(w, r, "/settings#integrations", map[string]any{
 		"IntegrationResult": s.redactSecrets(r.Context(), err.Error()), "IntegrationFailed": true,
 	})
 }

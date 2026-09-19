@@ -82,7 +82,7 @@ func TestTestBackupKeyPassesOnARefusedDelete(t *testing.T) {
 	h.setupOwner()
 	h.configureBackups(noDeleteBucket(t, "example-bucket"), "example-bucket")
 
-	res, body := h.post("/settings/test/backups", url.Values{"csrf": {h.csrf("/settings")}})
+	res, body := h.postBack("/settings/test/backups", url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("the probe gave %d:\n%s", res.StatusCode, body)
 	}
@@ -96,8 +96,8 @@ func TestTestBackupKeyFailsWhenTheKeyCanDelete(t *testing.T) {
 	h.setupOwner()
 	h.configureBackups(fakeBucket(t, "example-bucket"), "example-bucket")
 
-	res, body := h.post("/settings/test/backups", url.Values{"csrf": {h.csrf("/settings")}})
-	if res.StatusCode != http.StatusUnprocessableEntity {
+	res, body := h.postBack("/settings/test/backups", url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusOK {
 		t.Fatalf("a key that can delete gave %d", res.StatusCode)
 	}
 	if !strings.Contains(body, "deleted its own probe object") {
@@ -112,7 +112,7 @@ func TestBackUpNowThenListAndRestore(t *testing.T) {
 
 	// The run is in the background, so the page says it started and the archive
 	// shows up in the listing once it has.
-	res, body := h.post("/settings/backups/now", url.Values{"csrf": {h.csrf("/settings")}})
+	res, body := h.postBack("/settings/backups/now", url.Values{"csrf": {h.csrf("/settings")}})
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Started.") {
 		t.Fatalf("back up now gave %d:\n%s", res.StatusCode, body)
 	}
@@ -152,7 +152,7 @@ func TestBackUpNowThenListAndRestore(t *testing.T) {
 		t.Errorf("the listed backup has no confirmation dialog:\n%s", body)
 	}
 
-	res, body = h.post("/settings/backups/restore", url.Values{
+	res, body = h.postBack("/settings/backups/restore", url.Values{
 		"csrf": {h.csrf("/settings")}, "key": {key},
 	})
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Restoring") {
