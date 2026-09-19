@@ -19,6 +19,12 @@ export function openPanel() {
 
 export function closePanel() {
   state.panel = false;
+  // The settings page's Activity tab links to this hash. Left on the address
+  // after the panel has been closed, pressing that tab again is a link to the
+  // page it is already on and nothing happens at all.
+  if (location.hash === '#activity') {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
   emit();
 }
 

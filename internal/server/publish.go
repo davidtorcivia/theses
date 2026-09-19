@@ -200,6 +200,17 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The section is drawn with nothing connected so that it can say why, and
+	// its controls are refused there. A post that arrives anyway is refused
+	// here too, save and publish alike.
+	if !s.publishSection(r.Context(), p, me).On {
+		s.renderPropositionSettings(w, r, http.StatusUnprocessableEntity, map[string]any{
+			"PublishResult": "Transistor is not connected, so nothing can be sent yet.",
+			"PublishFailed": true,
+		})
+		return
+	}
+
 	chosen, err := s.publishChoice(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)

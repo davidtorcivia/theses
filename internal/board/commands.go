@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -34,6 +35,10 @@ var (
 	// ErrStatus is a proposition moved to a status the workspace does not have,
 	// which the rail would have no column to draw it in.
 	ErrStatus = errors.New("that is not one of the workspace's statuses")
+	// ErrDueDate is a due date that is not a day. The board asks whether one
+	// has passed, so anything the calendar does not have could never be late
+	// and would sit on a card saying nothing for ever.
+	ErrDueDate = errors.New("a due date is a day, written as 2006-01-02")
 )
 
 // What a field on the board holds. A status or a date is a word, a title is a
@@ -159,9 +164,29 @@ const (
 
 // Propositions.
 
-// CreateProposition takes the next number, the columns the settings name and
-// the actor as its first member.
+// CreateProposition takes the next number, the columns the settings name, the
+// actor as its first member and whatever Seed fills it with. The seed runs in
+// the same transaction, so nobody ever opens a half made proposition.
 func (s *Service) CreateProposition(ctx context.Context, a core.Actor, title string) (core.Event, error) {
+	var created core.Event
+	err := s.Together(ctx, func(ctx context.Context) error {
+		e, err := s.createProposition(ctx, a, title)
+		if err != nil {
+			return err
+		}
+		created = e
+		if s.Seed == nil {
+			return nil
+		}
+		return s.Seed(ctx, a, e.EntityID)
+	})
+	if err != nil {
+		return core.Event{}, err
+	}
+	return created, nil
+}
+
+func (s *Service) createProposition(ctx context.Context, a core.Actor, title string) (core.Event, error) {
 	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err
@@ -664,6 +689,13 @@ func (s *Service) SetCardDue(ctx context.Context, a core.Actor, id int64, due st
 	due, err := Field(due, MaxWord)
 	if err != nil {
 		return core.Event{}, err
+	}
+	// Clearing the date is the one empty value this takes. Everything else is
+	// a calendar day, which also refuses the days a month does not have.
+	if due != "" {
+		if _, err := time.Parse("2006-01-02", due); err != nil {
+			return core.Event{}, ErrDueDate
+		}
 	}
 	return s.card(ctx, a, id, auth.CanEdit, "due", func(ctx context.Context, tx *sql.Tx, _ Card) error {
 		_, err := tx.ExecContext(ctx, `UPDATE cards SET due_date = ? WHERE id = ?`,

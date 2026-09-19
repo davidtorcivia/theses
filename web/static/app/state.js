@@ -10,6 +10,9 @@ export const state = {
   users: new Map(),
   byHandle: new Map(),
   workspace: '',
+  // The workspace's IANA time zone. A due date is a calendar day, and whose
+  // day it has to have passed is the show's question rather than this laptop's.
+  timezone: '',
   statuses: [],
   questions: [],
   questionLabels: [],
@@ -29,6 +32,12 @@ export const state = {
   boardFilter: 'all',
   openCard: null,
   connected: false,
+  // conflict is the stale text edits the server refused, by the field each was
+  // on: the card it was on and the command that would send it again. It is kept
+  // here rather than beside the node the edit was typed in, because the refusal
+  // redraws the drawer and takes that node away with it. By field, because a
+  // title and a description can each be waiting on a choice at the same time.
+  conflict: {},
 
   // The links and files beside the board. They are fetched when the tab is
   // first opened rather than rendered into the page, because the board is what
@@ -68,6 +77,7 @@ export const state = {
 export function boot(payload) {
   state.me = payload.me;
   state.workspace = payload.workspace;
+  state.timezone = payload.timezone || '';
   state.statuses = payload.statuses || [];
   state.questions = payload.questions || [];
   state.questionLabels = payload.question_labels || [];
@@ -299,7 +309,10 @@ export function apply(ev) {
       if (ev.proposition !== state.open) break;
       if (ev.action === 'delete') {
         state.cards.delete(ev.entity_id);
-        if (state.openCard === ev.entity_id) state.openCard = null;
+        if (state.openCard === ev.entity_id) {
+          state.openCard = null;
+          state.conflict = {};
+        }
       } else {
         state.cards.set(now.id, now);
       }
@@ -535,6 +548,7 @@ function snapshot() {
   return {
     me: state.me,
     workspace: state.workspace,
+    timezone: state.timezone,
     statuses: state.statuses,
     questions: state.questions,
     question_labels: state.questionLabels,

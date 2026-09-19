@@ -6,11 +6,39 @@ import { state, user, emit, hold, columnCards, canEdit } from './state.js';
 import { send } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { openCard } from './drawer.js';
+import { activate } from './keys.js';
 
-const late = (due) => {
-  const when = Date.parse(due + ' ' + new Date().getFullYear());
-  return !Number.isNaN(when) && when < Date.now();
-};
+// A due date is an ISO calendar day, so late compares two of those and never
+// two instants: a card due today is not late at any hour of it. The day it is
+// held against is the workspace's, which is the show's day rather than the day
+// wherever the person reading the board happens to be sitting.
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+// A card that is done is never late, whatever day is on it: the work it was
+// asking for has happened.
+const late = (card) => !card.done_at && ISO.test(card.due_date || '') && card.due_date < today();
+
+// The formatter is kept rather than built per card, because a full board asks
+// this once per card per render. An empty or unknown zone throws on the way in
+// and leaves the laptop's own day, which is the best guess there is.
+let zone = { name: undefined, format: null };
+
+function today() {
+  const now = new Date();
+  if (state.timezone !== zone.name) {
+    zone = { name: state.timezone, format: null };
+    try {
+      zone.format = new Intl.DateTimeFormat('en-CA',
+        { timeZone: state.timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch {
+      // Nothing usable in the setting. The line below answers instead.
+    }
+  }
+  const there = zone.format ? zone.format.format(now) : '';
+  if (ISO.test(there)) return there;
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 function visible(card) {
   if (state.boardFilter === 'mine') return (card.assignees || []).includes(state.me);
@@ -20,7 +48,7 @@ function visible(card) {
 
 function meta(card) {
   const bits = [];
-  if (card.due_date) bits.push(el('span', { class: 'due' + (late(card.due_date) ? ' late' : ''), text: card.due_date }));
+  if (card.due_date) bits.push(el('span', { class: 'due' + (late(card) ? ' late' : ''), text: card.due_date }));
   if (card.question) bits.push(el('span', { class: 'q', text: card.question }));
   const list = card.checklist || [];
   if (list.length) bits.push(el('span', { class: 'chk', text: list.filter((i) => i.done).length + '/' + list.length }));
@@ -52,6 +80,7 @@ function cardNode(card) {
     el('div', { class: 'cm' }, meta(card), canEdit() && tick)));
 
   node.addEventListener('click', () => openCard(card.id));
+  activate(node, () => openCard(card.id));
   node.addEventListener('dragstart', (e) => {
     node.classList.add('dragging');
     // A change arriving mid drag would rebuild the board and take the card out
@@ -86,7 +115,7 @@ function columnNode(column) {
 
   const name = el('h3', { text: column.name, spellcheck: 'false' });
   if (canEdit()) {
-    name.addEventListener('click', (e) => {
+    const rename = (e) => {
       e.stopPropagation();
       if (name.isContentEditable) return;
       hold(true);
@@ -96,7 +125,9 @@ function columnNode(column) {
         send('column.rename', { column: column.id, title: value })
           .catch((err) => { say(err.message); emit(); });
       });
-    });
+    };
+    name.addEventListener('click', rename);
+    activate(name, rename);
   }
 
   const cards = el('div', { class: 'cards' });

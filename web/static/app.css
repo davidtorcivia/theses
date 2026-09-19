@@ -515,3 +515,35 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
 #palette li.flat>span{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:1rem;align-items:baseline;padding:.5rem 1rem;border-bottom:1px solid var(--hair);color:var(--dim)}
 #palette li a.on{background:var(--y);color:var(--k)}
 #palette li a.on .k,#palette li a.on .dim,#palette li a:hover .dim{color:rgba(0,0,0,.6)}
+
+/* The board branch: the tab row and the drawer's hit targets at the small
+   breakpoint, the Publish section drawn with nothing connected behind it, the
+   invite row in Members, and the anchor that section is linked to. */
+
+/* The section is drawn whether or not Transistor is connected, so its controls
+   have to look as refused as they are. */
+#publish button[disabled],#publish select[disabled]{opacity:.45;cursor:default}
+
+/* A link to the Members section lands under the fixed top bar without this. */
+#members{scroll-margin-top:calc(var(--toph) + 1rem)}
+
+@media (max-width:640px){
+  /* Five tabs where the mockup had four, so the row was wrapping to a second
+     line and the rule under it stopped halfway across. Tighter tracking and
+     smaller type fit all five, and the rule runs the full width again. */
+  .tabs{flex-wrap:nowrap}
+  .tabs .tab{padding:.5rem .5rem;font-size:12px;letter-spacing:.04em;white-space:nowrap}
+  .tabs .tab:first-child{padding-left:.2rem}
+  .tabs .tab.on{padding-left:.5rem}
+
+  /* A finger is not a pointer. Everything in the drawer that does something is
+     at least forty pixels tall here, and untouched at 1440. The invite row in
+     Members is held to the same floor. */
+  #drawer .props dd,#drawer .check li,#drawer .linked li,#drawer .comments li,
+  #drawer .props select,#drawer .props input.inline,#drawer .newitem,
+  #members .invite input,#members .invite select{min-height:40px}
+  #drawer .x,#drawer .props .lnk,#drawer .props .rm,#drawer .linked .lnk,#drawer .linked a,
+  #drawer .comments .lnk,#drawer .check .lnk,#drawer .cf .lnk,#drawer .cf select,
+  #members .invite button{
+    display:inline-flex;align-items:center;min-height:40px}
+}

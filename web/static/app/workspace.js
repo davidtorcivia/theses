@@ -9,24 +9,60 @@ import { renderDocument } from './docs.js';
 import { renderLinks } from './links.js';
 import { renderFiles } from './files.js';
 import { openPanel, outstanding } from './activity.js';
+import { activate } from './keys.js';
+
+// Activity is a panel rather than a pane, so it has no tab of its own to land
+// on. The settings page's Activity tab links here and names it in the hash.
+if (location.hash === '#activity') openPanel();
 
 const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
+// found is the way back to whatever in the work area has the keyboard, written
+// down before the rebuild throws it away. Everything here that takes the focus
+// and is not a form control carries something to find it again by: the title
+// and the statement their ids, a card its number, a column name the column's.
+function found(work) {
+  const node = document.activeElement;
+  if (!node || !work.contains(node)) return '';
+  if (node.id === 'wtitle' || node.id === 'wstate') return '#' + node.id;
+  if (node.classList.contains('card')) return `#board .card[data-id="${node.dataset.id}"]`;
+  const column = node.tagName === 'H3' ? node.closest('.col') : null;
+  return column ? `#board .col[data-col="${column.dataset.col}"] h3` : '';
+}
+
 export function renderWork() {
+  // The whole work area is built again from nothing, so whatever held the
+  // keyboard is thrown away with the rest of it and the focus goes back on the
+  // new node at the end. Without this, somebody who had just reached a card, a
+  // column name or the title would find the keyboard on the body the moment
+  // anybody else touched this proposition.
+  const back = found($('#work'));
   const work = clear($('#work'));
   const p = open();
   if (!p) {
-    work.append(el('p', {
-      class: 'empty',
-      text: state.fromCache
-        ? 'Nothing of this proposition is on this device. It will be here when the connection is back.'
-        : 'Nothing here yet.',
-    }));
+    work.append(el('p', { class: 'empty', text: nothing() }));
     return;
   }
   document.title = `${num(p.number)} ${p.title} · THESES`;
   work.append(head(p));
   work.append(pane(p));
+  if (back) {
+    const node = $(back);
+    if (node) node.focus();
+  }
+}
+
+// nothing is the line an empty work area carries. A proposition is per
+// membership, so an account that is on none opens a workspace with nothing in
+// it and used to be told only that there was nothing. Now it is told why.
+function nothing() {
+  if (state.fromCache) {
+    return 'Nothing of this proposition is on this device. It will be here when the connection is back.';
+  }
+  if (!state.props.length && user(state.me).role !== 'owner') {
+    return "You are not on any proposition yet. An owner adds you from a proposition's settings.";
+  }
+  return 'Nothing here yet.';
 }
 
 function head(p) {
@@ -77,7 +113,7 @@ function schedule(p) {
 }
 
 function editOnClick(node, read, save) {
-  node.addEventListener('click', () => {
+  const edit = () => {
     if (node.isContentEditable) return;
     hold(true);
     editable(node, read(), (value) => {
@@ -85,7 +121,9 @@ function editOnClick(node, read, save) {
       if (value === null || value === read()) { emit(); return; }
       save(value).catch((err) => { say(err.message); emit(); });
     });
-  });
+  };
+  node.addEventListener('click', edit);
+  activate(node, edit);
 }
 
 function pane(p) {

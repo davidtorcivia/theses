@@ -816,3 +816,130 @@ func TestSetStatusTakesOnlyTheWorkspacesStatuses(t *testing.T) {
 		t.Fatalf("a workspace with no statuses refused one: %v", err)
 	}
 }
+
+// Seed fills a proposition the moment it is made, in the transaction that made
+// it: what it writes is there with the first render, and a seed that refuses
+// takes the proposition down with it rather than leaving a half made one.
+func TestCreatePropositionRunsTheSeedInTheSameTransaction(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		who  string
+		seed func(*fixture) func(context.Context, core.Actor, int64) error
+		kept bool
+	}{
+		{name: "no seed", seed: func(*fixture) func(context.Context, core.Actor, int64) error { return nil }, kept: true},
+		{
+			name: "a seed that writes",
+			seed: func(f *fixture) func(context.Context, core.Actor, int64) error {
+				return func(ctx context.Context, a core.Actor, id int64) error {
+					_, err := f.CreateColumn(ctx, a, id, "Seeded")
+					return err
+				}
+			},
+			kept: true,
+		},
+		{
+			// The creator's membership is written in the same transaction, so
+			// a seed command authorized against the new proposition finds it.
+			// An owner would pass that test whatever happened, so this row is
+			// an editor, who would not.
+			name: "an editor's seed that writes",
+			who:  "editor",
+			seed: func(f *fixture) func(context.Context, core.Actor, int64) error {
+				return func(ctx context.Context, a core.Actor, id int64) error {
+					_, err := f.CreateColumn(ctx, a, id, "Seeded")
+					return err
+				}
+			},
+			kept: true,
+		},
+		{
+			name: "a seed that refuses",
+			seed: func(*fixture) func(context.Context, core.Actor, int64) error {
+				return func(context.Context, core.Actor, int64) error { return errors.New("no") }
+			},
+			kept: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			f.Seed = tc.seed(f)
+			who := tc.who
+			if who == "" {
+				who = "owner"
+			}
+			e, err := f.CreateProposition(ctx, f.who[who], "Wind")
+			if (err == nil) != tc.kept {
+				t.Fatalf("create gave %v", err)
+			}
+			var made int
+			if err := f.db.QueryRowContext(ctx,
+				`SELECT count(*) FROM propositions WHERE title = 'Wind'`).Scan(&made); err != nil {
+				t.Fatal(err)
+			}
+			if (made == 1) != tc.kept {
+				t.Fatalf("%d propositions named Wind", made)
+			}
+			if !tc.kept {
+				return
+			}
+			cols, err := ListColumns(ctx, f.db, e.EntityID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if seeded := len(cols) == 4; seeded != strings.Contains(tc.name, "seed that writes") {
+				t.Fatalf("the columns are %+v", cols)
+			}
+		})
+	}
+}
+
+// A due date is the one field the board asks a question of: has that day gone.
+// Anything the calendar does not have could never answer it, so it is refused
+// at the command rather than stored and left saying nothing for ever.
+func TestSetCardDueTakesOnlyACalendarDay(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	e, err := f.CreateCard(ctx, f.who["owner"], f.cols[0].ID, "Read the tide tables", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		due   string
+		kept  string
+		wrong bool
+	}{
+		{due: "2026-09-24", kept: "2026-09-24"},
+		{due: "  2026-09-24  ", kept: "2026-09-24"},
+		{due: "", kept: ""},
+		{due: "24 Sep", wrong: true},
+		{due: "2026-02-31", wrong: true},
+		{due: "2026-9-4", wrong: true},
+		{due: "soon", wrong: true},
+	} {
+		t.Run(tc.due, func(t *testing.T) {
+			_, err := f.SetCardDue(ctx, f.who["owner"], e.EntityID, tc.due)
+			if tc.wrong {
+				if !errors.Is(err, ErrDueDate) {
+					t.Fatalf("%q gave %v", tc.due, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%q gave %v", tc.due, err)
+			}
+			card, err := GetCard(ctx, f.db, e.EntityID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if card.DueDate != nil {
+				got = *card.DueDate
+			}
+			if got != tc.kept {
+				t.Fatalf("%q was kept as %q", tc.due, got)
+			}
+		})
+	}
+}
