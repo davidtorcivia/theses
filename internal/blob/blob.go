@@ -110,6 +110,65 @@ func Defaults(provider, hint string) Config {
 	return c
 }
 
+// normalizeEndpoint turns what the owner typed into a base URL the SDK can
+// use. Both providers are named by host in their own consoles, so a bare host
+// is what most people enter; it gets https, which is the only scheme those
+// hosts answer on. An explicit scheme is kept, so a local endpoint can still
+// be http. Anything beyond a host is refused rather than quietly signed
+// against: the SDK appends the bucket and the key to whatever it is given, so
+// a path, a query or credentials in there would sign a URL nobody meant. An
+// empty endpoint stays empty, which is how provider s3 asks the SDK to
+// resolve AWS itself. What comes back is the scheme and the host the parser
+// read, so a scheme typed in capitals reaches the SDK in the form it wants,
+// and the refusal quotes what was typed rather than what the scheme was added
+// to, so the owner recognizes it.
+func normalizeEndpoint(raw string) (string, error) {
+	typed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if typed == "" {
+		return "", nil
+	}
+	full := typed
+	if !strings.Contains(full, "://") {
+		full = "https://" + full
+	}
+	u, err := url.Parse(full)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !ValidHost(u.Host) ||
+		u.Opaque != "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("blob: endpoint %q is not an http or https URL", typed)
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+// ValidHost reports whether the Host of a parsed URL is a host and nothing
+// else: a name or an address, with a port or an IPv6 literal's brackets
+// allowed. url.Parse takes a wildcard such as * or *.example.com without
+// complaint, and a wildcard that reaches the settings page becomes a wildcard
+// source in the content security policy, so the character set is checked
+// rather than assumed. A colon may only sit between a host and a port, never
+// at either end, which is what leaves "file:" out; what a port contains
+// url.Parse has already checked. The server's CSP builder uses this too, which
+// is why it is exported.
+func ValidHost(host string) bool {
+	if host == "" || !hostEdge(host[0]) || !hostEdge(host[len(host)-1]) {
+		return false
+	}
+	for _, r := range host {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '-', r == ':', r == '[', r == ']':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// hostEdge is what a host may begin or end with: a letter or a digit, or the
+// brackets around an IPv6 address.
+func hostEdge(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '[' || c == ']'
+}
+
 // Client talks to one bucket.
 type Client struct {
 	s3      *s3.Client
@@ -148,15 +207,12 @@ func New(cfg Config) (*Client, error) {
 		UsePathStyle: true,
 		HTTPClient:   awshttp.NewBuildableClient().WithReadTimeout(requestTimeout),
 	}
-	if cfg.Endpoint != "" {
-		u, err := url.Parse(cfg.Endpoint)
-		if err != nil {
-			return nil, fmt.Errorf("blob: endpoint %q: %w", cfg.Endpoint, err)
-		}
-		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return nil, fmt.Errorf("blob: endpoint %q is not an http or https URL", cfg.Endpoint)
-		}
-		opts.BaseEndpoint = aws.String(cfg.Endpoint)
+	endpoint, err := normalizeEndpoint(cfg.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint != "" {
+		opts.BaseEndpoint = aws.String(endpoint)
 	}
 	api := s3.New(opts)
 	return &Client{s3: api, presign: s3.NewPresignClient(api), bucket: cfg.Bucket}, nil

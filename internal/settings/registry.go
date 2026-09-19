@@ -50,7 +50,7 @@ var Registry = []Def{
 	{Key: "defaults.document_template", Kind: KindText, Default: "# {statement}\n\n## I. Is it true?\n## II. Who pays?\n## III. What breaks?\n## IV. What do we want?\n## Five consequential facts\n## Historical analogy\n## Street question\n## Expert brief", Label: "Document template", Hint: "Headings every new proposition starts with."},
 
 	{Key: "storage.primary.provider", Kind: KindChoice, Default: "backblaze", Choices: providers, Label: "Provider"},
-	{Key: "storage.primary.endpoint", Kind: KindString, Default: "", Label: "Endpoint", Hint: "B2 is s3.<region>.backblazeb2.com; R2 is <account>.r2.cloudflarestorage.com."},
+	{Key: "storage.primary.endpoint", Kind: KindString, Default: "", Label: "Endpoint", Hint: "B2 is https://s3.<region>.backblazeb2.com, or just the host; R2 is https://<account>.r2.cloudflarestorage.com."},
 	{Key: "storage.primary.region", Kind: KindString, Default: "", Label: "Region"},
 	{Key: "storage.primary.bucket", Kind: KindString, Default: "", Label: "Bucket"},
 	{Key: "storage.primary.access_key", Kind: KindString, Default: "", Secret: true, Label: "Access key"},

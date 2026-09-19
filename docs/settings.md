@@ -25,7 +25,8 @@ Where files and recordings live. There is a primary bucket and, optionally, a
 second one for recordings; leaving the recordings bucket empty keeps
 recordings in the primary. Each takes a provider (`backblaze`, `r2` or a plain
 `s3` endpoint), an endpoint, a region, a bucket, an access key and a secret
-key. The public base URL is optional, for a CDN in front of the bucket.
+key. The endpoint takes either a full `https://` URL or a bare host. The
+public base URL is optional, for a CDN in front of the bucket.
 
 The browser uploads to the bucket directly over a presigned URL, so the bucket
 needs a CORS rule allowing `PUT`, `GET` and `HEAD` from the origin in
