@@ -91,6 +91,36 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		bad      bool
+	}{
+		{in: "s3.us-east-005.backblazeb2.com", want: "https://s3.us-east-005.backblazeb2.com"},
+		{in: "https://s3.us-east-005.backblazeb2.com", want: "https://s3.us-east-005.backblazeb2.com"},
+		{in: "http://localhost:9000", want: "http://localhost:9000"},
+		{in: "https://s3.example.com/", want: "https://s3.example.com"},
+		{in: "  s3.example.com/  ", want: "https://s3.example.com"},
+		{in: "s3.example.com/bucket", bad: true},
+		{in: "ftp://s3.example.com", bad: true},
+		{in: "", want: ""},
+		{in: "   ", want: ""},
+	} {
+		got, err := normalizeEndpoint(tc.in)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("normalizeEndpoint(%q) = %q, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("normalizeEndpoint(%q): %v", tc.in, err)
+		} else if got != tc.want {
+			t.Errorf("normalizeEndpoint(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestNewRejectsBadConfig(t *testing.T) {
 	ok := Config{Provider: "b2", Endpoint: "https://s3.us-west-004.backblazeb2.com", Region: "us-west-004", Bucket: "b", AccessKey: "k", SecretKey: "s"}
 	for name, mutate := range map[string]func(*Config){
@@ -98,7 +128,7 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		"bucket":   func(c *Config) { c.Bucket = "" },
 		"region":   func(c *Config) { c.Region = "" },
 		"secret":   func(c *Config) { c.SecretKey = "" },
-		"endpoint": func(c *Config) { c.Endpoint = "s3.us-west-004.backblazeb2.com" },
+		"endpoint": func(c *Config) { c.Endpoint = "https://s3.us-west-004.backblazeb2.com/bucket" },
 	} {
 		cfg := ok
 		mutate(&cfg)

@@ -159,6 +159,8 @@ func TestStorageOriginsAreInTheCSP(t *testing.T) {
 func TestOriginOf(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"https://s3.example.com", "https://s3.example.com"},
+		{"s3.example.com", "https://s3.example.com"},
+		{"s3.example.com/bucket", "https://s3.example.com"},
 		{"https://s3.example.com/bucket/path", "https://s3.example.com"},
 		{"http://localhost:9000", "http://localhost:9000"},
 		{"", ""},

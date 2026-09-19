@@ -110,6 +110,32 @@ func Defaults(provider, hint string) Config {
 	return c
 }
 
+// normalizeEndpoint turns what the owner typed into a base URL the SDK can
+// use. Both providers are named by host in their own consoles, so a bare host
+// is what most people enter; it gets https, which is the only scheme those
+// hosts answer on. An explicit scheme is kept, so a local endpoint can still
+// be http. Anything beyond a host is refused rather than quietly signed
+// against: the SDK appends the bucket and the key to whatever it is given, so
+// a path, a query or credentials in there would sign a URL nobody meant. An
+// empty endpoint stays empty, which is how provider s3 asks the SDK to
+// resolve AWS itself. The refusal quotes what was typed, not what the scheme
+// was added to, so the owner recognizes it.
+func normalizeEndpoint(raw string) (string, error) {
+	typed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if typed == "" {
+		return "", nil
+	}
+	full := typed
+	if !strings.Contains(full, "://") {
+		full = "https://" + full
+	}
+	u, err := url.Parse(full)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Scheme+"://"+u.Host != full {
+		return "", fmt.Errorf("blob: endpoint %q is not an http or https URL", typed)
+	}
+	return full, nil
+}
+
 // Client talks to one bucket.
 type Client struct {
 	s3      *s3.Client
@@ -148,15 +174,12 @@ func New(cfg Config) (*Client, error) {
 		UsePathStyle: true,
 		HTTPClient:   awshttp.NewBuildableClient().WithReadTimeout(requestTimeout),
 	}
-	if cfg.Endpoint != "" {
-		u, err := url.Parse(cfg.Endpoint)
-		if err != nil {
-			return nil, fmt.Errorf("blob: endpoint %q: %w", cfg.Endpoint, err)
-		}
-		if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return nil, fmt.Errorf("blob: endpoint %q is not an http or https URL", cfg.Endpoint)
-		}
-		opts.BaseEndpoint = aws.String(cfg.Endpoint)
+	endpoint, err := normalizeEndpoint(cfg.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if endpoint != "" {
+		opts.BaseEndpoint = aws.String(endpoint)
 	}
 	api := s3.New(opts)
 	return &Client{s3: api, presign: s3.NewPresignClient(api), bucket: cfg.Bucket}, nil

@@ -85,8 +85,15 @@ func (s *Server) storageOrigins() []string {
 }
 
 func originOf(raw string) string {
-	if strings.TrimSpace(raw) == "" {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return ""
+	}
+	// The endpoint field takes a bare host, the same as the blob client does,
+	// and a bare host with no origin here means the browser is refused the
+	// upload it was just handed a URL for.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
