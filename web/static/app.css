@@ -282,6 +282,10 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .dtab:first-child{padding-left:0}
 .dtab.on{color:var(--k);border-bottom-color:var(--k)}
 .dtab:hover:not(.on){color:var(--k)}
+/* Clicking the tab you are already on renames the document, which the tab has
+   to say before it is clicked: the title, and the rail's own underline while
+   the pointer is over it. It goes away while the name is being typed. */
+.dtab.on[title]:not([contenteditable=true]):hover{cursor:text;text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:.25em}
 .dtab.new{color:var(--k);font-size:18px;padding:.4rem .6rem .5rem;font-weight:700}
 .doc-ph .mono,.doc-ph .lnk{padding-bottom:.7rem}
 .doc-ph .mono{color:rgba(0,0,0,.55)}
