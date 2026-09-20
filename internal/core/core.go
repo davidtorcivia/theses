@@ -55,6 +55,19 @@ type Event struct {
 	// not draw this one: the payload is the row as it was when it was applied,
 	// which may be older than what the client holds now.
 	Replayed bool `json:"replayed,omitempty"`
+	// Key is the client's key this command was applied under, as it was spent,
+	// so the second command of a run carries the numbered form. It is how a
+	// client that drew a row before the server had one recognizes the real row
+	// when it arrives, by whichever road it arrives on: the answer to its own
+	// command, the broadcast to the room, or the stream it reads after being
+	// away. Without it only a client's own answer could be matched, and a
+	// second tab, or the same tab after a reload, would draw the thing twice.
+	//
+	// It goes to everybody in the room, because one event is one message. A key
+	// is spent against the actor who chose it, so nobody else can replay a
+	// command with it or collide with it; all it says is that the row was made
+	// by a client that named the change.
+	Key string `json:"key,omitempty"`
 }
 
 var (
@@ -205,7 +218,7 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 	}
 	e := Event{
 		Seq: seq, Proposition: prop, Entity: change.Entity, EntityID: change.EntityID,
-		Action: change.Action, Actor: a, Before: before, After: after, At: at,
+		Action: change.Action, Actor: a, Before: before, After: after, At: at, Key: mine,
 	}
 	if joined {
 		group.events = append(group.events, e)
@@ -341,10 +354,17 @@ func insertActivity(ctx context.Context, tx *sql.Tx, a Actor, proposition int64,
 
 // Since reads the stream out of the activity table, which is what the long poll
 // fallback serves and what a tab that missed messages catches up with.
+// The client's key is read back with the row, because a tab catching up on
+// what it missed has to recognize a row it drew itself as surely as one that
+// arrived while it was listening. One activity row has at most one key: a key
+// is written beside the row the command that spent it made, and no other
+// command can write it again.
 func (s *Service) Since(ctx context.Context, proposition, seq int64, limit int) ([]Event, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id, a.actor_kind, a.actor_id, coalesce(u.name, ''),
-		coalesce(a.via, ''), a.entity, a.entity_id, a.action, a.before_json, a.after_json, a.created_at
+		coalesce(a.via, ''), a.entity, a.entity_id, a.action, a.before_json, a.after_json, a.created_at,
+		coalesce(k.key, '')
 		FROM activity a LEFT JOIN users u ON a.actor_kind = 'user' AND u.id = a.actor_id
+		LEFT JOIN client_keys k ON k.activity_id = a.id
 		WHERE a.proposition_id = ? AND a.id > ? ORDER BY a.id LIMIT ?`, proposition, seq, limit)
 	if err != nil {
 		return nil, err
@@ -356,7 +376,7 @@ func (s *Service) Since(ctx context.Context, proposition, seq int64, limit int) 
 		var actorID, entityID string
 		var before, after sql.NullString
 		if err := rows.Scan(&e.Seq, &e.Actor.Kind, &actorID, &e.Actor.Name, &e.Actor.Via,
-			&e.Entity, &entityID, &e.Action, &before, &after, &e.At); err != nil {
+			&e.Entity, &entityID, &e.Action, &before, &after, &e.At, &e.Key); err != nil {
 			return nil, err
 		}
 		e.Proposition = proposition

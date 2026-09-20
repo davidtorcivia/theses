@@ -352,6 +352,14 @@ export function apply(ev) {
       }
       if (at < 0) blocks.push(now); else blocks[at] = now;
       blocks.sort(order);
+      // The real block is here, so the one this tab drew in its place goes, in
+      // the same tick and before anything is drawn again. This is the only
+      // place that does it, so it happens whichever road the block came by: the
+      // answer to this tab's own command, the copy the room was sent, or the
+      // stream a tab reads after being away. A tab that did not send the
+      // command matches it the same way, which is what stops the paragraph
+      // standing twice in a second tab until it reloads.
+      if (ev.key) settle(ev.key, now);
       break;
     }
 
@@ -566,6 +574,11 @@ function behindBlock(after) {
 // written by the event its save comes back as; one it does not hold has no such
 // event, and without this a reload would draw it as it was first made.
 export function writeLocal(row, text) {
+  // Not once the real block has taken its place, which a save that was in the
+  // air while the answer arrived would otherwise do: applying a row that is no
+  // longer in the document puts it back, and the paragraph would stand twice
+  // for the rest of the session.
+  if (!localOf(row.key)) return;
   apply(local('block', { ...row, text, updated_at: seconds() }));
   // Written now for the reason a new one is: this text is in the command the
   // outbox holds and in this tab, and nowhere a reload could read it from
@@ -574,8 +587,40 @@ export function writeLocal(row, text) {
   write();
 }
 
-// localOf is the block a key names: what an ack, a refusal and an insert queued
-// behind it all find the row again by.
+// settle is the real block taking the place of the one this tab drew for it.
+// The row goes here rather than through unmakeLocal below, because this runs
+// inside the apply that has just drawn the real one and the two must be one
+// change: the paragraph is never on the page twice, not even for a frame, and
+// never off it for one either.
+//
+// A command that made several blocks, which is a paste the server cut up, spent
+// the key and then the key with a number on the end. The row this tab drew
+// stood for all of them, so it goes when the first arrives and the rest find
+// nothing to settle, which is why the number is cut off before the lookup.
+function settle(key, now) {
+  const made = localOf(key.split('#')[0]);
+  if (!made) return;
+  for (const doc of state.documents) {
+    const at = (doc.blocks || []).indexOf(made);
+    if (at >= 0) doc.blocks.splice(at, 1);
+  }
+  // Written now for the reason making one is: a reload before the timer fires
+  // would draw the block the server has and this one standing for it.
+  write();
+  if (settled) settled(made, now);
+}
+
+// settled is how docs.js hears it, handed here rather than imported because
+// this module knows nothing of the editor: the text somebody has typed into
+// such a block, and an editor standing in it, follow the row to the real block.
+let settled = null;
+
+export function onSettled(fn) {
+  settled = fn;
+}
+
+// localOf is the block a key names: what a refusal, a block joined back into
+// the one above it and an insert queued behind it all find the row again by.
 export function localOf(key) {
   for (const doc of state.documents) {
     const row = (doc.blocks || []).find((b) => b.id < 0 && b.key === key);

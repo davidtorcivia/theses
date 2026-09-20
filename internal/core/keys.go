@@ -132,6 +132,11 @@ func replayed(ctx context.Context, tx *sql.Tx, actorID int64, key string) (Event
 	if after.Valid {
 		e.After = []byte(after.String)
 	}
+	// The key goes back on the answer too. Nothing was applied, so it says which
+	// command is being answered rather than what was done, and a client that
+	// drew a row under this key can take the row in the payload for it without
+	// waiting for the stream to bring the same row round again.
+	e.Key = key
 	e.Replayed = true
 	return e, true, nil
 }

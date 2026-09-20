@@ -284,17 +284,6 @@ function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
   });
 }
 
-// inserted is how docs.js hears that a block it drew has been made, handed here
-// rather than imported for the reason carets is. A block this tab made goes up
-// as an ordinary command, so an insert made with no connection is answered
-// inside the drain, long after send answered the editor with null, and that ack
-// is the moment the block on the page stops being this tab's own.
-let inserted = null;
-
-export function onInserted(fn) {
-  inserted = fn;
-}
-
 // where tells the others what this tab has open. It is never worth an answer,
 // and the same string twice is nothing to tell: a caret moving inside a block
 // says one of these every fifth of a second and most of them say what the last
@@ -403,13 +392,8 @@ async function drain() {
         continue;
       }
       try {
-        const ev = await answered(row.via === 'api' ? post(row) : ship(row.cmd, row.args, null, null, row.idem),
+        await answered(row.via === 'api' ? post(row) : ship(row.cmd, row.args, null, null, row.idem),
           row.via === 'api' ? httpWait : replyWait);
-        // Told before anything is awaited, so that the block this ack is about
-        // and the one the editor drew for it are on and off the page inside one
-        // frame: the event was applied a microtask ago and a render between the
-        // two would draw the paragraph twice.
-        if (inserted && row.cmd === 'block.insert' && ev) inserted(row.idem, ev);
         await offline.dropIfUnchanged(row.n, row.at);
         reverts.delete(row.n);
         tries.delete(row.n);

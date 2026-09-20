@@ -425,3 +425,122 @@ func TestAReplayedEventCarriesTheRowItMade(t *testing.T) {
 		t.Errorf("the replayed payload is %+v, want the row the first run made", row)
 	}
 }
+
+// The key rides the event, which is how a client that drew a row before the
+// server had one knows the real row when it sees it: on its own answer, on the
+// copy broadcast to everybody in the room, and on the stream a tab reads when
+// it has been away. A run of commands carries the numbered key each one spent.
+func TestTheEventCarriesTheKeyItWasAppliedUnder(t *testing.T) {
+	k, ada, _ := newKeyed(t)
+	ctx := context.Background()
+
+	// What the room is sent is what a second tab matches its own drawing
+	// against, so the published copies are read as well as the answers.
+	room := k.s.Bus.Subscribe(0)
+	defer room.Close()
+
+	plain, err := k.make(ctx, ada, "No name on it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Key != "" {
+		t.Errorf("a command sent under no key answers with %q", plain.Key)
+	}
+
+	named, err := WithKey(ctx, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := k.make(named, ada, "Named")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Key != "first" {
+		t.Errorf("the event carries %q, want first", one.Key)
+	}
+	// The second command under one key spends the numbered form, and that is
+	// what its event says: the client that sent the run can tell the rows of it
+	// apart.
+	two, err := k.make(named, ada, "Named again")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if two.Key != "first#2" {
+		t.Errorf("the second event carries %q, want first#2", two.Key)
+	}
+
+	// A replay applies nothing and answers with the first event, which says
+	// which command is being answered.
+	back, err := WithKey(ctx, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := k.make(back, ada, "Named")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replay.Replayed || replay.Key != "first" {
+		t.Errorf("the replay is %+v, want replayed under first", replay)
+	}
+
+	for i, want := range []string{"", "first", "first#2"} {
+		select {
+		case e := <-room.C:
+			if e.Key != want {
+				t.Errorf("published event %d carries %q, want %q", i, e.Key, want)
+			}
+		default:
+			t.Fatalf("only %d events were published, want 3", i)
+		}
+	}
+	// A replay applied nothing, so it published nothing for anybody to draw.
+	select {
+	case e := <-room.C:
+		t.Errorf("the replay published %+v", e)
+	default:
+	}
+}
+
+// The stream a tab reads after being away carries the keys too, read back
+// beside the rows rather than kept in them: a tab that missed the broadcast
+// still recognizes what it drew itself.
+func TestTheStreamCarriesTheKey(t *testing.T) {
+	k, ada, _ := newKeyed(t)
+	ctx := context.Background()
+	made, err := k.make(ctx, ada, "Something to file under")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposition := made.EntityID
+	// A command filed under that proposition, which is what the stream reads.
+	note := func(ctx context.Context) (Event, error) {
+		return k.s.Do(ctx, ada, proposition, auth.CanEdit, func(context.Context, *sql.Tx) (Change, error) {
+			return Change{Entity: "block", EntityID: 1, Action: "insert"}, nil
+		})
+	}
+	named, err := WithKey(ctx, "streamed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyed, err := note(named)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := note(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := k.s.Since(ctx, proposition, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("the stream has %d events, want 2", len(events))
+	}
+	if events[0].Seq != keyed.Seq || events[0].Key != "streamed" {
+		t.Errorf("the first event of the stream is %+v, want seq %d under streamed", events[0], keyed.Seq)
+	}
+	if events[1].Key != "" {
+		t.Errorf("the second event of the stream carries %q, want nothing", events[1].Key)
+	}
+}

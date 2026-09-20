@@ -70,6 +70,17 @@ body is still a repeat: the answer is what the first request did, and the
 second change is not made. Use a fresh key for every change you mean to make,
 and the same one only for sending the same change again.
 
+The event a keyed write answers with carries the key back as `"key"`, and so do
+the copies of that event on the websocket, on the event stream and in the
+activity the browser reads. A caller that drew something before it could know
+what the server would call it recognizes the row wherever it first meets it,
+rather than only in the answer to its own request. A request that made several
+rows, which is text with a blank line in it, spent the key and then the key with
+`#2` and `#3` on the end, one per row, and each event says which of them it was.
+Everybody who may read the event sees that field. A key is spent against the
+person who chose it, so nobody else can send a command under it or collide with
+it; all it says is that the row was made by a client that named the change.
+
 The key belongs to the person the token belongs to, not to the token. Two
 tokens of one person share one set of keys, so an agent holding two of them
 should not reuse a key between them; two different people cannot collide.
