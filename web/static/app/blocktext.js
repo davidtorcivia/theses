@@ -169,9 +169,11 @@ export function enter(text, start, end) {
 const fence = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
 
 // step is the fence a line leaves open: the delimiter that opened it, or null
-// outside one. A backtick opener's info string holds no backtick, which is what
-// keeps a line of inline code from opening a fence that never closes.
-function step(open, line) {
+// outside one. It is the one definition of a fence on this side, and
+// blockparts.js draws code by it as well. A backtick opener's info string holds
+// no backtick, which is what keeps a line of inline code from opening a fence
+// that never closes.
+export function step(open, line) {
   const m = fence.exec(line);
   if (!m) return open;
   const [, marks, info] = m;

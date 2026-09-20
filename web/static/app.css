@@ -349,10 +349,27 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 #doc{max-width:680px;font-size:17px;line-height:1.45}
 #doc h1{font-weight:800;font-size:clamp(30px,3.8vw,50px);line-height:.98;letter-spacing:-.03em;margin:.4rem 0 1.2rem;text-wrap:balance}
 #doc h2{font-weight:800;margin:2rem 0 .5rem;text-transform:uppercase;font-stretch:85%;font-size:15px;letter-spacing:.06em}
+#doc h3{font-weight:800;margin:1.4rem 0 .4rem;font-size:17px;letter-spacing:-.01em}
 #doc p,#doc ul,#doc ol{margin:0 0 1rem}
 #doc ul,#doc ol{padding-left:1.3em}
 #doc li{margin-bottom:.35rem}
 #doc p.empty{color:rgba(0,0,0,.45)}
+#doc blockquote{margin:0 0 1rem;padding-left:.9rem;border-left:2px solid var(--hairp)}
+#doc blockquote p:last-child{margin-bottom:0}
+/* Code and a table are the two things a document can hold that are wider than
+   the pane, so each sits in a box of its own that scrolls sideways. The box
+   takes the keyboard and says so when it has it, in the ink the pane is
+   written in: a scroller nobody can see the focus on cannot be scrolled by
+   one, and nothing else on the block draws a focus ring for it. */
+#doc .scroll{overflow-x:auto;margin:0 0 1rem}
+#doc .scroll:focus-visible{outline:2px solid var(--k);outline-offset:3px}
+#doc pre{margin:0;padding:.5rem 0 .5rem .8rem;border-left:2px solid var(--hairp);font-family:var(--monof);font-size:13px;line-height:1.55;white-space:pre}
+#doc table{border-collapse:collapse;font-size:15px}
+#doc th,#doc td{text-align:left;vertical-align:top;padding:.35rem 1.2rem .35rem 0;border-bottom:1px solid var(--hairp)}
+#doc th{font-weight:700;border-bottom-color:var(--k)}
+#doc .al-l{text-align:left}
+#doc .al-c{text-align:center}
+#doc .al-r{text-align:right}
 .blk{padding:.15rem 0;margin-left:-.8rem;padding-left:.8rem;border-left:3px solid transparent}
 .blk:hover{border-left-color:var(--hairp)}
 .blk.editing{border-left-color:var(--k);background:rgba(255,212,0,.35)}
@@ -361,6 +378,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .blk:has(> .who:not(.me)):not(.editing){border-left-color:var(--uc)}
 .blk.h1 textarea,.blk.h1 .mirror,.blk.h1 .src{font-weight:800;font-size:clamp(30px,3.8vw,50px);line-height:.98;letter-spacing:-.03em;margin:.4rem 0 1.2rem}
 .blk.h2 textarea,.blk.h2 .mirror,.blk.h2 .src{font-weight:800;text-transform:uppercase;font-stretch:85%;font-size:15px;letter-spacing:.06em;margin:2rem 0 .5rem}
+.blk.h3 textarea,.blk.h3 .mirror,.blk.h3 .src{font-weight:800;font-size:17px;letter-spacing:-.01em;margin:1.4rem 0 .4rem}
 /* Somebody else standing in a block. The span itself has no size, so the text
    is laid out as though it were not there and the offsets stay honest; the bar
    and the initials above it are drawn out of the flow beside it. It does not

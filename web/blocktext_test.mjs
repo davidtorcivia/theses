@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './static/app/blocktext.js';
+import { parts } from './static/app/blockparts.js';
 
 // The caret is written as a pipe in `now` and in `want`, so a case reads as the
 // two texts and where the person is standing in them. A case with no `want` is
@@ -257,3 +258,261 @@ assert.deepEqual(parseWhere(formatWhere(12, 5, 3, 9)), { block: 12, version: 5, 
   'what is written comes back');
 
 console.log(`${wheres.length} where cases pass`);
+
+// What a block's text is made of, which the document pane draws. The first
+// eighteen cases, as far as the blank line below them, are what the pane drew
+// before any of the four new shapes existed, written down from the old renderer
+// so that teaching it the new ones is not allowed to move the old ones; the
+// rest are the new ones.
+const shapes = [
+  { name: 'a paragraph', in: 'One.', want: [{ kind: 'p', text: 'One.' }] },
+  { name: 'a first level heading', in: '# Title', want: [{ kind: 'h1', text: 'Title' }] },
+  { name: 'a second level heading', in: '## Title', want: [{ kind: 'h2', text: 'Title' }] },
+  {
+    name: 'a heading is its own line and what is under it is its own piece',
+    in: '# Title\nand words',
+    want: [{ kind: 'h1', text: 'Title' }, { kind: 'p', text: 'and words' }],
+  },
+  { name: 'a hash with no space is not a heading', in: '#Title', want: [{ kind: 'p', text: '#Title' }] },
+  { name: 'a bullet list', in: '- one\n- two', want: [{ kind: 'ul', items: ['one', 'two'] }] },
+  { name: 'a numbered list', in: '1. one\n2. two', want: [{ kind: 'ol', items: ['one', 'two'] }] },
+  {
+    name: 'one line that is not a bullet makes the whole piece a paragraph',
+    in: '- one\nand two',
+    want: [{ kind: 'p', text: '- one\nand two' }],
+  },
+  {
+    name: 'a blank line cuts a list in two',
+    in: '- one\n\n- two',
+    want: [{ kind: 'ul', items: ['one'] }, { kind: 'ul', items: ['two'] }],
+  },
+  { name: 'a single newline stays in its paragraph', in: 'One.\nTwo.', want: [{ kind: 'p', text: 'One.\nTwo.' }] },
+  {
+    name: 'a blank line separates two paragraphs',
+    in: 'One.\n\nTwo.',
+    want: [{ kind: 'p', text: 'One.' }, { kind: 'p', text: 'Two.' }],
+  },
+  { name: 'a line of spaces is a blank line', in: 'One.\n \nTwo.', want: [{ kind: 'p', text: 'One.' }, { kind: 'p', text: 'Two.' }] },
+  {
+    name: 'the second of two blank lines in a row belongs to the piece under it',
+    in: 'a\n\n\nb',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'p', text: '\nb' }],
+  },
+  {
+    name: 'and a heading under two blank lines is still the text it was drawn as',
+    in: 'a\n\n\n# b',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'p', text: '\n# b' }],
+  },
+  { name: 'a trailing newline stays on its paragraph', in: 'One.\n', want: [{ kind: 'p', text: 'One.\n' }] },
+  { name: 'whitespace is nothing at all', in: '  \n\t\n  ', want: [] },
+  { name: 'a pipe in a sentence is not a table', in: 'One | two.', want: [{ kind: 'p', text: 'One | two.' }] },
+  { name: 'dashes under words are not a table', in: 'One\n---', want: [{ kind: 'p', text: 'One\n---' }] },
+
+  { name: 'a third level heading', in: '### Title', want: [{ kind: 'h3', text: 'Title' }] },
+  { name: 'a fourth level heading is not one', in: '#### Title', want: [{ kind: 'p', text: '#### Title' }] },
+  { name: 'a quote', in: '> One.', want: [{ kind: 'quote', paragraphs: ['One.'] }] },
+  {
+    name: 'consecutive quote lines are one quote of one paragraph',
+    in: '> One.\n> Two.',
+    want: [{ kind: 'quote', paragraphs: ['One.\nTwo.'] }],
+  },
+  {
+    name: 'a bare marker separates a quote into paragraphs',
+    in: '> One.\n>\n> Two.',
+    want: [{ kind: 'quote', paragraphs: ['One.', 'Two.'] }],
+  },
+  {
+    name: 'a line with no marker ends the quote',
+    in: '> One.\nTwo.',
+    want: [{ kind: 'quote', paragraphs: ['One.'] }, { kind: 'p', text: 'Two.' }],
+  },
+  { name: 'a quote keeps its own inline markup', in: '> *One*.', want: [{ kind: 'quote', paragraphs: ['*One*.'] }] },
+  {
+    name: 'a fenced code block',
+    in: '```\nOne.\n```',
+    want: [{ kind: 'code', text: 'One.' }],
+  },
+  {
+    name: 'code keeps its blank lines, its hashes and its spaces',
+    in: '```js\nconst a = 1;\n\n# not a heading\n  indented\n```',
+    want: [{ kind: 'code', text: 'const a = 1;\n\n# not a heading\n  indented' }],
+  },
+  {
+    name: 'an indented fence takes its own indent off the code',
+    in: '  ```\n  One.\nTwo.\n  ```',
+    want: [{ kind: 'code', text: 'One.\nTwo.' }],
+  },
+  {
+    name: 'a fence nothing closes runs to the end',
+    in: '```\nOne.',
+    want: [{ kind: 'code', text: 'One.' }],
+  },
+  {
+    name: 'a fence part way down a piece ends the paragraph above it',
+    in: 'One.\n```\ntwo\n```\nThree.',
+    want: [{ kind: 'p', text: 'One.' }, { kind: 'code', text: 'two' }, { kind: 'p', text: 'Three.' }],
+  },
+  {
+    name: 'a line of inline code is not a fence',
+    in: '```js``` and more',
+    want: [{ kind: 'p', text: '```js``` and more' }],
+  },
+  {
+    name: 'a table',
+    in: '| a | b |\n| --- | --- |\n| 1 | 2 |',
+    want: [{ kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['1', '2']] }],
+  },
+  {
+    name: 'a table needs no outer pipes and takes its alignment from the colons',
+    in: 'a | b | c\n:--- | :---: | ---:\n1 | 2 | 3',
+    want: [{ kind: 'table', align: ['l', 'c', 'r'], head: ['a', 'b', 'c'], rows: [['1', '2', '3']] }],
+  },
+  {
+    name: 'an escaped pipe stays in its cell',
+    in: '| a | b |\n| - | - |\n| one \\| two | three |',
+    want: [{ kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['one | two', 'three']] }],
+  },
+  {
+    name: 'a short row is padded and a long one keeps the cells it has',
+    in: '| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |',
+    want: [{ kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['1', ''], ['1', '2', '3']] }],
+  },
+  {
+    name: 'a line with more pipes than the header keeps every word of it',
+    in: '| a |\n| - |\n| 1 |\n# x | y',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1'], ['# x', 'y']] }],
+  },
+  {
+    name: 'a row of dashes under a blank line is not a table',
+    in: 'a\n\n\n|---|\n| 1 |',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'p', text: '\n|---|\n| 1 |' }],
+  },
+  {
+    name: 'a delimiter row of the wrong width is not a table',
+    in: '| a | b |\n| --- |\n| 1 | 2 |',
+    want: [{ kind: 'p', text: '| a | b |\n| --- |\n| 1 | 2 |' }],
+  },
+  {
+    name: 'a delimiter row that is not all dashes is not a table',
+    in: '| a | b |\n| --- | x |',
+    want: [{ kind: 'p', text: '| a | b |\n| --- | x |' }],
+  },
+  {
+    name: 'a header row needs no pipe of its own, as long as the dashes have one',
+    in: 'a\n|---|',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [] }],
+  },
+  {
+    name: 'a table under a line of prose ends it',
+    in: 'Intro\n| a | b |\n| - | - |\n| 1 | 2 |',
+    want: [{ kind: 'p', text: 'Intro' }, { kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['1', '2']] }],
+  },
+  {
+    name: 'a table ends at the blank line that ends its piece',
+    in: '| a |\n| - |\n| 1 |\n\nAfter.',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'p', text: 'After.' }],
+  },
+  {
+    name: 'a fence under the rows ends the table',
+    in: '| a |\n| - |\n| 1 |\n```\nx | y\n```',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'code', text: 'x | y' }],
+  },
+  {
+    name: 'a fence straight under the dashes is a table with no rows',
+    in: '| a |\n| - |\n```\nx\n```',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [] }, { kind: 'code', text: 'x' }],
+  },
+  {
+    name: 'a fence a blank line below the rows reads as it did',
+    in: '| a |\n| - |\n| 1 |\n\n```\nx\n```',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'code', text: 'x' }],
+  },
+  {
+    name: 'the blank line a piece starts with is nothing in front of a fence',
+    in: 'a\n\n\n```\nx\n```',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'code', text: 'x' }],
+  },
+  {
+    name: 'and nothing in front of a table',
+    in: 'a\n\n\n| b |\n| - |',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'table', align: [''], head: ['b'], rows: [] }],
+  },
+  {
+    name: 'three blank lines in a row are still two paragraphs',
+    in: 'a\n\n\n\nb',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'p', text: 'b' }],
+  },
+  {
+    name: 'a fence holding a blank line is one piece',
+    in: 'One.\n\n```\ntwo\n\nthree\n```\n\nFour.',
+    want: [{ kind: 'p', text: 'One.' }, { kind: 'code', text: 'two\n\nthree' }, { kind: 'p', text: 'Four.' }],
+  },
+];
+
+for (const c of shapes) assert.deepEqual(parts(c.in), c.want, c.name);
+
+console.log(`${shapes.length} shape cases pass`);
+
+// A block is as long as the server lets it be, twenty thousand runes, and the
+// pane has to draw whatever is in it. These are the shapes that used to be read
+// by one call per line of them: a block of nothing but headings, and one of
+// nothing but fences. The document is drawn inside the board's pane, so a
+// renderer that ran out of stack over one block would take the proposition off
+// the page for everybody who opened it.
+//
+// The times are a guard against a rule that reads the lines it has not come to
+// yet, which is quadratic and was: the bound is forty times the few
+// milliseconds each of these takes, so it fails on a mistake in the module
+// rather than on a busy machine.
+const long = [
+  { name: 'five thousand headings', in: '# a\n'.repeat(5000), want: 5000, kind: 'h1' },
+  { name: 'five thousand fences', in: '```\n'.repeat(5000), want: 2500, kind: 'code' },
+  { name: 'ten thousand lines of prose', in: 'a\n'.repeat(10000), want: 1, kind: 'p' },
+  { name: 'ten thousand table rows', in: '| a |\n| - |\n' + '| 1 |\n'.repeat(10000), want: 1, kind: 'table' },
+  { name: 'ten thousand quoted lines', in: '> a\n'.repeat(10000), want: 1, kind: 'quote' },
+  { name: 'ten thousand lines of code', in: '```\n' + 'a\n'.repeat(10000) + '```', want: 1, kind: 'code' },
+  // A table and a fence in turn, which is what asks fenceAt for a line under
+  // every table and every paragraph in the block.
+  { name: 'three thousand tables under fences', in: '| a |\n| - |\n| 1 |\n```\nx\n```\n'.repeat(3333), want: 6666, kind: 'table' },
+];
+
+for (const c of long) {
+  const began = performance.now();
+  const got = parts(c.in);
+  const took = performance.now() - began;
+  assert.equal(got.length, c.want, c.name + ': how many parts');
+  assert.equal(got[0].kind, c.kind, c.name + ': what they are');
+  assert.ok(took < 200, `${c.name}: took ${took.toFixed(1)}ms, which is over the bound`);
+}
+
+console.log(`${long.length} long block cases pass`);
+
+// Nothing in the module may leave text somebody typed undrawn. Every line below
+// carries a word of its own, and every text that can be built out of three of
+// them has to hand all of those words back in the parts it reads. The markers
+// themselves are syntax and are not looked for; a fence's info string is syntax
+// here too, so the lines below do not put a word in one.
+const marked = [
+  'wpara', '# whead', '## whead2', '### whead3', '- wbullet', '1. wnumber',
+  '> wquote', '>', '```', 'wcode', '| wcellone | wcelltwo |', '| --- | --- |',
+  '| wrowone | wrowtwo | wrowthree |', '', '   ', 'a | wpipe', '|---|', 'wsetext', '---',
+];
+
+const words = (part) => [part.text, ...(part.items || []), ...(part.paragraphs || []),
+  ...(part.head || []), ...(part.rows || []).flat()].filter(Boolean).join(' ');
+
+let texts = 0;
+for (const one of marked) {
+  for (const two of marked) {
+    for (const three of marked) {
+      const text = `${one}\n${two}\n${three}`;
+      texts++;
+      const said = parts(text).map(words).join(' ');
+      for (const word of text.match(/w[a-z]+/g) || []) {
+        assert.ok(said.includes(word), `${JSON.stringify(text)} lost ${word}: ${JSON.stringify(said)}`);
+      }
+    }
+  }
+}
+
+console.log(`${texts} generated texts keep every word`);
