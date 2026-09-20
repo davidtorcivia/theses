@@ -8,6 +8,7 @@
 import { el, initials, say } from './dom.js';
 import { state, user, emit, canEdit } from './state.js';
 import { send, again, letGo, resend, Conflict } from './net.js';
+import { gone } from './docs.js';
 import * as api from './api.js';
 
 export function openPanel() {
@@ -220,9 +221,15 @@ const clip = (text) => (text.length > 80 ? text.slice(0, 79) + '…' : text);
 // editor started from: without it a choice made an hour later is made blind.
 function refusedRow(row) {
   const li = el('li', {});
-  const detail = row.detail;
+  // A save whose block has been deleted since has nowhere to go back to, so the
+  // only honest answer is to say so and keep the words here to be copied out of
+  // until somebody lets them go. Sending it again would be refused, and this
+  // row is the last place what they wrote still exists.
+  const lost = row.cmd === 'block.set' && gone(row.args.block);
+  const detail = lost ? null : row.detail;
   const mine = row.args.text ?? row.args.title ?? '';
   li.append(el('p', { text: `${row.cmd} was not taken: ${row.refused}` }));
+  if (lost) li.append(el('p', { class: 'dim', text: 'That block has since been deleted.' }));
   if (row.base_text) {
     li.append(el('p', { class: 'mono dim', text: 'You started from: ' + clip(row.base_text) }));
   }
@@ -233,7 +240,7 @@ function refusedRow(row) {
       class: 'lnk', type: 'button', text: 'Keep mine',
       onclick: () => resolve(row, { ...row.args, base: detail.version }),
     }), ' ');
-  } else {
+  } else if (!lost) {
     // A refusal with nothing to compare is the server saying no rather than
     // somebody else saying something different, and some of those are worth one
     // more go: a moment when it was busy, a fault it has since recovered from.

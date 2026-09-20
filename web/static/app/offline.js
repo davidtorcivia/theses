@@ -299,6 +299,12 @@ export function refuse(n, at, why, detail) {
 // there was no storage to file it in, because the caller has to know whether
 // the question outlived the tab before it promises that it did.
 //
+// It writes over a refusal and over nothing else. A refusal is an answer, so it
+// cannot be about a command that is still waiting to go or one the drain has
+// taken and may already have had applied: those are answered by the drain, in
+// refuse above. The row goes in unmarked for the same reason, since the drain
+// leaves a refused row alone and never takes it.
+//
 // ponytail: the same scan queue and named make, with the same ceiling and the
 // same reason it is fine at the few rows a person makes by hand.
 export async function file(row, key, why, detail) {
@@ -307,7 +313,7 @@ export async function file(row, key, why, detail) {
     const all = store.getAll();
     all.onsuccess = () => {
       const found = all.result.find((r) => r.key === key && r.refused);
-      const put = store.put({ at: Date.now(), ...row, key,
+      const put = store.put({ at: Date.now(), ...row, key, sending: false,
         refused: why, detail: detail || null, ...(found ? { n: found.n } : {}) });
       put.onsuccess = () => { out.n = put.result; };
     };

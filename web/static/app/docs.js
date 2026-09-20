@@ -8,10 +8,10 @@
 // between is merged on the server or comes back as a choice.
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order } from './state.js';
-import { send, newKey, where, onCarets, caughtUp, count, Conflict, Offline } from './net.js';
+import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
+import { send, newKey, where, onCarets, caughtUp, count, chosen, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
-import { retext, unqueue } from './offline.js';
+import { retext, unqueue, file } from './offline.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
 import * as undo from './undo.js';
@@ -43,11 +43,14 @@ let rendering = false;
 //            reason: the two states a person has to answer before it saves
 //   rename   on a refused block whose insert was answered and gone, so that
 //            trying again is a command under a name of its own
+//   filed    the outbox row the unanswered question is kept in, zero for a
+//            block with nothing to answer or a browser with no storage
 //
-// ponytail: they live in this tab and nowhere else, so a reload leaves each
-// block as the server last took it. The upgrade path is the one a refusal made
-// offline already takes: keep the row in the outbox with its base text and the
-// server's detail, and let the activity panel offer the same two answers.
+// The entry itself lives in this tab and dies with it. What must not is the
+// question in it: keepClash files a conflict or a refusal in the outbox as a
+// refused row, which is the row a refusal during a drain already makes, and
+// unanswered() brings it back to this block after a reload and takes it off
+// this block when it is answered somewhere else.
 const work = new Map();
 
 // newBlock draws a block the server has not made yet and sends the command that
@@ -106,9 +109,8 @@ function insert(row, again) {
   // writes the text into the row as well as into the command, so the one this
   // was called with may be a copy from before that.
   const text = w ? w.text : (blockAnywhere(row.id) || row).text;
-  const args = { document: row.document_id, text, whole: row.whole, ...row.to };
   flying.add(row.key);
-  send('block.insert', args, state.open, { key: row.key })
+  send('block.insert', insertArgs(row, text), state.open, { key: row.key })
     // An answer that came back is the block itself arriving, and applying it is
     // what takes the row this tab drew off the page: the key on the event is
     // what the two are matched by, and state.js does it wherever the event
@@ -123,6 +125,13 @@ function insert(row, again) {
   status();
   emit();
 }
+
+// insertArgs is the command that makes a block this tab drew, with where it
+// goes said as anchorOf worked it out when the block was drawn. It is asked for
+// twice: once by the command itself and once by the row that keeps that command
+// when the server would not take it, and the two have to be the same command,
+// because drawQueued draws the block again from those arguments after a reload.
+const insertArgs = (row, text) => ({ document: row.document_id, text, whole: row.whole, ...row.to });
 
 // bound is the real block arriving for the one this tab drew. That row has just
 // gone, in the same tick the real one was applied, so the paragraph is never
@@ -163,6 +172,9 @@ function bound(row, now) {
     // it is. The reason goes with it, and what was typed under it goes up as an
     // ordinary save of the real block, which is what arm below sends. This runs
     // before notice, which draws the refusal from the entry it has just moved.
+    // The row that was keeping the question outlives this tab, so it goes too,
+    // or a reload would draw the question again over a block that has an id.
+    forgetClash(w);
     w.status = 'ok';
     delete w.reason;
     delete w.rename;
@@ -216,7 +228,7 @@ function refusedInsert(row, err) {
   // in an empty document, is the case that cannot.
   const above = row.after ? blockAnywhere(row.after) : null;
   if (above) {
-    if (w) { clearTimeout(w.timer); work.delete(row.id); }
+    if (w) { clearTimeout(w.timer); forgetClash(w); work.delete(row.id); }
     if (editing && editing.id === row.id) editing = null;
     unmakeLocal(row.key);
     say(why);
@@ -249,6 +261,7 @@ function refusedHere(row, why, text) {
   kept.timer = 0;
   kept.first = 0;
   say(why);
+  keepClash(row.id);
   notice(row.id);
   emit();
   status();
@@ -288,6 +301,11 @@ const ceiling = 2000;
 export function documents() {
   return state.documents || [];
 }
+
+// gone is whether a block of the open proposition has been deleted out from
+// under something that is still holding words for it, which is the one thing
+// the activity panel cannot work out from a refused row on its own.
+export const gone = (id) => !blockAnywhere(id);
 
 function current() {
   const list = documents();
@@ -445,6 +463,7 @@ export function renderDocument() {
 export function beforeRender() {
   rendering = true;
   prune();
+  unanswered();
   arrived();
   // Where the person is in the markdown they are writing. The textarea itself
   // is carried across the rebuild with its text, but taking it out of the page
@@ -464,6 +483,11 @@ export function beforeRender() {
 // for the rest of the session. The markdown somebody was writing goes the same
 // way when its document does, which is the one thing that ever takes a session
 // out of the map besides a save that went through.
+//
+// A block waiting on an answer keeps its row in the outbox when it is pruned.
+// The block is gone and the question cannot be asked on it any more, but the
+// words are still the person's: the panel says the block has been deleted and
+// let it go is what drops them.
 function prune() {
   let lost = false;
   for (const [id, w] of work) {
@@ -1752,7 +1776,7 @@ function entryOf(id) {
   if (!b) return null;
   w = {
     text: b.text, base: b.version, sent: b.text,
-    first: 0, timer: 0, flight: false, status: 'ok',
+    first: 0, timer: 0, flight: false, filed: 0, status: 'ok',
   };
   work.set(id, w);
   return w;
@@ -1787,13 +1811,23 @@ function typed(ed) {
   // A refusal stands until it is answered, and what is typed over it is kept
   // against that answer. Sending again on the next keystroke would be the same
   // text refused for the same reason every second of typing, with a line about
-  // it each time; try it again and discard are the two ways out.
-  if (w.status === 'refused') { status(); return; }
+  // it each time; try it again and discard are the two ways out. The words do
+  // follow the row that is keeping the question, on the same pause in the
+  // typing a save waits for, so that a reload never finds older ones than this
+  // tab held. Not on the keystroke: it is a write to a database, and the
+  // question is waiting on a person either way.
+  if (w.status === 'refused') {
+    clearTimeout(w.timer);
+    w.timer = setTimeout(() => { w.timer = 0; keepClash(id); }, idle);
+    status();
+    return;
+  }
   if (w.status === 'conflict') {
     // Typing over a conflict is an answer to it: this text, from the version
     // they changed. Without moving the base it would be refused for ever.
     w.base = w.version;
     w.status = 'ok';
+    forgetClash(w);
     notice(id);
   }
   arm(id, w);
@@ -1992,6 +2026,7 @@ function refused(id, err) {
   w.status = 'refused';
   w.reason = err.message;
   say(err.message);
+  keepClash(id);
   notice(id);
   emit();
   status();
@@ -2011,9 +2046,143 @@ function clash(id, theirs, version) {
   if (!openOn(id)) {
     say('Somebody changed a block you were writing in. It is waiting for your answer.');
   }
+  keepClash(id);
   notice(id);
   emit();
   status();
+}
+
+// The unanswered question, kept where a closed tab cannot take it.
+//
+// A conflict and a refusal are the same thing to the outbox: a command the
+// server would not take, with what the person wrote in it and, for a conflict,
+// what the server holds instead. That is the row a command refused during a
+// drain becomes, and filing one here makes the two one thing, so the panel
+// offers both, either answer settles both, and a reload finds both again.
+
+// clashMessage is what a conflict is called in the panel, which is what the
+// socket calls it when it refuses a queued one.
+const clashMessage = new Conflict().message;
+
+// keyOf names the question about one block, which is how a second conflict on
+// that block writes over the first instead of asking twice. A real block is
+// named by the save that was refused, in the same words the outbox folds two
+// saves of one block together under; a block this tab drew is named by the key
+// its insert goes up under, which is the only name the server has never heard.
+const keyOf = (b) => (b.id < 0 ? 'block.insert:' + b.key : target('block.set', { block: b.id }));
+
+// keepClash files the entry's question. The row is the command that was
+// refused, as it would have to be sent again, so the panel can send it and
+// this module can draw the block from it after a reload.
+function keepClash(id) {
+  const w = work.get(id);
+  const b = w && blockAnywhere(id);
+  if (!b || w.status === 'ok') return;
+  const clash = w.status === 'conflict';
+  const row = b.id < 0
+    // spent says the name this block was drawn under has been answered, which
+    // is what rename says in the entry. It has to survive with the row: a tab
+    // that reads this back after a reload would otherwise try again under a
+    // name the server has already answered, be told what that answer was
+    // rather than making anything, and leave the paragraph drawn beside the
+    // real block it was told about until the next reload.
+    ? { proposition: state.open, me: state.me, cmd: 'block.insert', idem: b.key,
+      args: insertArgs(b, w.text), base: null, base_text: null, spent: Boolean(w.rename) }
+    : { proposition: state.open, me: state.me, cmd: 'block.set', idem: newKey(),
+      args: { block: id, text: w.text, base: w.base, whole: true },
+      base: w.base, base_text: w.sent };
+  file(row, keyOf(b), clash ? clashMessage : w.reason,
+    clash ? { entity: 'block', entity_id: id, field: 'text', version: w.version, current: w.theirs } : null)
+    .then((n) => {
+      if (!n) return;
+      // Answered while the write was in the air: typing over a conflict is an
+      // answer, and so is somebody else's change arriving that says what this
+      // tab says. Either leaves a row nobody is going to be asked about.
+      if (work.get(id) === w && w.status !== 'ok') { w.filed = n; count(); } else chosen(n);
+    });
+}
+
+// forgetClash drops the row because the question has been answered here.
+function forgetClash(w) {
+  if (!w || !w.filed) return;
+  chosen(w.filed);
+  w.filed = 0;
+}
+
+// unanswered is the two ways a filed question and this tab's entry are kept
+// saying the same thing, walked on every render because that is when both have
+// just been read: the rows by count() and the blocks by the stream.
+//
+// A row nothing here is answering draws its block, which is how a conflict
+// comes back after a reload, how one refused during a drain reaches the block
+// it is about at all, and how the other tab of this browser hears about it.
+// An entry whose row has gone was answered somewhere else, in the panel or in
+// that other tab, and it is put right here so that nothing is ever asked twice
+// and no block goes on asking a question that has been settled.
+//
+// It is a deleter of an entry, which only finished, the two answers, prune and
+// a refusal for a block that is gone otherwise are: it is those same two
+// answers, arriving from somewhere other than this block.
+function unanswered() {
+  for (const row of state.refused) {
+    const b = blockFor(row);
+    if (!b) continue;
+    const w = work.get(b.id);
+    // A block this tab is already answering for, or one somebody is typing in
+    // with nothing outstanding: the entry is what this tab is going by, and the
+    // row is the same question written down. The entry of a block being typed
+    // in stops the question being drawn over the caret; it is drawn the moment
+    // that entry is finished with.
+    if (w) { if (w.status !== 'ok') w.filed = row.n; continue; }
+    work.set(b.id, entryFrom(b, row));
+    notice(b.id);
+  }
+  for (const [id, w] of work) {
+    if (w.status === 'ok' || !w.filed) continue;
+    if (state.refused.some((r) => r.n === w.filed)) continue;
+    if (id < 0) {
+      // A block this tab drew, whose insert was let go, has already left the
+      // page: letGo unmakes it, prune takes the entry, and this never sees it.
+      // So what is left here is the panel's try it again, which puts the same
+      // insert back in the queue. The block stands and stops asking.
+      w.filed = 0;
+      w.status = 'ok';
+      delete w.reason;
+      notice(id);
+      arm(id, w);
+      continue;
+    }
+    takeTheirs(id);
+  }
+}
+
+// blockFor is the block a refused row is about: the one a save names, or the
+// one this tab drew for an insert, which the key on the command names.
+function blockFor(row) {
+  if (row.proposition !== state.open) return null;
+  if (row.cmd === 'block.set') return blockAnywhere(row.args.block);
+  if (row.cmd === 'block.insert') return localOf(row.idem);
+  return null;
+}
+
+// entryFrom is the entry a filed row is read back into, in the state it was in
+// when it was filed. base and sent are what the command was measured from, so
+// that keep mine sends the same change it would have sent an hour ago, and the
+// server merges it into whatever the block has become since.
+function entryFrom(b, row) {
+  const w = {
+    text: row.args.text ?? b.text,
+    base: row.args.base ?? b.version,
+    sent: row.cmd === 'block.insert' ? row.args.text : (row.base_text ?? b.text),
+    first: 0, timer: 0, flight: false, filed: row.n,
+    status: row.detail ? 'conflict' : 'refused', reason: row.refused,
+  };
+  if (row.spent) w.rename = true;
+  if (row.detail) {
+    w.theirs = row.detail.current;
+    w.version = row.detail.version;
+  }
+  return w;
 }
 
 // notice keeps the line above the open editor in step with the entry, so that
@@ -2047,6 +2216,10 @@ function leave(id) {
   w.timer = 0;
   w.first = 0;
   if (w.status === 'ok' && w.text !== w.sent) save(id);
+  // The timer just cleared may have been the one carrying what was typed over
+  // a refusal into the row that is keeping it. Nothing is sent for a block
+  // waiting on an answer; this is a write to this device and not to the server.
+  else if (w.status !== 'ok') keepClash(id);
   finished(id);
   status();
 }
@@ -2071,6 +2244,7 @@ function arrived() {
       delete w.theirs;
       delete w.version;
       delete w.reason;
+      forgetClash(w);
       notice(id);
       finished(id);
       continue;
@@ -2145,12 +2319,19 @@ addEventListener('pagehide', () => {
 // choice is the notice above a block the server would not take: what happened,
 // and the two answers. Both kinds come to the same pair, send what was written
 // or let it go, so both are the same two buttons under different names.
+// What they wrote is read off the block rather than out of the entry, because
+// a conflict this tab has been holding since before a reload may be hours old
+// and the block may have moved on twice since. Take theirs gives what the block
+// holds now, so that is what this has to be offering. The two are the same text
+// on a conflict that has just happened: the refusal carried what the server
+// held and drawing it put it on the row.
 function choice(id) {
   const w = work.get(id);
+  const theirs = blockAnywhere(id)?.text ?? w.theirs;
   const said = w.status === 'refused'
     ? [el('span', { text: 'That was not saved: ' + w.reason })]
     : [el('span', { text: 'Somebody changed this block while you were writing. It now reads: ' }),
-      el('span', { class: 'theirs', text: w.theirs || '(nothing)' })];
+      el('span', { class: 'theirs', text: theirs || '(nothing)' })];
   return el('div', { class: 'notice bad' }, said,
     el('span', { class: 'choices' },
       el('button', {
@@ -2169,36 +2350,9 @@ function resume(id, give) {
   const w = work.get(id);
   const b = blockAnywhere(id);
   if (!w || !b) return;
+  forgetClash(w);
   if (give) {
-    // What they are given is what the block says now, not what it said when the
-    // clash happened: it may have moved again since, and handing back the older
-    // text would write over that third change without anybody being asked.
-    clearTimeout(w.timer);
-    work.delete(id);
-    // A block the server would not make has no text to fall back to, because
-    // there is no row anywhere but here. Letting it go takes it off the page,
-    // and the render that follows takes its history with it.
-    if (id < 0) {
-      if (openOn(id)) editing = null;
-      unmakeLocal(b.key);
-      emit();
-      status();
-      return;
-    }
-    // Take theirs gives this person's text up, and how they got to it with it:
-    // an undo back into it would put it over them again without their being
-    // asked a second time. Keep mine, below, keeps the history, because the
-    // text it keeps is the text every step in it was taken against.
-    undo.reset(id, b.text);
-    if (openOn(id)) {
-      const fresh = entryOf(id);
-      editing.area.value = fresh.text;
-      editing.area.setSelectionRange(fresh.text.length, fresh.text.length);
-      editing.fit();
-      notice(id);
-    }
-    emit();
-    status();
+    takeTheirs(id);
     return;
   }
   w.base = w.status === 'conflict' ? w.version : b.version;
@@ -2220,6 +2374,48 @@ function resume(id, give) {
   save(id);
   status();
 }
+
+// takeTheirs is the block left standing as the document holds it: the entry
+// goes, and an editor open on it is refilled from the block, so nothing
+// anybody is looking at still shows words the document does not have.
+//
+// What they are given is what the block says now, not what it said when the
+// clash happened: it may have moved again since, and handing back the older
+// text would write over that third change without anybody being asked.
+function takeTheirs(id) {
+  const w = work.get(id);
+  const b = blockAnywhere(id);
+  if (!w || !b) return;
+  clearTimeout(w.timer);
+  work.delete(id);
+  // A block the server would not make has no text to fall back to, because
+  // there is no row anywhere but here. Letting it go takes it off the page,
+  // and the render that follows takes its history with it.
+  if (id < 0) {
+    if (openOn(id)) editing = null;
+    unmakeLocal(b.key);
+    emit();
+    status();
+    return;
+  }
+  // Take theirs gives this person's text up, and how they got to it with it:
+  // an undo back into it would put it over them again without their being
+  // asked a second time. Keep mine, in resume above, keeps the history,
+  // because the text it keeps is the text every step in it was taken against.
+  // A conflict rebuilt after a reload has no history at all, and this gives it
+  // one that starts at what the block now reads.
+  undo.reset(id, b.text);
+  if (openOn(id)) {
+    const fresh = entryOf(id);
+    editing.area.value = fresh.text;
+    editing.area.setSelectionRange(fresh.text.length, fresh.text.length);
+    editing.fit();
+    notice(id);
+  }
+  emit();
+  status();
+}
+
 // History.
 
 async function openHistory(doc) {
