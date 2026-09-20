@@ -13,6 +13,7 @@ import { send, live, where, onCarets, newKey, Conflict, Offline } from './net.js
 import { replace } from './api.js';
 import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
+import * as undo from './undo.js';
 
 // The block this tab has open: its node and its textarea, and nothing else. The
 // editor is a way of typing into an entry below, not a place anything is kept,
@@ -236,6 +237,10 @@ export function renderDocument() {
     // like every other block. This is where a deleted block and a document
     // switched out from under the page both drop what was drawn in them.
     for (const id of seen.keys()) if (!ids.has(id)) seen.delete(id);
+    // And what Ctrl+Z would take back in each of them, by the same keys and for
+    // the same reason: a block that is gone and a document switched out from
+    // under the page will never have an editor drawn on them again.
+    undo.keep(ids);
     if (!(doc.blocks || []).length && !canEdit()) {
       rendered.append(el('p', { class: 'empty', text: 'Nothing in this document yet.' }));
     }
@@ -971,8 +976,33 @@ function editor(id, text) {
   // The listeners read the block off this rather than closing over the argument
   // above, because a provisional editor becomes the editor of a real block the
   // moment its insert is acked and all of them have to follow it there.
-  const ed = { id, node, area, mirror, fit };
-  area.addEventListener('input', () => { typed(ed.id); fit(); });
+  const ed = { id, node, area, mirror, fit, was: null };
+  // What Ctrl+Z in this block will take back. It is made the first time a block
+  // is opened and kept while the document is, so leaving a paragraph and coming
+  // back finds what was written in it still there to take back; a block whose
+  // text moved while the editor was shut records where it has got to as a step
+  // of its own. The caret is put at the end, which is where a click with
+  // nowhere named lands.
+  if (id) {
+    const open = { text, start: text.length, end: text.length };
+    undo.of(id, open).record(open);
+  }
+  area.addEventListener('input', (e) => { stepped(ed, e); typed(ed.id); fit(); });
+  area.addEventListener('beforeinput', (e) => {
+    // The Edit menu, a phone shaken, three fingers swiped: the same two things
+    // the keys below do, arriving as an input type rather than as a key.
+    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
+      e.preventDefault();
+      stepBack(ed, e.inputType === 'historyRedo');
+      return;
+    }
+    // Where the selection was before this change, which is how a run of typing
+    // ends when somebody clicks somewhere else in the block and writes there.
+    ed.was = { start: area.selectionStart, end: area.selectionEnd };
+  });
+  // Half a composed word is not a place to undo back to, so nothing is recorded
+  // while an input method is in the middle of one. The finished word is.
+  area.addEventListener('compositionend', () => stepped(ed, null));
   area.addEventListener('keydown', (e) => key(e, ed));
   area.addEventListener('paste', (e) => pasted(e, ed));
   // A blur raised by the rebuild is not somebody leaving the block. The node is
@@ -1087,6 +1117,65 @@ document.addEventListener('selectionchange', () => {
   if (editing && document.activeElement === editing.area) moveCaret();
 });
 
+// snap is the editor as it stands: the text and where the person is standing
+// in it, which is the whole of one undo step.
+const snap = (area) => ({ text: area.value, start: area.selectionStart, end: area.selectionEnd });
+
+// stepped records what one input did. The kinds are the input's own, so that
+// writing and deleting are two runs rather than one, and anything that is
+// neither, a drop or a paste this editor did not take over, stands alone rather
+// than joining the typing beside it.
+function stepped(ed, e) {
+  if (!ed.id || (e && e.isComposing)) return;
+  const kind = !e ? 'step'
+    : e.inputType === 'insertText' || e.inputType === 'insertLineBreak' ? 'type'
+      : String(e.inputType).startsWith('delete') ? 'cut' : 'step';
+  const now = snap(ed.area);
+  undo.of(ed.id, now).record(now, kind, Date.now(), ed.was);
+}
+
+// wrote is a write this script made to the textarea rather than a key somebody
+// pressed: Enter continuing a list, the head a split keeps, a paste of several
+// paragraphs, words put back after a refusal. The state before it and the state
+// after it are each a step of their own, so one Ctrl+Z takes back exactly that
+// write and nothing on either side of it.
+//
+// What it never does is unmake the command that went with the write. Undo in
+// the block that kept the head of a split puts that block's earlier text back
+// and leaves the block below where it is, because that one is the server's to
+// make and unmake and its insert is already in the air; a join is the same the
+// other way round, and the history of the block that was deleted went with it.
+function wrote(id, was, now) {
+  if (!id) return;
+  const h = undo.of(id, was);
+  h.record(was);
+  h.record(now);
+}
+
+// stepBack is Ctrl+Z and its two redos. It puts a snapshot back into the
+// textarea and then goes on through the ordinary path for typed text, so the
+// entry holds it and the save that follows is a save like any other. Nothing
+// here talks to the server.
+//
+// A block waiting on a conflict is left where it is. Its snapshots were taken
+// against text that does not hold the other person's words, and typing over a
+// conflict is what answers it, so an undo there would answer it with text from
+// before they wrote anything and put that over them in silence. A refusal is
+// not the same: what is typed there is kept against the answer and sends
+// nothing, so an undo is as good as any other keystroke.
+function stepBack(ed, forward) {
+  if (!ed.id) return;
+  const w = work.get(ed.id);
+  if (w && w.status === 'conflict') return;
+  const h = undo.of(ed.id, snap(ed.area));
+  const step = forward ? h.redo() : h.undo();
+  if (!step) return;
+  ed.area.value = step.text;
+  ed.area.setSelectionRange(step.start, step.end);
+  typed(ed.id);
+  ed.fit();
+}
+
 // The keys that do something to the block rather than to the text in it. Each
 // one falls through to what a textarea does on its own the moment its
 // conditions are not met, so nothing here takes a key away from somebody
@@ -1098,6 +1187,17 @@ function key(e, ed) {
   // A provisional editor has no block to name, and a key pressed mid
   // composition belongs to the input method.
   if (!ed.id || e.isComposing) return;
+  // Undo and redo, taken whether or not this block has anything to give back.
+  // The moment anything wrote to this textarea from script the browser's own
+  // history went with it, so there is nothing underneath to fall through to and
+  // the key is answered here or not at all. A provisional editor is the one
+  // that falls through, above: nothing has written to it but its own making,
+  // and what the browser kept there is better than nothing.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[zy]$/i.test(e.key)) {
+    e.preventDefault();
+    stepBack(ed, e.shiftKey || e.key.toLowerCase() === 'y');
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey) { pressedEnter(e, ed); return; }
   if (e.key === 'Backspace') { pressedBackspace(e, ed); return; }
   if (e.key === 'ArrowUp' || e.key === 'ArrowDown') pressedArrow(e, ed);
@@ -1122,8 +1222,10 @@ function pressedEnter(e, ed) {
   const what = enter(ed.area.value, ed.area.selectionStart, ed.area.selectionEnd);
   if (what.kind === 'list') {
     e.preventDefault();
+    const was = snap(ed.area);
     ed.area.value = what.text;
     ed.area.setSelectionRange(what.caret, what.caret);
+    wrote(ed.id, was, snap(ed.area));
     typed(ed.id);
     ed.fit();
     return;
@@ -1143,7 +1245,9 @@ function pressedEnter(e, ed) {
 function split(ed, before, after) {
   const id = ed.id;
   const doc = current();
+  const whole = snap(ed.area);
   ed.area.value = before;
+  wrote(id, whole, snap(ed.area));
   ed.fit();
   typed(id);
   // The half that stays goes up the ordinary way. leave sends what the entry
@@ -1197,6 +1301,11 @@ function inserted(ev) {
   pending = null;
   ed.id = id;
   ed.node.dataset.b = id;
+  // The provisional editor becomes this block's, so this is where the block's
+  // undo history starts: what it holds now is what the block was made holding
+  // plus whatever was typed inside the round trip, and there is nothing behind
+  // that to take back.
+  undo.reset(id, ed.area.value);
   if (mine) {
     where('block:' + id);
     notice(id);
@@ -1249,8 +1358,10 @@ function putBack(id, text) {
   const join = w.text.length;
   w.text = w.text + text;
   if (openOn(id)) {
+    const was = snap(editing.area);
     editing.area.value = w.text;
     editing.area.setSelectionRange(join, join);
+    wrote(id, was, snap(editing.area));
     editing.fit();
   }
   arm(id, w);
@@ -1334,9 +1445,11 @@ function pasted(e, ed) {
   if (parts.length < 2) return;
   e.preventDefault();
   const { area } = ed;
+  const was = snap(area);
   const rest = parts.slice(1).join('\n\n') + area.value.slice(area.selectionEnd);
   area.value = area.value.slice(0, area.selectionStart) + parts[0];
   area.setSelectionRange(area.value.length, area.value.length);
+  wrote(ed.id, was, snap(area));
   typed(ed.id);
   ed.fit();
   const id = ed.id;
@@ -1521,6 +1634,14 @@ function absorb(id, sent, ev) {
     return false;
   }
   w.text = r.text;
+  // Their words are in this text and in none of the steps taken before it, so
+  // undoing to one of those would take their words back out and save that. The
+  // history begins again from the merged text.
+  //
+  // ponytail: the ceiling is that Ctrl+Z does not reach back past somebody
+  // else's edit to the same block. The upgrade is to carry every step through
+  // the same rebase the textarea's own text goes through here.
+  undo.reset(id, r.text, r.caret);
   if (openOn(id)) {
     editing.area.value = r.text;
     editing.area.setSelectionRange(r.caret, r.caret);
@@ -1653,12 +1774,19 @@ function arrived() {
     w.base = b.version;
     w.sent = b.text;
     w.text = b.text;
+    let caret = b.text.length;
     if (openOn(id)) {
-      const caret = Math.min(editing.area.selectionStart, b.text.length);
+      caret = Math.min(editing.area.selectionStart, b.text.length);
       editing.area.value = b.text;
       editing.area.setSelectionRange(caret, caret);
       editing.fit();
     }
+    // Somebody else's text arriving whole, which is the merge above by another
+    // road: every step in the history predates it, so the history starts again
+    // from what the block now says. Taking a run of saves back from the
+    // activity panel arrives here too, in a tab that has the block open and
+    // nothing unsaved in it.
+    undo.reset(id, b.text, caret);
   }
 }
 
@@ -1729,6 +1857,11 @@ function resume(id, give) {
     // text would write over that third change without anybody being asked.
     clearTimeout(w.timer);
     work.delete(id);
+    // Take theirs gives this person's text up, and how they got to it with it:
+    // an undo back into it would put it over them again without their being
+    // asked a second time. Keep mine, below, keeps the history, because the
+    // text it keeps is the text every step in it was taken against.
+    undo.reset(id, b.text);
     if (openOn(id)) {
       const fresh = entryOf(id);
       editing.area.value = fresh.text;

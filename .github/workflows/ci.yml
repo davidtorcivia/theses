@@ -26,6 +26,7 @@ jobs:
           for f in $(find web/static -name '*.js'); do node --input-type=module --check < "$f" || { echo "syntax error in $f"; exit 1; }; done
           node web/blocktext_test.mjs
           node web/dom_test.mjs
+          node web/undo_test.mjs
       - run: go test ./...
       # The race detector cannot run on the machine these branches are written
       # on, so the hub and the command bus, which are where the goroutines are,
