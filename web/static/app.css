@@ -82,7 +82,7 @@ html.pressing,html.pressing *{-webkit-user-select:none;user-select:none;-webkit-
 .newcard textarea{display:block;width:100%}
 #docwrap{position:relative}
 #docwrap.source #doc{display:none}
-#docwrap:not(.source) #docsrc{display:none}
+#docwrap:not(.source) #docsource{display:none}
 #docsrc{width:100%;min-height:60vh;display:block}
 .blk{position:relative;outline:0;cursor:text}
 .blk>*:first-child{margin-top:0}
