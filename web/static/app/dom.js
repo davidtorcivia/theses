@@ -32,6 +32,44 @@ export function clear(node) {
   return node;
 }
 
+// children makes a node's children be exactly the list given, in that order,
+// touching as little as possible: one already where it belongs is left where it
+// is rather than taken out and put back. That matters because a card or a rail
+// row is carried by the pointer, and a node removed from the page, even for the
+// instant it takes to append it again, releases the pointer capture the finger
+// holding it has and on some phones ends the touch altogether.
+//
+// keep names nodes this list no longer wants that another list in the same
+// render does: a card that moved to another column is put in its new column
+// before its old one is swept, so it never leaves the page.
+//
+// ponytail: a node moved earlier in a list moves the nodes it passed, so
+// reversing a list of n costs n-1 moves rather than one. Everything that
+// actually happens to a board, a card or a row arriving, leaving, going up one
+// place or crossing to another column, is one move. The upgrade, if a list ever
+// gets shuffled wholesale, is a longest increasing subsequence.
+export function children(parent, wanted, keep) {
+  // Nodes only, so the falsy an absent one is written as, the way el's children
+  // are, is simply dropped.
+  const list = wanted.flat(3).filter(Boolean);
+  const want = new Set(list);
+  const drop = (at) => {
+    const next = at.nextSibling;
+    if (!keep || !keep.has(at)) parent.removeChild(at);
+    return next;
+  };
+  let at = parent.firstChild;
+  for (const node of list) {
+    // Anything in the way that nothing wants goes now, so that a node with
+    // one gone from in front of it is still found in its place below.
+    while (at && at !== node && !want.has(at)) at = drop(at);
+    if (at === node) { at = at.nextSibling; continue; }
+    parent.insertBefore(node, at);
+  }
+  while (at) at = drop(at);
+  return parent;
+}
+
 // initials is the colored square a person appears as. The color is a class
 // because the CSP has no unsafe-inline in style-src.
 export function initials(person, extra = '') {

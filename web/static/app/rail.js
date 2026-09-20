@@ -1,8 +1,8 @@
 // The rail: every proposition grouped by where it is, draggable into order,
 // with the menu each one carries and the form at the foot that starts a new one.
 
-import { $, $$, el, clear, num, ask, say, editable } from './dom.js';
-import { state, emit, hold } from './state.js';
+import { $, $$, el, children, num, ask, say, editable } from './dom.js';
+import { state, emit, hold, proposition } from './state.js';
 import { send } from './net.js';
 import { activate } from './keys.js';
 import { movable, carrying } from './drag.js';
@@ -25,8 +25,25 @@ function groups() {
   ].filter((g) => g.items.length);
 }
 
+// drawn is the node each proposition was last rendered as, with the key it was
+// built from, for the same reason the board keeps its cards: a row is carried
+// by the pointer, and every applied event on this workspace rebuilt the rail.
+const drawn = new Map();
+
 function entry(p) {
   const released = state.statuses[state.statuses.length - 1] || 'released';
+  const key = JSON.stringify([p.number, p.title, p.status, p.episode, p.archived_at,
+    p.id === state.open, state.can.edit, state.can.delete, released]);
+  const was = drawn.get(p.id);
+  if (was && was.key === key) return was.node;
+
+  // A kept node holds the closures it was built with, and the row behind it is
+  // replaced by every event that touches the proposition. So the listeners ask
+  // the state for the row when they run rather than reading the one they closed
+  // over: the statement and the blurb a rename sends back are not in the key
+  // above, and a node built before somebody edited the statement in the work
+  // area would put the old one back.
+  const id = p.id;
   let tail = p.status;
   if (p.archived_at) tail = 'archived';
   else if (p.status === released && p.episode) tail = 'ep ' + p.episode;
@@ -53,7 +70,7 @@ function entry(p) {
       if (act === 'delete' && !state.can.delete) continue;
       menu.append(el('button', {
         type: 'button', text: label,
-        onclick: (e) => { e.stopPropagation(); menu.hidden = true; act === 'rename' ? rename(p, title) : run(act, p); },
+        onclick: (e) => { e.stopPropagation(); menu.hidden = true; act === 'rename' ? rename(id, title) : run(act, id); },
       }));
     }
     li.append(more, menu);
@@ -61,9 +78,9 @@ function entry(p) {
 
   li.addEventListener('click', (e) => {
     if (carrying() || e.target.closest('.menu') || e.target.closest('.more') || title.isContentEditable) return;
-    go(p.id);
+    go(id);
   });
-  activate(li, () => { if (!title.isContentEditable) go(p.id); });
+  activate(li, () => { if (!title.isContentEditable) go(id); });
   // The same pointer drag the board uses, for the same reason: a finger fires
   // no drag event, so the rail could not be ordered on a phone either. An
   // archived proposition has no place in the order and so is not carried.
@@ -73,29 +90,47 @@ function entry(p) {
       drop: () => {
         const previous = li.previousElementSibling;
         send('proposition.move', {
-          proposition: p.id,
+          proposition: id,
           after: previous ? Number(previous.dataset.n) : 0,
         }).catch((err) => { say(err.message); emit(); });
       },
     });
   }
+  drawn.set(id, { key, node: li });
   return li;
 }
 
-function rename(p, title) {
+function rename(id, title) {
+  const p = proposition(id);
+  if (!p) return;
   hold(true);
   editable(title, p.title, (value) => {
     hold(false);
-    if (value === null || value === p.title || !value) { emit(); return; }
-    send('proposition.edit', { proposition: p.id, title: value, statement: p.statement, blurb: p.blurb })
+    // editable wrote into the node to open it: it put the title's own text
+    // there, which took the status tail out of the span beside it, and Escape
+    // leaves whatever was typed sitting in it. The render below used to draw
+    // the row again out of the state, because the rail was built from nothing
+    // every time; now a row whose key has not moved is handed back exactly as
+    // the editor left it. So the row is dropped from the cache whichever way
+    // the edit ended, a refusal included: one refused in the same frame as its
+    // own guess is a single render with the key where it started. Building the
+    // row again cannot take one out from under a finger, because rendering was
+    // held for as long as the editor was open and the hand that was typing is
+    // this one.
+    drawn.delete(id);
+    const now = proposition(id);
+    if (value === null || !value || !now || value === now.title) { emit(); return; }
+    send('proposition.edit', { proposition: id, title: value, statement: now.statement, blurb: now.blurb })
       .catch((err) => { say(err.message); emit(); });
   });
 }
 
-function run(act, p) {
-  if (act === 'settings') { location.href = `/p/${p.id}/settings`; return; }
+function run(act, id) {
+  if (act === 'settings') { location.href = `/p/${id}/settings`; return; }
+  const p = proposition(id);
+  if (!p) return;
   if (act === 'archive') {
-    send(p.archived_at ? 'proposition.restore' : 'proposition.archive', { proposition: p.id })
+    send(p.archived_at ? 'proposition.restore' : 'proposition.archive', { proposition: id })
       .catch((err) => say(err.message));
     return;
   }
@@ -103,8 +138,8 @@ function run(act, p) {
     'The board, its cards and everything filed under this proposition go with it. The record of the deletion stays in activity.',
     'Delete permanently').then((yes) => {
     if (!yes) return;
-    send('proposition.delete', { proposition: p.id })
-      .then(() => { if (state.open === p.id) location.href = '/'; })
+    send('proposition.delete', { proposition: id })
+      .then(() => { if (state.open === id) location.href = '/'; })
       .catch((err) => say(err.message));
   });
 }
@@ -114,14 +149,52 @@ export function go(id) {
   if (id !== state.open) location.href = '/p/' + id;
 }
 
+// The groups and the lists inside them are made once and kept, so that a row
+// nothing happened to is never taken out of the page. Only the heading, which
+// carries a count, is drawn again.
+const parts = new Map();
+
+function groupNode(id, name, rows, keep) {
+  let part = parts.get(id);
+  if (!part) {
+    // The lists that hold an order. The archived one below is not one of them,
+    // so nothing can be carried into it.
+    const list = el('ul', { class: 'order' });
+    part = { list, heading: el('h4'), node: null };
+    part.node = el('div', { class: 'group', id }, part.heading, list);
+    parts.set(id, part);
+  }
+  part.heading.textContent = name + ' ';
+  part.heading.append(el('i', { text: String(rows.length) }));
+  children(part.list, rows, keep);
+  return part.node;
+}
+
+function archivedNode(rows, keep) {
+  let part = parts.get('archived');
+  if (!part) {
+    const list = el('ul', { hidden: true });
+    const toggle = el('button', {
+      id: 'archtoggle', class: 'h4', type: 'button', text: 'Archived ',
+      onclick: () => { list.hidden = !list.hidden; toggle.classList.toggle('open', !list.hidden); },
+    }, el('i'));
+    part = { list, toggle, node: el('div', { class: 'group', id: 'archived' }, toggle, list) };
+    parts.set('archived', part);
+  }
+  part.toggle.lastChild.textContent = String(rows.length);
+  children(part.list, rows, keep);
+  return part.node;
+}
+
 export function renderRail() {
-  // The rail is built again from nothing on every render, so a row holding the
-  // keyboard goes with it. Its number is taken now and the focus put back at
-  // the end, the same way the work area keeps the card somebody had reached.
+  // A row that was rebuilt takes the keyboard with it. Its number is taken now
+  // and the focus put back at the end, the same way the work area keeps the
+  // card somebody had reached. A row that was kept keeps its own focus and this
+  // puts it where it already is.
   const focused = document.activeElement;
   const had = focused && focused.classList && focused.classList.contains('ws')
     ? focused.dataset.n : '';
-  const rail = clear($('#rail'));
+  const rail = $('#rail');
 
   const filter = el('div', { id: 'tagfilter' });
   for (const status of state.statuses) {
@@ -131,41 +204,45 @@ export function renderRail() {
       onclick: () => { state.railFilter = state.railFilter === status ? null : status; emit(); },
     }));
   }
-  rail.append(el('div', { class: 'railtop' }, filter));
 
-  for (const group of groups()) {
-    const items = group.items.filter((p) => !state.railFilter || p.status === state.railFilter);
-    if (!items.length) continue;
-    // The lists that hold an order. The archived one below is not one of them,
-    // so nothing can be carried into it.
-    const list = el('ul', { class: 'order' });
-    for (const p of items) list.append(entry(p));
-    rail.append(el('div', { class: 'group', id: group.id },
-      el('h4', { text: group.name + ' ' }, el('i', { text: String(items.length) })),
-      list));
-  }
+  // Every row is built before any list is swept, for the reason the board has:
+  // a proposition whose status moved it to another group is still wanted, and
+  // taking it out of the group it was in first would drop it out of the page.
+  const shown = groups()
+    .map((group) => ({
+      ...group,
+      rows: group.items
+        .filter((p) => !state.railFilter || p.status === state.railFilter)
+        .map(entry),
+    }))
+    .filter((group) => group.rows.length);
+  // The same entry as any other, so an archived proposition still opens and
+  // still carries the two things its menu has left, restore and delete.
+  const archived = state.props.filter((p) => p.archived_at).map(entry);
+  const keep = new Set([...shown.flatMap((group) => group.rows), ...archived]);
 
-  const archived = state.props.filter((p) => p.archived_at);
-  if (archived.length) {
-    const list = el('ul', { hidden: true });
-    // The same entry as any other, so an archived proposition still opens and
-    // still carries the two things its menu has left, restore and delete.
-    for (const p of archived) list.append(entry(p));
-    const toggle = el('button', {
-      id: 'archtoggle', class: 'h4', type: 'button', text: 'Archived ',
-      onclick: () => { list.hidden = !list.hidden; toggle.classList.toggle('open', !list.hidden); },
-    }, el('i', { text: String(archived.length) }));
-    rail.append(el('div', { class: 'group', id: 'archived' }, toggle, list));
-  }
+  children(rail, [
+    el('div', { class: 'railtop' }, filter),
+    shown.map((group) => groupNode(group.id, group.name, group.rows, keep)),
+    archived.length && archivedNode(archived, keep),
+    state.can.edit && foot(),
+  ]);
 
-  if (state.can.edit) rail.append(foot());
+  const live = new Set(state.props.map((p) => p.id));
+  for (const id of drawn.keys()) if (!live.has(id)) drawn.delete(id);
+
   if (had) {
     const row = $(`.ws[data-n="${had}"]`, rail);
     if (row) row.focus();
   }
 }
 
+// The form at the foot is made once: it holds what somebody has typed into it
+// and whether it is open, and a render must not take either away.
+let footer = null;
+
 function foot() {
+  if (footer) return footer;
   const input = el('input', { placeholder: 'Title, then Enter', spellcheck: 'false' });
   const form = el('div', { id: 'newform', hidden: true }, input);
   const button = el('button', {
@@ -190,7 +267,7 @@ function foot() {
       })
       .catch((err) => say(err.message));
   });
-  return el('div', { class: 'railfoot' }, button, form);
+  return footer = el('div', { class: 'railfoot' }, button, form);
 }
 
 // A click anywhere else closes whichever rail menu is open.
