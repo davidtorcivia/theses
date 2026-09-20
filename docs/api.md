@@ -459,6 +459,28 @@ POST /api/v1/documents/4/blocks
 {"after": 31, "text": "Tape from the hearing, then the number."}
 ```
 
+`after_key` is the other way of saying where the block goes: the
+`Idempotency-Key` an earlier call was sent under, meaning after the block that
+call made. It is for a caller that has not read the answer to that call back
+yet, which is what the browser is when it draws a block with no connection and
+queues the two commands one behind the other. A call that made several blocks,
+which is text with a blank line in it, is named by its one key and the new
+block goes under the last of them.
+
+```
+POST /api/v1/documents/4/blocks
+Idempotency-Key: 6b1dc7e0-1f2a-4c3b-9d4e-5a6b7c8d9e0f
+{"after_key": "3f0a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8", "text": "And the number."}
+```
+
+A key nobody spent, one spent by somebody else, and one whose call made no
+block are all `404`, which is the answer an `after` that is not there gives
+too. A key is forgotten after 24 hours, as above, and past that the call that
+made the block is applied again rather than replayed, which records the key
+afresh, so a sequence sent again a day later still lands in order. Sending
+`after` and `after_key` together is `422`. The MCP tools take neither: neither
+of them is told where to put the paragraph.
+
 `whole` is optional and false by default, and means here what it means on
 `PUT /api/v1/blocks/{id}` below: the text is stored exactly as it was sent,
 edges and blank lines included, in exactly one block whatever it holds. It is

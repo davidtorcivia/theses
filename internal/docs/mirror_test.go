@@ -101,18 +101,18 @@ func TestMirrorRoundTripsAFencedBlock(t *testing.T) {
 
 	blocks := f.blocks(t)
 	code := "```go\nif tide > 0 {\n\n\treturn true\n}\n```"
-	fenced, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[len(blocks)-1].ID, code, false)
+	fenced, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[len(blocks)-1].ID, "", code, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A fence that is never closed is what a save made while somebody is still
 	// typing leaves in a block, and the blocks under it keep their ids anyway.
 	typing := "~~~\nstill typing"
-	open, err := f.InsertBlock(ctx, f.who["editor"], f.doc, fenced.EntityID, typing, true)
+	open, err := f.InsertBlock(ctx, f.who["editor"], f.doc, fenced.EntityID, "", typing, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tail, err := f.InsertBlock(ctx, f.who["editor"], f.doc, open.EntityID, "After.", false)
+	tail, err := f.InsertBlock(ctx, f.who["editor"], f.doc, open.EntityID, "", "After.", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestImportKeepsABlockTheStaleFileIsMissing(t *testing.T) {
 	stale := read(t, path)
 
 	// Meanwhile a block is added in the browser.
-	inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[2].ID, "Added in the browser.", false)
+	inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[2].ID, "", "Added in the browser.", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1029,7 +1029,7 @@ func TestMirrorKeepsTwoLongNamesApart(t *testing.T) {
 			t.Fatal(err)
 		}
 		ids = append(ids, e.EntityID)
-		if _, err := f.InsertBlock(ctx, f.who["editor"], e.EntityID, 0, "In "+name+".", false); err != nil {
+		if _, err := f.InsertBlock(ctx, f.who["editor"], e.EntityID, 0, "", "In "+name+".", false); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.Mirror(ctx, e.EntityID, nil, false); err != nil {
@@ -1515,7 +1515,7 @@ func TestImportLeavesABlockThatReadsAsItIsStored(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.stored, true); err != nil {
+			if _, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, "", tc.stored, true); err != nil {
 				t.Fatal(err)
 			}
 			if err := f.Mirror(ctx, f.doc, nil, true); err != nil {

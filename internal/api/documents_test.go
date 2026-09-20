@@ -257,7 +257,7 @@ func TestWriteDocumentSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.docs.InsertBlock(ctx, who, document.EntityID, 0, "The sea is a battery.", false); err != nil {
+	if _, err := h.docs.InsertBlock(ctx, who, document.EntityID, 0, "", "The sea is a battery.", false); err != nil {
 		t.Fatal(err)
 	}
 	blocks, err := docs.Blocks(ctx, h.db, document.EntityID)

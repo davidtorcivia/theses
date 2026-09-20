@@ -34,6 +34,10 @@ type documentBody struct {
 	After       int64  `json:"after"`
 	BaseVersion int64  `json:"base_version"`
 	Reason      string `json:"reason"`
+	// AfterKey names the block an insert goes after by the Idempotency-Key the
+	// call that made it was sent under, for a caller that has not read back the
+	// id yet.
+	AfterKey string `json:"after_key"`
 	// Whole asks for the text to be stored exactly as it was sent, which is
 	// what an editor saving while somebody types needs and nothing else does.
 	Whole bool `json:"whole"`
@@ -156,7 +160,7 @@ func (a *API) insertBlock(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	a.applied(w, r, p, func() (core.Event, error) {
-		return a.Docs.InsertBlock(r.Context(), actorOf(p), id, body.After, body.Text, body.Whole)
+		return a.Docs.InsertBlock(r.Context(), actorOf(p), id, body.After, body.AfterKey, body.Text, body.Whole)
 	})
 }
 

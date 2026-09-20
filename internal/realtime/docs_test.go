@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/docs"
@@ -99,5 +100,48 @@ func TestSocketRefusesADocumentCommandFromANonMember(t *testing.T) {
 	}
 	if after.Text == "Mine now." {
 		t.Fatal("a non-member wrote a block")
+	}
+}
+
+// Two blocks made with no connection are two frames in an outbox, and the
+// second names the first by the key the first went up under, because the tab
+// drew that block before the server had given it an id.
+func TestSocketInsertsAfterAKey(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("ada")
+	read(t, ws, "presence")
+
+	send(t, ws, command{ID: 1, Cmd: "document.create", Args: args{
+		Proposition: r.prop, Title: "Research"}})
+	document := read(t, ws, "ack").Event.EntityID
+
+	send(t, ws, command{ID: 2, Cmd: "block.insert", Key: "first",
+		Args: args{Document: document, Text: "One.", Whole: true}})
+	read(t, ws, "ack")
+	send(t, ws, command{ID: 3, Cmd: "block.insert", Key: "second",
+		Args: args{Document: document, AfterKey: "first", Text: "Two.", Whole: true}})
+	read(t, ws, "ack")
+
+	blocks, err := docs.Blocks(context.Background(), r.db, document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, b := range blocks {
+		texts = append(texts, b.Text)
+	}
+	// Both went in at the head, which is what an absent after means, so the
+	// template block the document started from is under them. What this is
+	// about is that the second landed under the first rather than above it.
+	if got := strings.Join(texts, "|"); got != "One.|Two.|# Research" {
+		t.Fatalf("the document reads %q", got)
+	}
+
+	// A key this person never spent names no block, and the insert is refused
+	// rather than landing at the head of the document.
+	send(t, ws, command{ID: 4, Cmd: "block.insert", Key: "third",
+		Args: args{Document: document, AfterKey: "nobodys", Text: "Three.", Whole: true}})
+	if refused := read(t, ws, "error"); refused.Error != "that is no longer there" {
+		t.Fatalf("the answer is %+v", refused)
 	}
 }
