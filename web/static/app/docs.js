@@ -701,11 +701,25 @@ async function writeSource(doc) {
   // The rest of it went in. What is left is theirs, and the two answers are
   // take the document as it now reads, which throws this text away, or stay
   // here with what was written.
+  //
+  // A paragraph that merged is told about here and nowhere else, because this
+  // is the only save that leaves the markdown open: what is in front of them
+  // is now behind the document for those paragraphs, and pressing Save again
+  // would write it back over the words that came in. A save that merged and
+  // conflicted with nothing closes the view, and there is nothing to warn
+  // about.
   const one = left === 1;
+  const merged = (answer.merged || []).length;
+  const lead = [
+    'Everything else you wrote went in.',
+    merged
+      ? `${merged} other ${merged === 1 ? 'paragraph' : 'paragraphs'} took in words somebody else wrote, and saving again writes your wording over ${merged === 1 ? 'it' : 'those'} too.`
+      : '',
+    `Saving again writes ${one ? 'your paragraph' : 'your paragraphs'} over theirs. To take what they wrote instead, read the markdown again, which throws away what is in front of you.`,
+  ].filter(Boolean).join(' ');
   const yes = await ask(
     `${left} ${one ? 'paragraph was' : 'paragraphs were'} left as ${one ? 'it is' : 'they are'}, because somebody else changed ${one ? 'it' : 'them'} while you were writing.`,
-    `Everything else you wrote went in. Saving again writes ${one ? 'your paragraph' : 'your paragraphs'} over theirs. To take what they wrote instead, read the markdown again, which throws away what is in front of you.`,
-    'Read it again');
+    lead, 'Read it again');
   const now = yes && fresh(doc.id);
   if (now) {
     reopen(now);
