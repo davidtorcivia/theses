@@ -208,6 +208,9 @@ type sourceBody struct {
 	Base []docs.BlockRef `json:"base"`
 }
 
+// maxSourceBytes is as large as a document written back as markdown may be.
+const maxSourceBytes = 1 << 20
+
 // writeSource replaces a document from its markdown. It answers with the blocks
 // the save could not take rather than with an event, because it is many
 // commands in one transaction and the caller's next move is about the ones that
@@ -219,7 +222,11 @@ func (a *API) writeSource(w http.ResponseWriter, r *http.Request, who core.Actor
 		return
 	}
 	var body sourceBody
-	if !a.decode(w, r, &body) {
+	// A whole document is more than the sixty four kilobytes a body that names
+	// one field of one row is held to, and a megabyte is a long document with
+	// room to spare. It also bounds the base list, which is a block to look up
+	// each, and so bounds the work one request can ask of the write lock.
+	if !a.decodeUpTo(w, r, maxSourceBytes, &body) {
 		return
 	}
 	if a.Docs == nil {

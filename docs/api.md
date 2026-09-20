@@ -386,6 +386,10 @@ that there is nothing to line the paragraphs up against, and lining them up
 wrongly would move paragraphs between blocks, so the whole save is refused and
 nothing changes. Read the document again and edit that.
 
+The body may be a megabyte, rather than the sixty four kilobytes every other
+body here is held to, because this one is a whole document. Past that it is
+`413`.
+
 `Idempotency-Key` is honored: a request sent twice because the answer never
 arrived is answered rather than applied again. The answer to the second is the
 same status with an empty `conflicts` list, because the list the first one
