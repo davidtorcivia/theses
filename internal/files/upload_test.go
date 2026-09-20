@@ -793,3 +793,114 @@ func (f *fixture) upload(t *testing.T, name, folder string, body []byte) File {
 	}
 	return row
 }
+
+// A create that arrives again under a client key already spent is the resume,
+// not a second upload. Before this, the second call started a second multipart
+// against the same object and wrote a second uploads row; the client then put
+// its parts to the URLs the second call signed, and the completion, which reads
+// the upload by file and takes whichever row it finds, looked for them under
+// the first and refused for ever.
+func TestAKeyedCreateSentTwiceResumesOneMultipartUpload(t *testing.T) {
+	f := setup(t)
+	size := int64(2*blob.PartSize + 16)
+	create := func() Upload {
+		t.Helper()
+		ctx, err := core.WithKey(context.Background(), "agent-key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, size, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return up
+	}
+
+	first := create()
+	again := create()
+	if again.File.ID != first.File.ID {
+		t.Fatalf("the second create made file %d, want the first one, %d", again.File.ID, first.File.ID)
+	}
+	ctx := context.Background()
+	var rows int
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM uploads WHERE file_id = ?`, first.File.ID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("%d upload rows for one file, want 1", rows)
+	}
+	if again.UploadID != first.UploadID {
+		t.Errorf("the second create answers upload %d, want the one in flight, %d",
+			again.UploadID, first.UploadID)
+	}
+	if len(again.Parts) != 3 || again.PartSize != blob.PartSize {
+		t.Fatalf("the second create offers %+v", again.Parts)
+	}
+
+	// The URLs the second answer carried are the ones that finish the file.
+	part := bytes.Repeat([]byte("x"), blob.PartSize)
+	put(t, again.Parts[0].URL, nil, part)
+	put(t, again.Parts[1].URL, nil, part)
+	put(t, again.Parts[2].URL, nil, bytes.Repeat([]byte("x"), 16))
+	if _, err := f.Complete(ctx, f.who["editor"], first.File.ID, 0, 0, 0); err != nil {
+		t.Fatalf("completing the upload the second create answered: %v", err)
+	}
+	row, err := GetFile(ctx, f.db, first.File.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.Ready() {
+		t.Fatalf("after completing: %+v", row)
+	}
+
+	// Completing reads the state before it reaches the command, so a repeat is
+	// refused there and the key is never looked at: the caller is told the file
+	// is not in a state for this rather than answered with what the first
+	// completion did. The change did happen, which is what it wanted to know.
+	keyed, err := core.WithKey(ctx, "agent-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Complete(keyed, f.who["editor"], first.File.ID, 0, 0, 0); !errors.Is(err, ErrState) {
+		t.Errorf("completing a ready file again gave %v, want ErrState", err)
+	}
+}
+
+// The same again for a file small enough to go in one PUT, which has no
+// multipart to resume: the second answer signs the same object key again and
+// the bytes land once.
+func TestAKeyedCreateSentTwiceSignsOneSmallFile(t *testing.T) {
+	f := setup(t)
+	body := []byte("the tide tables")
+	create := func() Upload {
+		t.Helper()
+		ctx, err := core.WithKey(context.Background(), "agent-key")
+		if err != nil {
+			t.Fatal(err)
+		}
+		up, err := f.Create(ctx, f.who["editor"], f.prop, "notes.md", "Documents", int64(len(body)), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return up
+	}
+	first := create()
+	again := create()
+	if again.File.ID != first.File.ID || again.File.ObjectKey != first.File.ObjectKey {
+		t.Fatalf("the second create answers %+v, want the first one's row %+v", again.File, first.File)
+	}
+	ctx := context.Background()
+	put(t, again.URL, again.Headers, body)
+	if _, err := f.Complete(ctx, f.who["editor"], first.File.ID, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var files int
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM files WHERE proposition_id = ?`, f.prop).Scan(&files); err != nil {
+		t.Fatal(err)
+	}
+	if files != 1 {
+		t.Errorf("%d file rows, want 1", files)
+	}
+}

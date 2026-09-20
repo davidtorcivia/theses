@@ -121,6 +121,14 @@ func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 		h.announce(c.proposition)
 		return
 	}
+	if cmd.Key != "" {
+		keyed, err := core.WithKey(ctx, cmd.Key)
+		if err != nil {
+			c.send(message{Type: "error", ID: cmd.ID, Error: reason(err)})
+			return
+		}
+		ctx = keyed
+	}
 	actor := core.Actor{Kind: core.KindUser, ID: c.user.ID, Name: c.user.Name}
 	run := h.docsCommand(cmd.Cmd)
 	if run == nil {
@@ -154,7 +162,8 @@ func reason(err error) string {
 		return "you cannot do that here"
 	case errors.Is(err, core.ErrNotFound):
 		return "that is no longer there"
-	case errors.Is(err, core.ErrNotUndoable), errors.Is(err, board.ErrColumnNotEmpty),
+	case errors.Is(err, core.ErrKey), errors.Is(err, core.ErrNotUndoable),
+		errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty),
 		errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong),
 		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),

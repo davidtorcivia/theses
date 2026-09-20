@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -84,7 +85,7 @@ const partBatch = 64
 // both.
 func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 	name, folder string, size, replace int64) (Upload, error) {
-	row, bucket, err := s.record(ctx, a, proposition, name, folder, size, replace)
+	row, bucket, again, err := s.record(ctx, a, proposition, name, folder, size, replace)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -102,6 +103,25 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 		}
 		out.URL, out.Headers = url, headers
 		return out, nil
+	}
+
+	// A create that arrived again under a key already spent has the file row the
+	// first call made, and usually its multipart upload with it. Starting a
+	// second multipart against the same object would leave two uploads rows for
+	// one file, and every later step reads that by file and takes whichever it
+	// finds: the parts would go to the URLs this call signed and the completion
+	// would look for them under the other upload and never find them. So this
+	// answers the resume, which is what a caller sending the same create twice
+	// wants of it. A first call that died between writing the row and starting
+	// the multipart left no uploads row, and that falls through and starts one.
+	if again {
+		out, err := s.Parts(ctx, a, row.ID, 0)
+		if err == nil {
+			return out, nil
+		}
+		if !errors.Is(err, core.ErrNotFound) {
+			return Upload{}, err
+		}
 	}
 
 	multipart, err := bucket.StartMultipart(ctx, row.ObjectKey, kind)
@@ -132,28 +152,32 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 // import path uses it too, because a file that arrives through the server is
 // the same row as one the browser sends; only the way the bytes get there is
 // different.
+//
+// It also reports whether the row is one this call made or one an earlier call
+// under the same client key made, which is not the same request at all: the
+// second has an upload in flight to pick up rather than one to start.
 func (s *Service) record(ctx context.Context, a core.Actor, proposition int64,
-	name, folder string, size, replace int64) (File, *blob.Client, error) {
+	name, folder string, size, replace int64) (File, *blob.Client, bool, error) {
 	name, err := filename(name)
 	if err != nil {
-		return File{}, nil, err
+		return File{}, nil, false, err
 	}
 	if size <= 0 || size > maxFileSize {
-		return File{}, nil, ErrBadSize
+		return File{}, nil, false, ErrBadSize
 	}
 	if !known(folder, Folders) {
-		return File{}, nil, ErrKind
+		return File{}, nil, false, ErrKind
 	}
 	if err := s.mayWrite(ctx, a, proposition); err != nil {
-		return File{}, nil, err
+		return File{}, nil, false, err
 	}
 	bucket, err := s.bucket(ctx, folder)
 	if err != nil {
-		return File{}, nil, err
+		return File{}, nil, false, err
 	}
 
 	var row File
-	if _, err := s.do(ctx, a, proposition, auth.CanEdit, "file", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	e, err := s.do(ctx, a, proposition, auth.CanEdit, "file", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		if replace != 0 {
 			var state string
 			var of int64
@@ -195,10 +219,20 @@ func (s *Service) record(ctx context.Context, a core.Actor, proposition int64,
 			return core.Change{}, err
 		}
 		return core.Change{Entity: "file", EntityID: id, Action: "create", After: row}, nil
-	}); err != nil {
-		return File{}, nil, err
+	})
+	if err != nil {
+		return File{}, nil, false, err
 	}
-	return row, bucket, nil
+	// A request that arrived under a key this caller had already spent applied
+	// nothing, so the closure above never ran and row is still empty. The row it
+	// made the first time is the after of the event that came back, which is
+	// what the rest of the upload is built from: the same file, signed again.
+	if e.Replayed {
+		if err := json.Unmarshal(e.After, &row); err != nil {
+			return File{}, nil, false, fmt.Errorf("files: read back the file a key already made: %w", err)
+		}
+	}
+	return row, bucket, e.Replayed, nil
 }
 
 // Parts is the resume: the part numbers the bucket already holds and presigned

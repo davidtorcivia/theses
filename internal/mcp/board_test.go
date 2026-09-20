@@ -483,3 +483,36 @@ func httpPage() http.Handler {
 			<meta name="citation_author" content="Ada Lovelace"></head><body>Twice a day.</body></html>`)
 	})
 }
+
+// An agent that never saw the answer to a call calls again under the same key,
+// and gets the thing it already made rather than a second one.
+func TestAToolCalledTwiceUnderOneKeyMakesOneCard(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	f := h.withBoard(t)
+	cs := h.connect(auth.ScopeRead, auth.ScopeWrite)
+
+	var first, second writeOut
+	args := map[string]any{"column": f.column, "title": "Call the harbor", "key": "agent-key"}
+	h.call(cs, "create_card", args, &first)
+	h.call(cs, "create_card", args, &second)
+	if first.ID == 0 || second.ID != first.ID {
+		t.Errorf("the second call made card %d, want the first one, %d", second.ID, first.ID)
+	}
+	var n int
+	if err := h.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM cards WHERE column_id = ?`, f.column).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	// The card the fixture starts with, and the one this test made.
+	if n != 2 {
+		t.Errorf("%d cards in the column, want 2", n)
+	}
+
+	// A key that is not one is refused rather than dropped.
+	res := h.call(cs, "create_card",
+		map[string]any{"column": f.column, "title": "Book the studio", "key": "not a key"}, nil)
+	if !res.IsError {
+		t.Error("a malformed key was accepted")
+	}
+}

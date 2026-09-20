@@ -1003,3 +1003,57 @@ func TestTheLimiterRunsBeforeTheSessionLookup(t *testing.T) {
 		t.Errorf("a refused frame reached the session lookup: %+v", answer)
 	}
 }
+
+// The same keyed frame twice is one card. A tab whose socket died with a create
+// in the air cannot tell whether the server applied it, so it sends it again
+// under the key it used the first time and is answered with what that key
+// already did.
+func TestAKeyedFrameSentTwiceMakesOneCard(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	ws := r.mustDial("ada")
+
+	for i := int64(1); i <= 2; i++ {
+		send(t, ws, command{ID: i, Cmd: "card.create", Key: "a-tab-key",
+			Args: args{Column: r.cols[0].ID, Title: "Call the engineer"}})
+	}
+	first := read(t, ws, "ack")
+	second := read(t, ws, "ack")
+	if first.Event.Replayed {
+		t.Error("the first ack says it was replayed")
+	}
+	if !second.Event.Replayed {
+		t.Error("the second ack does not say it was replayed")
+	}
+	if second.Event.EntityID != first.Event.EntityID {
+		t.Errorf("the second ack is card %d, want the first one, %d",
+			second.Event.EntityID, first.Event.EntityID)
+	}
+	if n := r.cards(ctx); n != 1 {
+		t.Fatalf("%d cards after the same frame twice, want 1", n)
+	}
+
+	// A key that is not one is the frame being malformed, said out loud rather
+	// than dropped: a tab that meant to be safe against a repeat and was not
+	// would otherwise never find out.
+	send(t, ws, command{ID: 3, Cmd: "card.create", Key: "not a key",
+		Args: args{Column: r.cols[0].ID, Title: "Book the studio"}})
+	if m := read(t, ws, "error"); !strings.Contains(m.Error, "letters, digits") {
+		t.Errorf("a malformed key was answered with %q", m.Error)
+	}
+	if n := r.cards(ctx); n != 1 {
+		t.Errorf("a frame with a malformed key made a card: %d cards", n)
+	}
+}
+
+// cards counts what is on the board, which is how a test says a command that
+// arrived twice was applied once.
+func (r *rig) cards(ctx context.Context) int {
+	r.Helper()
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM cards WHERE proposition_id = ?`, r.prop).Scan(&n); err != nil {
+		r.Fatal(err)
+	}
+	return n
+}

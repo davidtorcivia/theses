@@ -845,17 +845,22 @@ function split(ed, before, after) {
   insert(doc.id, { after: id, text: after, whole: true })
     .then(inserted)
     // Offline here is the network going between the check above and the send,
-    // the socket going while this was in the air, or one that is open and
-    // answering nothing. The text goes back into the block it came from either
-    // way; saying so twice, once on the bar and once as a line of its own,
-    // would be saying it about a block nobody can see.
+    // or fifteen seconds of trying and never being answered. The text goes back
+    // into the block it came from either way; saying so twice, once on the bar
+    // and once as a line of its own, would be saying it about a block nobody
+    // can see.
     //
-    // ponytail: a socket that died after the server had applied the insert, or
-    // one that answered too late to be waited for, leaves that paragraph both
-    // on the end of the block it was split from and in a block of its own.
-    // Nothing is lost and both are on the page. The upgrade is the one net.js
-    // names for its own replays: a key this tab picks and the server remembers,
-    // so a second one of these is the same insert rather than another.
+    // A socket that dies with the insert in the air is no longer one of these:
+    // the frame carries a key and goes again on the next socket, and a server
+    // that already applied it says so rather than making a second block.
+    //
+    // ponytail: what is left is the frame that was in the air when the fifteen
+    // seconds ran out. The server may apply it a moment later, and by then this
+    // has put the paragraph back on the end of the block it was split from, so
+    // the block arrives as an ordinary event and that paragraph is on the page
+    // twice. Nothing is lost and both are visible. Closing it needs the editor
+    // to be able to draw the insert before the answer, which is the change that
+    // makes Enter work with no connection at all.
     .catch((err) => unsplit(err instanceof Offline ? '' : err.message));
 }
 
@@ -1360,7 +1365,10 @@ function arrived() {
 // What cannot go is what was typed into a provisional editor inside the round
 // trip of its split: until the insert is acked there is no block to address a
 // save to. What the server has of it is the paragraph as it stood when Enter
-// was pressed, which is what the insert carried.
+// was pressed, which is what the insert carried. That round trip is now as long
+// as the insert keeps trying, up to the fifteen seconds live allows it, rather
+// than ending the moment a socket goes; a tab closed inside a reconnection
+// therefore loses more of what was typed into it than it used to.
 addEventListener('pagehide', () => {
   if (editing) {
     const w = work.get(editing.id);

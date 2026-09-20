@@ -107,6 +107,13 @@ async function withStore(name, mode, run) {
 // the server has to the text the person stopped at, which is also the only
 // version pair the server can merge.
 //
+// A fold takes the incoming row's idem as well as its arguments, and the caller
+// mints a fresh one for every command, so a folded row always goes up under a
+// key the server has never seen. It has to: the row it folded into may have
+// been in the air when the socket went, the server may have applied it, and
+// going up again under that key would be answered with what it already did and
+// throw away everything typed since.
+//
 // ponytail: finding the row waiting is a scan of the outbox, which is fine at
 // the few rows a person makes by hand and would be an index on key if a command
 // with a key were ever queued in the hundreds. Commands with no key, which is
@@ -124,9 +131,10 @@ export async function queue(row, key) {
       const found = all.result.find((r) => r.key === key && !r.refused);
       if (found) {
         out.n = found.n;
-        // The newest arguments, the oldest base and base text: one change from
-        // where the server still is to where this person has got to.
-        store.put({ ...found, args: row.args, at: Date.now() });
+        // The newest arguments and the newest idem, the oldest base and base
+        // text: one change from where the server still is to where this person
+        // has got to, under a name the server has not answered before.
+        store.put({ ...found, args: row.args, idem: row.idem, at: Date.now() });
         return;
       }
       const add = store.add({ at: Date.now(), ...row, key });
@@ -143,12 +151,37 @@ export async function queued() {
 
 export const drop = (n) => withStore('outbox', 'readwrite', (store) => store.delete(n));
 
-// get is one row as the store holds it now. The drain reads each row again
-// immediately before it sends it, because the arguments may have been written
-// over since the pass began: somebody carrying on typing folds the newer text
-// into the row that is about to go, and sending the older one would put a
-// superseded edit up and leave the real one to conflict with it.
-export const get = (n) => withStore('outbox', 'readonly', (store) => store.get(n));
+// take is one row as the store holds it now, named if it is not named yet. The
+// drain reads each row again immediately before it sends it, because the
+// arguments may have been written over since the pass began: somebody carrying
+// on typing folds the newer text into the row that is about to go, and sending
+// the older one would put a superseded edit up and leave the real one to
+// conflict with it.
+//
+// A row filed before commands carried an idem has none, and gets the one passed
+// in here rather than at the moment of sending, so that a second attempt at the
+// same row goes up under the same name. The reading and the naming are one
+// transaction, so the arguments and the name handed back are the pair the store
+// held at one instant: reading first and naming after would let a fold write
+// its own name in between, and this would put the old name back over it while
+// the caller held the old arguments, sending the superseded text under a name
+// the server had already answered.
+export function take(n, idem) {
+  return withStore('outbox', 'readwrite', (store) => {
+    const out = { row: null };
+    const req = store.get(n);
+    req.onsuccess = () => {
+      if (!req.result) return;
+      if (req.result.idem) {
+        out.row = req.result;
+        return;
+      }
+      out.row = { ...req.result, idem };
+      store.put(out.row);
+    };
+    return out;
+  });
+}
 
 // dropIfUnchanged is what an answered command leaves the outbox by. A row that
 // was written into while it was in flight, because the person carried on typing

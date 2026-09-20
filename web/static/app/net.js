@@ -31,6 +31,21 @@ function undraw(n, detail) {
   if (back) back(detail);
 }
 
+// newKey names a change, as opposed to the request number above which names one
+// attempt at sending it. The server remembers what it did under a name, so a
+// command that has to go again, because this tab never saw the answer to the
+// first, is answered with what the first one did rather than done twice.
+//
+// randomUUID is there in a secure context, which is every context this app runs
+// in, including localhost. The fallback is for one served over plain http on
+// another host, which the plan does not describe but a person reading the
+// README might try.
+function newKey() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  return [...crypto.getRandomValues(new Uint8Array(16))]
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export class Offline extends Error {
   constructor() {
     super('You are offline. That change was not saved.');
@@ -78,12 +93,11 @@ export function connect() {
   socket.addEventListener('close', () => {
     state.connected = false;
     // A command that was in flight when the socket went is not lost: it goes to
-    // the back of the outbox and replays with the rest.
-    //
-    // ponytail: the server may have applied it before the socket died, so a
-    // create can arrive twice. Everything else is a field being set to a value
-    // it already holds. The upgrade is a key the client picks and the server
-    // remembers, which is a schema change.
+    // the back of the outbox and replays with the rest. The server may have
+    // applied it before the socket died, and this tab has no way of knowing,
+    // which is what the key on every command is for: the replay goes up under
+    // the name the first attempt used, and a server that has already done it
+    // answers with what it did rather than doing it again.
     for (const [id, task] of waiting) {
       waiting.delete(id);
       // A command this tab made goes to the back of the outbox and replays with
@@ -103,7 +117,35 @@ function receive(m) {
   if (task) waiting.delete(m.id);
   switch (m.type) {
     case 'ack':
-      apply(m.event);
+      // A replayed ack is the answer the server gave this command the first
+      // time it arrived, which it is now saying again rather than applying
+      // anything. Its payload is the row as it was at that moment and may be
+      // older than what this tab holds now, so it is not drawn. Whatever this
+      // tab actually missed is in the stream, and the stream is what it reads.
+      if (m.event.replayed) {
+        // Leaving it undrawn is an argument about the stream holding a newer
+        // row, and the stream is one proposition's. A change filed under
+        // another proposition, or under none, is carried by neither path:
+        // catchUp reads the open proposition only, so a proposition started,
+        // moved, archived or deleted from the rail would sit on the server and
+        // be invisible in this tab until a reload. There is no newer row to
+        // prefer over this one, so this one is drawn.
+        if (m.event.proposition !== state.open) {
+          apply(m.event);
+        } else if (m.event.seq > state.seq) {
+          // The row this answer is about has not reached this tab yet, and the
+          // caller may be about to draw an editor on it. So the stream is read
+          // first and the caller told after: told first, the render its answer
+          // causes would find no block to put that editor in and would drop it,
+          // taking the caret out of what somebody is typing into. A catchUp
+          // that cannot reach the server leaves the block missing until the
+          // next one, which is the same place a dropped event leaves it.
+          catchUp().finally(() => { if (task) task.resolve(m.event); });
+          break;
+        }
+      } else {
+        apply(m.event);
+      }
       if (task) task.resolve(m.event);
       break;
     case 'conflict':
@@ -176,9 +218,10 @@ function down() {
 export function send(cmd, args = {}, proposition = state.open) {
   const baseWas = baseText(cmd, args);
   const revert = predict(cmd, args);
-  const row = { proposition, me: state.me, cmd, args, base: args.base ?? null, base_text: baseWas };
+  const row = { proposition, me: state.me, cmd, args, idem: newKey(),
+    base: args.base ?? null, base_text: baseWas };
   if (down() || replaying) return keep(row, target(cmd, args), revert);
-  return ship(cmd, args, revert, row);
+  return ship(cmd, args, revert, row, row.idem);
 }
 
 // keep puts a command in the outbox and answers as though it had gone. It has
@@ -200,7 +243,7 @@ async function keep(row, key, revert) {
   return null;
 }
 
-function ship(cmd, args, revert, row) {
+function ship(cmd, args, revert, row, key) {
   return new Promise((resolve, reject) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       if (revert) revert();
@@ -215,7 +258,7 @@ function ship(cmd, args, revert, row) {
       revert: revert || (() => {}),
       queue: () => { if (row) offline.queue(row, target(cmd, args)).then(count); },
     });
-    socket.send(JSON.stringify({ id, cmd, args }));
+    socket.send(JSON.stringify({ id, cmd, key, args }));
   });
 }
 
@@ -223,21 +266,70 @@ function ship(cmd, args, revert, row) {
 // is the one: it carries text that is in no entry yet and has no row on the
 // page, so the answer is what decides where that text ends up. Queued, it would
 // arrive long after the editor had put the text back into the block it came
-// from, and the paragraph would be there twice. So this goes now or it is
-// refused, and a socket that goes while it is in the air is a refusal too,
-// which is what passing no row below means.
+// from, and the paragraph would be there twice.
+//
+// A socket that goes while it is in the air used to be a refusal, and that was
+// the same duplicate by another route: the server may have applied the insert
+// before the socket died. So the frame carries a key and goes again, under the
+// same key, as soon as there is a socket to go on. The server either does it or
+// says it already did, and either way the answer is the one block.
+//
+// One deadline covers the whole attempt, tries and all, rather than one per
+// try: the caller is holding text with nowhere to be, and what matters to them
+// is how long until it lands somewhere, not how many times this tried. It gives
+// up the way the drain does, for the same reason: a socket can be open and
+// connected to nothing.
 //
 // It does not wait behind a replay the way send does. The outbox's order is
 // about one field's edits folding into one another; an insert names a block the
 // server already has and has nothing to queue behind.
-//
-// It gives up the way the drain does, for the same reason: a socket can be open
-// and connected to nothing, and a caller holding text until this answers would
-// hold it for the rest of the session.
 export function live(cmd, args) {
-  if (down()) return Promise.reject(new Offline());
-  return answered(ship(cmd, args, null, null), replyWait);
+  const key = newKey();
+  return new Promise((resolve, reject) => {
+    let over = false;
+    const timer = setTimeout(() => {
+      // The frame that was in the air when this fired may still be applied. The
+      // caller has been told it was not, so it draws nothing; the block arrives
+      // as an ordinary event like anybody else's.
+      over = true;
+      reject(new Offline());
+    }, replyWait);
+    const settle = (fn) => (v) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      fn(v);
+    };
+    const attempt = (first) => {
+      if (over) return;
+      if (down()) {
+        // Nothing has gone up yet and there is no connection, so there is
+        // nothing uncertain to wait out: this is the refusal it always was, and
+        // the caller puts the text back now rather than in fifteen seconds.
+        if (first) settle(reject)(new Offline());
+        else setTimeout(() => attempt(false), tryAgainIn);
+        return;
+      }
+      ship(cmd, args, null, null, key).then(settle(resolve), (err) => {
+        if (over) return;
+        // The socket went while the frame was in the air, which says nothing
+        // about whether the server applied it. The key is what makes sending it
+        // again safe either way.
+        if (err instanceof Offline) {
+          setTimeout(() => attempt(false), tryAgainIn);
+          return;
+        }
+        settle(reject)(err);
+      });
+    };
+    attempt(true);
+  });
 }
+
+// tryAgainIn is how long live waits between tries. A reconnection starts at
+// half a second and backs off, so this is short enough to take the first socket
+// that opens and long enough not to spin while there is none.
+const tryAgainIn = 250;
 
 // where tells the others what this tab has open. It is never worth an answer,
 // and the same string twice is nothing to tell: a caret moving inside a block
@@ -334,8 +426,11 @@ async function drain() {
     for (const stale of pass) {
       // The row is read again here rather than trusted from the pass: the
       // person may have typed into the same field since, and what goes up has
-      // to be what they last wrote.
-      const row = await offline.get(stale.n);
+      // to be what they last wrote. A row filed before commands carried a key
+      // is given one in the same read, so a second attempt at it reuses that
+      // one and the server can tell the two attempts apart from two commands.
+      const got = await offline.take(stale.n, newKey());
+      const row = got && got.row;
       if (!row || row.refused) continue;
       // The outbox is this device's, but the person at it can change. Another
       // account's commands are not this one's to send.
@@ -344,7 +439,7 @@ async function drain() {
         continue;
       }
       try {
-        await answered(row.via === 'api' ? post(row) : ship(row.cmd, row.args, null, null),
+        await answered(row.via === 'api' ? post(row) : ship(row.cmd, row.args, null, null, row.idem),
           row.via === 'api' ? httpWait : replyWait);
         await offline.dropIfUnchanged(row.n, row.at);
         reverts.delete(row.n);
@@ -402,11 +497,13 @@ addEventListener('online', () => {
 });
 
 // post is a queued command that is a request rather than a socket frame: adding
-// a link, which the server answers with the page it read.
+// a link, which the server answers with the page it read. The row's name goes
+// up as the header the API takes it under, so a request that timed out on the
+// way back, and is sent again on the next pass, adds one link rather than two.
 async function post(row) {
   if (row.cmd !== 'link.add') throw new Error('that did not go through');
   try {
-    return await api.post('/links', row.args);
+    return await api.post('/links', row.args, { 'Idempotency-Key': row.idem });
   } catch (err) {
     if (err.status === 0) throw new Offline();
     throw err;
@@ -460,7 +557,8 @@ export async function resend(row, args) {
 // could not.
 export async function queueLink(proposition, url) {
   const n = await offline.queue({
-    via: 'api', me: state.me, proposition, cmd: 'link.add', args: { proposition, url },
+    via: 'api', me: state.me, proposition, cmd: 'link.add', idem: newKey(),
+    args: { proposition, url },
   });
   await count();
   return n;
@@ -478,16 +576,31 @@ function stillSignedIn() {
 
 // catchUp reads whatever this tab missed out of the activity table, which is
 // what a reconnect and a dropped event both need.
+//
+// The read gives up after the same wait a command is given. Two things await
+// this: the socket opening, which drains the outbox afterwards, and a replayed
+// ack, which is holding a caller and its text. A connection that is open and
+// answering nothing would hold either of them for the life of the page, which
+// is the same thing answered guards every command against.
+//
+// Two of these can be in the air at once, one from each of those. Both ask from
+// the same sequence number, so the later but shorter answer can draw an older
+// row over a newer one, which the next event or reconnect puts right. Queueing
+// them behind one another was worse: one read that never settled took every
+// later one with it.
 async function catchUp() {
   if (!state.open) return;
   try {
     const res = await fetch(`/api/events?proposition=${state.open}&since=${state.seq}&wait=0`, {
       headers: { Accept: 'application/json' },
+      // Optional because a browser without it is one that waits as it did
+      // before, which is the old behavior rather than a broken one.
+      signal: AbortSignal.timeout?.(replyWait),
     });
     if (!res.ok) return;
     const body = await res.json();
     for (const ev of body.events || []) apply(ev);
   } catch {
-    // Offline. The next open will try again.
+    // Offline, or a read nobody answered in time. The next open tries again.
   }
 }

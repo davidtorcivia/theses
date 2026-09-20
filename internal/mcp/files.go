@@ -114,6 +114,7 @@ type addLinkArgs struct {
 	URL         string `json:"url" jsonschema:"the http or https address to save"`
 	Note        string `json:"note,omitempty" jsonschema:"why this matters for the episode"`
 	Question    string `json:"question,omitempty" jsonschema:"one of I, II, III or IV, or empty"`
+	Key         string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in addLinkArgs) (*sdk.CallToolResult, files.Link, error) {
@@ -122,6 +123,10 @@ func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in ad
 		return nil, files.Link{}, err
 	}
 	a := f.actorFor(req, p)
+	ctx, err = keyed(ctx, in.Key)
+	if err != nil {
+		return nil, files.Link{}, err
+	}
 	e, err := f.svc.AddLink(ctx, a, in.Proposition, in.URL)
 	if err != nil {
 		return nil, files.Link{}, f.refusal("add the link", err)

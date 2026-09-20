@@ -24,7 +24,7 @@ from.
 
 | Status | When |
 | --- | --- |
-| 400 | the body is not JSON, or does not have the field the route reads |
+| 400 | the body is not JSON, does not have the field the route reads, or carries an `Idempotency-Key` that is not a key |
 | 401 | no `Authorization: Bearer` header, or the token is unknown or revoked |
 | 403 | the token does not have the scope the route needs, the person it belongs to no longer has the standing that scope implies, or the row is somebody else's note |
 | 404 | no such endpoint, no such settings key, or a thing that is not there or that the token's owner may not touch |
@@ -44,6 +44,67 @@ Every refusal is JSON with one field:
 ```json
 {"error": "this token does not have the admin scope"}
 ```
+
+## Sending the same change twice
+
+A request whose answer never came back leaves a caller with no way of knowing
+whether the change happened. Naming the change is how it finds out without
+guessing:
+
+```
+Idempotency-Key: 3f0a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8
+```
+
+1 to 64 letters, digits, hyphens or underscores; anything else is `400`. Send
+the same request again under the same key and the server answers with what the
+first one did, having applied nothing. The event in that answer carries
+`"replayed": true`:
+
+```json
+{"event": {"seq": 412, "entity": "card", "entity_id": 88, "action": "create",
+           "replayed": true, "...": "..."}}
+```
+
+A key names one request, not one endpoint. The same key sent with a different
+body is still a repeat: the answer is what the first request did, and the
+second change is not made. Use a fresh key for every change you mean to make,
+and the same one only for sending the same change again.
+
+The key belongs to the person the token belongs to, not to the token. Two
+tokens of one person share one set of keys, so an agent holding two of them
+should not reuse a key between them; two different people cannot collide.
+
+A key is remembered for 24 hours. Past that a repeat is applied again: this
+makes a retry safe, it is not a record kept for ever. A read ignores the
+header.
+
+Every write that goes through the command log honors it: the board, the
+documents, the links, the attachments, undo and creating a file. `PUT
+/api/v1/settings/{key}` and the notification routes are not commands and ignore
+it, and sending the same setting or the same rule twice sets it to what it
+already holds.
+
+The answer to a repeat is the answer the route gives, not a copy of the first
+response body:
+
+- a route that answers with an `event` answers with the first one's event, with
+  `"replayed": true` on it;
+- the attachment routes answer `{"card": …, "action": "attach"}` as they always
+  do, read off that event;
+- `POST /api/v1/files` makes no second file row and no second upload. For a
+  file small enough for one `PUT` it signs the same object key again; for a
+  multipart upload it answers the resume, which is the same `upload_id`, the
+  parts already in the bucket and fresh URLs for the ones that are not. The
+  answer is therefore the one `GET /api/v1/files/{id}/parts` gives, and either
+  will do to carry on with.
+
+A repeat of a write whose own effect moved the thing out of reach is refused
+before the key is looked at, and the refusal is the answer. Sending
+`DELETE /api/v1/cards/{id}` again is `404`, because the card is gone; sending
+`POST /api/v1/files/{id}/complete` again is `422`, `that upload is not in a
+state for this`, because the file is ready. In both the change did happen,
+which is what the caller wanted to know. The key is what stops a repeat making
+a second thing; it does not turn every refusal into a replay.
 
 ## `GET /api/v1/me`
 
@@ -1006,6 +1067,15 @@ there. `create_document`, `append_block`, `insert_after_heading`, `add_link`,
 `add_link` also reads a page on the open web. `attach_to_card` and `assign_card`
 are idempotent without being destructive: doing either twice leaves the one
 thing there.
+
+The tools that make something take an optional `key`, which is the same idea as
+the `Idempotency-Key` header above and takes the same 1 to 64 letters, digits,
+hyphens or underscores. A call an agent never saw the answer to is made again
+under the same key and returns the id of the thing the first call made rather
+than making a second: `create_proposition`, `create_card`, `comment`,
+`create_document`, `append_block`, `insert_after_heading` and `add_link`. The
+tools that set a field take none, because setting it twice sets it to what it
+already holds.
 
 `replace_block` takes the `base_version` that `read_document` reported and
 merges in what somebody else wrote since; left out, it reads the block and

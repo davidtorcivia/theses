@@ -15,6 +15,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -82,6 +83,22 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 // MaxBodyBytes is what a POST to /mcp may be, the same as the REST API allows,
 // since a tool call is a few hundred bytes of JSON.
 const MaxBodyBytes = 64 << 10
+
+// keyed puts a tool call's key in the context. The tools that make something
+// take one, because an agent that never saw the answer to a call cannot tell a
+// request that was lost from one that was applied, and calling it again under
+// the same key makes one card rather than two. The tools that set a field take
+// none: setting it twice sets it to what it already holds.
+//
+// The SDK has no per call place of its own for this, so it is an argument like
+// any other, which is also what puts it in the tool's schema for a model to
+// read about and use.
+func keyed(ctx context.Context, key string) (context.Context, error) {
+	if key == "" {
+		return ctx, nil
+	}
+	return core.WithKey(ctx, key)
+}
 
 // reads and overwrites are the hints a client shows before it runs a tool. Four
 // of these tools only look; the fifth replaces a value that was there, which is
