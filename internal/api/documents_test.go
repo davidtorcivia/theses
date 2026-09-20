@@ -291,9 +291,35 @@ func TestWriteDocumentSource(t *testing.T) {
 		t.Fatalf("the last paragraph is %q", after[len(after)-1].Text)
 	}
 
-	// The same base again, now that the document has moved on, still lines up:
-	// the versions it names are on record. A base naming a version that is not
-	// is refused outright.
+	// The same request again changes nothing: every paragraph it sends already
+	// has its block, so nothing is written and no revision is kept. A request
+	// whose answer never arrived goes again exactly like this.
+	if w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, body); w.Code != http.StatusOK {
+		t.Fatalf("the second save answered %d: %s", w.Code, w.Body)
+	}
+	again, err := docs.Blocks(ctx, h.db, document.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(after) {
+		t.Fatalf("the document has %d blocks after the second save, want %d", len(again), len(after))
+	}
+	for i, b := range again {
+		if b.ID != after[i].ID || b.Version != after[i].Version || b.Text != after[i].Text {
+			t.Fatalf("block %d is %d v%d %q, want %d v%d %q", i, b.ID, b.Version, b.Text,
+				after[i].ID, after[i].Version, after[i].Text)
+		}
+	}
+	revisions, err := docs.ListRevisions(ctx, h.db, document.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) != 1 {
+		t.Fatalf("the document has %d revisions after two identical saves, want 1", len(revisions))
+	}
+
+	// A base naming a version the server does not hold the text of is refused
+	// outright.
 	stale := fmt.Sprintf(`{"base":[{"id":%d,"version":999}],"text":"Nothing."}`, blocks[0].ID)
 	if w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, stale); w.Code != http.StatusConflict {
 		t.Fatalf("an unrecoverable base answered %d: %s", w.Code, w.Body)

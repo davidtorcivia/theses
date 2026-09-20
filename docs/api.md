@@ -353,10 +353,12 @@ block in the meantime is merged exactly as `PUT /api/v1/blocks/{id}` merges
 one. A paragraph left over is a new block where it stands. A block left over is
 deleted.
 
-`base` is optional. Left out altogether it is the document as it stands when
-the request runs, which is what an agent replacing a document it has just read
-wants: keep the blocks whose paragraphs did not change and write the rest. An
-empty list is a document that had no blocks, so the two are not the same thing.
+`base` is the blocks as the caller read them, in the order they were in. It is
+optional: left out altogether it is the document as it stands when the request
+runs, which is what an agent replacing a document it has just read wants, and
+an empty list is a document that had no blocks, so the two are not the same
+thing. A list naming only some of the document's blocks says nothing about the
+rest; their paragraphs keep the blocks they already have.
 
 The answer is the paragraphs that did not go in, which is empty when all of
 them did:
@@ -369,10 +371,13 @@ A block is in there when somebody else changed it while the markdown was being
 written and the two changes cannot be put together, or when the markdown takes
 a paragraph out of a block somebody else has written in since. Either way that
 block is left exactly as this server holds it and `current` is what it holds,
-while the rest of the save goes in. Nothing is half applied: the whole thing is
-one transaction, and a revision with reason `pre-import` is kept first, so a
-save that went wrong is one restore away. A save that would change nothing
-writes nothing and keeps no revision.
+while the rest of the save goes in. Sending the same markdown again reports the
+same blocks and writes nothing: it is the same paragraphs against the same
+base. The way to take what the other person wrote is to read the document
+again, work their paragraph into yours, and send that against the base you have
+just read. Nothing is half applied: the whole thing is one transaction, and a
+revision with reason `pre-import` is kept first, so a save that went wrong is
+one restore away. A save that writes nothing keeps no revision.
 
 A block somebody else added while the markdown was being written is not in
 `base`, so the save says nothing about it and it stays where it is. A block
@@ -380,11 +385,25 @@ somebody else deleted keeps an unchanged paragraph out, so that saving an edit
 made elsewhere does not put their deletion back, and puts a changed one in as a
 new block where it stood.
 
+The same request sent twice changes nothing the second time. A paragraph that
+no block in `base` accounts for is matched first, by its text and in the order
+the document reads, against the blocks `base` does not name; only a paragraph
+that matches none of them becomes a new block. What that costs is that a
+paragraph somebody else added in the same place, which this markdown also had,
+goes in once rather than twice.
+
 `409` with no `conflict` object is a `base` naming a version whose text this
-server no longer holds. The last twenty versions of every block are kept; past
-that there is nothing to line the paragraphs up against, and lining them up
-wrongly would move paragraphs between blocks, so the whole save is refused and
-nothing changes. Read the document again and edit that.
+server no longer holds. The last twenty versions of every block are kept, and a
+block still at the version `base` names needs none of them; past that there is
+nothing to line the paragraphs up against, and lining them up wrongly would
+move paragraphs between blocks, so the whole save is refused and nothing
+changes. Read the document again and edit that.
+
+`422` is a save with more changed at once than the paragraphs can be placed
+against. What is the same at the top and at the bottom of the document costs
+nothing to line up, so this is a stretch of changed text long enough that
+placing it would be a table of a million cells: roughly a thousand paragraphs
+rewritten in one request. Send it in pieces.
 
 The body may be a megabyte, rather than the sixty four kilobytes every other
 body here is held to, because this one is a whole document. Past that it is

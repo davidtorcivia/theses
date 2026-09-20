@@ -3,6 +3,8 @@ package docs
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/board"
@@ -543,5 +545,213 @@ func TestWriteSourceWithNoBaseUsesTheDocument(t *testing.T) {
 	}
 	if f.blocks(t)[1].ID != was[1].ID {
 		t.Fatal("the paragraph that changed did not keep its block")
+	}
+}
+
+// Sending the same markdown twice must change nothing the second time, whoever
+// else wrote in between. It is a request rather than a queued command, so
+// pressing Save again, a request whose answer never arrived, and an agent
+// retrying all land here.
+func TestWriteSourceIsIdempotent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start []string
+		text  string
+		// theirs, when it names a block by its place in start, is the text
+		// somebody else writes into it before the first save.
+		at     int
+		theirs string
+	}{
+		{name: "an edit and an addition", start: []string{"# Tide", "One.", "Two."},
+			text: "# Tide\n\nOne, mine.\n\nTwo.\n\nThree new.", at: -1},
+		{name: "a paragraph added at the head", start: []string{"# Tide", "One."},
+			text: "Before.\n\n# Tide\n\nOne.", at: -1},
+		{name: "two paragraphs that read alike", start: []string{"# Tide"},
+			text: "# Tide\n\nSame.\n\nSame.", at: -1},
+		{name: "everything replaced", start: []string{"# Tide", "One.", "Two."},
+			text: "# Other\n\nA.\n\nB.\n\nC.", at: -1},
+		{name: "a paragraph taken out", start: []string{"# Tide", "One.", "Two."},
+			text: "# Tide\n\nTwo.", at: -1},
+		{name: "with a block somebody else changed that this one changes too",
+			start: []string{"# Tide", "One.", "Two."},
+			text:  "# Tide\n\nOne, mine entirely.\n\nTwo.\n\nThree new.",
+			at:    1, theirs: "One, theirs entirely."},
+		{name: "with a block somebody else changed that this one leaves alone",
+			start: []string{"# Tide", "One.", "Two."},
+			text:  "# Tide\n\nOne.\n\nTwo, mine.\n\nThree new.",
+			at:    1, theirs: "One, theirs."},
+		{name: "with a block somebody else deleted",
+			start: []string{"# Tide", "One.", "Two."},
+			text:  "# Tide\n\nOne, mine.\n\nTwo.\n\nThree new.",
+			at:    -2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := setup(t, "")
+			base := f.seed(t, tc.start...)
+			was := f.blocks(t)
+			switch {
+			case tc.theirs != "":
+				if _, err := f.SetBlock(ctx, f.who["owner"], was[tc.at].ID, was[tc.at].Version,
+					tc.theirs, false); err != nil {
+					t.Fatal(err)
+				}
+			case tc.at == -2:
+				if _, err := f.DeleteBlock(ctx, f.who["owner"], was[1].ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			first, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			after := f.blocks(t)
+			revisions := f.revisions(t)
+			// With nobody else in the way the document is exactly the
+			// paragraphs that were sent.
+			if tc.at == -1 {
+				if got := f.texts(t); !same(got, Paragraphs(tc.text)) {
+					t.Fatalf("the document reads %q, want %q", got, Paragraphs(tc.text))
+				}
+			}
+
+			second, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, tc.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(second) != len(first) {
+				t.Fatalf("the second save reported %+v, want the same as the first, %+v", second, first)
+			}
+			now := f.blocks(t)
+			if len(now) != len(after) {
+				t.Fatalf("the document has %d blocks after the second save, want %d", len(now), len(after))
+			}
+			for i, b := range now {
+				if b.ID != after[i].ID || b.Version != after[i].Version || b.Text != after[i].Text {
+					t.Fatalf("block %d is %d v%d %q after the second save, want %d v%d %q",
+						i, b.ID, b.Version, b.Text, after[i].ID, after[i].Version, after[i].Text)
+				}
+			}
+			if got := f.revisions(t); got != revisions {
+				t.Fatalf("the document has %d revisions after the second save, want %d", got, revisions)
+			}
+		})
+	}
+}
+
+// A base that names only some of the document's blocks says nothing about the
+// rest, and the paragraphs standing for them take the blocks they already have
+// rather than being written in a second time.
+func TestWriteSourceWithAPartialBase(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	f.seed(t, "# Tide", "One.", "Two.")
+	was := f.blocks(t)
+	revisions := f.revisions(t)
+
+	conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc,
+		[]BlockRef{{ID: was[1].ID, Version: was[1].Version}}, "# Tide\n\nOne.\n\nTwo.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 0 {
+		t.Fatalf("the save reported %+v, want nothing in conflict", conflicts)
+	}
+	now := f.blocks(t)
+	if len(now) != len(was) {
+		t.Fatalf("the document has %d blocks, want %d", len(now), len(was))
+	}
+	for i, b := range now {
+		if b.ID != was[i].ID || b.Version != was[i].Version {
+			t.Fatalf("block %d is %d v%d, want %d v%d", i, b.ID, b.Version, was[i].ID, was[i].Version)
+		}
+	}
+	if got := f.revisions(t); got != revisions {
+		t.Fatalf("the document has %d revisions, want %d", got, revisions)
+	}
+}
+
+// One paragraph added to a long document is one insert wherever it goes. The
+// runs that are the same above and below it are trimmed off before the
+// paragraphs are lined up, so nothing else is touched and the budget, which one
+// insert in eleven hundred paragraphs would otherwise be well past, is never
+// reached.
+func TestWriteSourceInALongDocument(t *testing.T) {
+	for _, at := range []int{0, 550, 1100} {
+		t.Run("a paragraph added at "+strconv.Itoa(at), func(t *testing.T) {
+			ctx := context.Background()
+			f := setup(t, "")
+			start := make([]string, 0, 1100)
+			for i := range 1100 {
+				start = append(start, "Paragraph "+strconv.Itoa(i)+".")
+			}
+			base := f.seed(t, start...)
+			was := f.blocks(t)
+
+			text := append(append(append([]string{}, start[:at]...), "One more."), start[at:]...)
+			if _, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, strings.Join(text, "\n\n")); err != nil {
+				t.Fatal(err)
+			}
+			now := f.blocks(t)
+			if len(now) != len(was)+1 || now[at].Text != "One more." {
+				t.Fatalf("the document has %d blocks and %q at %d", len(now), now[at].Text, at)
+			}
+			// Every block that was there is the one it was, at the version it
+			// was: one insert and not a single set.
+			for i, b := range was {
+				out := i
+				if i >= at {
+					out = i + 1
+				}
+				if now[out].ID != b.ID || now[out].Version != b.Version {
+					t.Fatalf("block %d is %d v%d, want the %d v%d it was",
+						out, now[out].ID, now[out].Version, b.ID, b.Version)
+				}
+			}
+		})
+	}
+}
+
+// Past the budget the save is refused rather than paired by position, which
+// would write every block of a long document with its neighbor's text.
+func TestWriteSourceRefusesTooLargeAChange(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	start := make([]string, 0, 1100)
+	fresh := make([]string, 0, 1100)
+	for i := range 1100 {
+		start = append(start, "Was "+strconv.Itoa(i)+".")
+		fresh = append(fresh, "Now "+strconv.Itoa(i)+".")
+	}
+	base := f.seed(t, start...)
+	revisions := f.revisions(t)
+
+	_, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, strings.Join(fresh, "\n\n"))
+	if !errors.Is(err, ErrSourceSpread) {
+		t.Fatalf("the save answered %v, want ErrSourceSpread", err)
+	}
+	if got := f.texts(t); !same(got, start) {
+		t.Fatal("the refused save changed the document")
+	}
+	if got := f.revisions(t); got != revisions {
+		t.Fatalf("the document has %d revisions, want %d", got, revisions)
+	}
+}
+
+// A block at the version the base names is read off the row, so a document
+// whose blocks were written before block_texts existed still saves.
+func TestWriteSourceWithNoStoredBaseText(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	f.seed(t, "# Tide", "One.")
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM block_texts`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteSource(ctx, f.who["editor"], f.doc, nil, "# Tide\n\nOne, mine."); err != nil {
+		t.Fatalf("the save answered %v, want it to go through", err)
+	}
+	if got := f.texts(t); !same(got, []string{"# Tide", "One, mine."}) {
+		t.Fatalf("the document reads %q", got)
 	}
 }

@@ -353,7 +353,7 @@ func (s *Service) Import(ctx context.Context, path string) error {
 	// file comes back with a marker on it. Deleting it again against the fresh
 	// file goes through.
 	fresh := file.Revision == document.Revision
-	conflicted, err := s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
+	conflicted, _, err := s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
 		if fresh {
 			return dropMissing
 		}
@@ -400,13 +400,17 @@ const (
 // from it. A save that is refused partway through leaves what it has already
 // written, which for an import is a file and for a source save is a
 // transaction that rolls the lot back.
+//
+// wrote says whether any command ran, which is how a source save tells a list
+// that changed nothing from one that changed something: a set whose text the
+// block already holds is not a command, and neither is a conflict.
 func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, items []item,
-	blocks []Block, gone func(Block) missing) (map[int64]bool, error) {
+	blocks []Block, gone func(Block) missing) (conflicted map[int64]bool, wrote bool, err error) {
 	live := map[int64]Block{}
 	for _, b := range blocks {
 		live[b.ID] = b
 	}
-	conflicted := map[int64]bool{}
+	conflicted = map[int64]bool{}
 	seen := map[int64]bool{}
 	var after int64
 	for _, item := range items {
@@ -427,8 +431,9 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 			for _, part := range Paragraphs(item.Text) {
 				e, err := s.InsertBlock(ctx, a, document, after, part, false)
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
+				wrote = true
 				after = e.EntityID
 			}
 			continue
@@ -451,9 +456,11 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 			if _, err := s.SetBlock(ctx, a, item.ID, item.Version, parts[0], false); err != nil {
 				var clash *core.ConflictError
 				if !errors.As(err, &clash) {
-					return nil, err
+					return nil, false, err
 				}
 				conflicted[item.ID] = true
+			} else {
+				wrote = true
 			}
 		}
 		// What was written under the block is words that are in the file and
@@ -462,8 +469,9 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		for _, part := range parts[1:] {
 			e, err := s.InsertBlock(ctx, a, document, after, part, false)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
+			wrote = true
 			after = e.EntityID
 		}
 	}
@@ -475,13 +483,14 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		switch gone(b) {
 		case dropMissing:
 			if _, err := s.DeleteBlock(ctx, a, b.ID); err != nil {
-				return nil, err
+				return nil, false, err
 			}
+			wrote = true
 		case markMissing:
 			conflicted[b.ID] = true
 		}
 	}
-	return conflicted, nil
+	return conflicted, wrote, nil
 }
 
 // markedIn is the blocks the file already carries a conflict marker on, which

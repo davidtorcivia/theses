@@ -15,6 +15,12 @@ import (
 // paragraphs between blocks.
 var ErrSourceBase = errors.New("this markdown was written from a version of the document that is no longer on record; read it again and edit that")
 
+// ErrSourceSpread is a save with more changed at once than the paragraphs can
+// be placed against. What is the same at the top and the bottom costs nothing
+// to line up, so this is a stretch of changed text long enough that lining it
+// up would be a table of a million cells.
+var ErrSourceSpread = errors.New("too much of the document changed at once to line the paragraphs up; save it in smaller pieces")
+
 // errNothing is a save that writes nothing. It is raised so that the
 // transaction rolls back and the revision the save opened with is not kept, and
 // it never reaches a caller.
@@ -40,14 +46,15 @@ type SourceConflict struct {
 }
 
 // maxPairs is how large a table lining the paragraphs up may build, counted in
-// base blocks times paragraphs. A million is a few milliseconds and about eight
-// megabytes, which is the same allowance one three way merge of a block gets.
+// changed base blocks times changed paragraphs. A million is a few
+// milliseconds and about eight megabytes, which is the same allowance one three
+// way merge of a block gets. It counts only the stretch that changed, because
+// the runs that are the same at the top and the bottom are trimmed off first,
+// so an ordinary edit in a long document costs almost nothing here.
 //
-// ponytail: past it the paragraphs are paired with the base blocks where they
-// stand, which still keeps every unchanged paragraph's block and writes nothing
-// for it, and only moves ids about when a paragraph was added or taken out of a
-// document that large. The upgrade is the linear space form the merge package
-// already wants.
+// Past it the save is refused. Pairing by position instead would rewrite every
+// block of a long document with its neighbor's text the moment one paragraph
+// was added at the top.
 const maxPairs = 1 << 20
 
 // WriteSource writes a whole document from its markdown. base is the blocks the
@@ -106,29 +113,22 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 		if err != nil {
 			return err
 		}
-		live := map[int64]Block{}
-		for _, b := range blocks {
-			live[b.ID] = b
-		}
 		if base == nil {
 			base = make([]BlockRef, 0, len(blocks))
 			for _, b := range blocks {
 				base = append(base, BlockRef{ID: b.ID, Version: b.Version})
 			}
 		}
-		items, err := s.plan(ctx, document, base, paragraphs, live)
+		items, err := s.plan(ctx, document, base, paragraphs, blocks)
 		if err != nil {
 			return err
-		}
-		if sameAs(items, blocks) {
-			return errNothing
 		}
 
 		was := map[int64]int64{}
 		for _, ref := range base {
 			was[ref.ID] = ref.Version
 		}
-		conflicted, err := s.applyItems(ctx, a, document, items, blocks, func(b Block) missing {
+		conflicted, wrote, err := s.applyItems(ctx, a, document, items, blocks, func(b Block) missing {
 			version, named := was[b.ID]
 			switch {
 			case !named:
@@ -156,12 +156,19 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 				out = append(out, SourceConflict{Block: b.ID, Version: b.Version, Current: b.Text})
 			}
 		}
+		if !wrote {
+			// Nothing went in, so the revision this opened with records no
+			// change and is not a version anybody would restore to. That
+			// covers the same markdown sent twice, which lands here because
+			// the second time every paragraph already has its block. A
+			// conflict reported with nothing written is one of these too: the
+			// caller is told about it either way, and a snapshot of a document
+			// that did not move is noise in a list of fifty.
+			return errNothing
+		}
 		return nil
 	})
-	if errors.Is(err, errNothing) {
-		return nil, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, errNothing) {
 		return nil, err
 	}
 	return out, nil
@@ -174,19 +181,35 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 // side kept is paired off in order, the leftover paragraphs becoming new blocks
 // and the leftover blocks falling out of the list to be deleted.
 func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
-	paragraphs []string, live map[int64]Block) ([]item, error) {
+	paragraphs []string, blocks []Block) ([]item, error) {
+	live := map[int64]Block{}
+	for _, b := range blocks {
+		live[b.ID] = b
+	}
+	named := map[int64]bool{}
 	texts := make([]string, 0, len(base))
 	for _, ref := range base {
-		if _, there := live[ref.ID]; !there {
+		named[ref.ID] = true
+		b, there := live[ref.ID]
+		switch {
+		case there && b.Version == ref.Version:
+			// The block still holds what the markdown was written from, so
+			// there is nothing to look up. This is almost every block of almost
+			// every save, and it is also what lets a document whose blocks were
+			// written before block_texts existed be saved at all when the base
+			// is the document as it stands.
+			texts = append(texts, b.Text)
+			continue
+		case !there:
 			// A block the base names that the document no longer has: either
 			// somebody deleted it, or the id was never this document's. The
 			// second is a request that has no business here, and the two are
 			// told apart before anything is read back under either.
-			b, err := GetBlock(ctx, s.DB, ref.ID)
+			gone, err := GetBlock(ctx, s.DB, ref.ID)
 			if err != nil {
 				return nil, err
 			}
-			if b.Document != document {
+			if gone.Document != document {
 				return nil, core.ErrNotFound
 			}
 		}
@@ -200,12 +223,9 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 		texts = append(texts, was)
 	}
 
-	keep := make([]int, len(texts))
-	for i := range keep {
-		keep[i] = -1
-	}
-	if len(texts)*len(paragraphs) <= maxPairs {
-		keep = merge.Match(texts, paragraphs)
+	keep, err := pairs(texts, paragraphs)
+	if err != nil {
+		return nil, err
 	}
 
 	items := []item{}
@@ -237,21 +257,105 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 		// in it. Leaving it out of the list is what deletes it.
 		i = i2
 	}
+
+	// Every item whose block the document does not have is about to become a
+	// new block: a paragraph no base block accounts for, and one whose base
+	// block somebody else deleted. Either is a second copy if the document
+	// already holds exactly it in a block the base never named, which is what
+	// an earlier run of this very save leaves behind. Taking that block rather
+	// than making another is what makes sending the same markdown twice change
+	// nothing, which a Save pressed again, a request whose answer never
+	// arrived, and an agent retrying all do. They are matched by text, each at
+	// most once, and only forwards through the document, so two paragraphs that
+	// read alike take the two blocks that read alike in order.
+	//
+	// What it costs: a paragraph somebody else added in the same place, that
+	// the person had also written, goes in once rather than twice.
+	spare := []Block{}
+	for _, b := range blocks {
+		if !named[b.ID] {
+			spare = append(spare, b)
+		}
+	}
+	at := 0
+	for n, it := range items {
+		if _, there := live[it.ID]; there {
+			continue
+		}
+		for k := at; k < len(spare); k++ {
+			if spare[k].Text != it.Text {
+				continue
+			}
+			items[n] = item{ID: spare[k].ID, Version: spare[k].Version, Text: it.Text}
+			at = k + 1
+			break
+		}
+	}
 	return items, nil
 }
 
-// kept adds the paragraph one base block became.
+// pairs is the longest common subsequence of the base texts and the paragraphs,
+// as the index in the paragraphs each base text kept or minus one for the ones
+// it did not.
 //
-// A block somebody else deleted while the markdown was being edited is the one
-// case that needs deciding, and it is decided by whether this person changed
-// the paragraph. An unchanged one is left out, so that saving an edit made
-// somewhere else in the document does not put a paragraph somebody deleted back
-// again. A changed one goes in with the id it had, which no longer names
-// anything, so it lands as a new block where it stood: this person's words are
-// not the deletion's to take away.
+// The runs that are the same at the top and at the bottom are trimmed off and
+// paired straight across: they are what a long document is almost entirely made
+// of, and leaving them in would put an edit in a thousand paragraph document
+// over the budget for a change of one line.
+func pairs(texts, paragraphs []string) ([]int, error) {
+	head := 0
+	for head < len(texts) && head < len(paragraphs) && texts[head] == paragraphs[head] {
+		head++
+	}
+	tail := 0
+	for tail < len(texts)-head && tail < len(paragraphs)-head &&
+		texts[len(texts)-1-tail] == paragraphs[len(paragraphs)-1-tail] {
+		tail++
+	}
+	if (len(texts)-head-tail)*(len(paragraphs)-head-tail) > maxPairs {
+		return nil, ErrSourceSpread
+	}
+	middle := merge.Match(texts[head:len(texts)-tail], paragraphs[head:len(paragraphs)-tail])
+	keep := make([]int, len(texts))
+	for i := range keep {
+		switch {
+		case i < head:
+			keep[i] = i
+		case i >= len(texts)-tail:
+			keep[i] = i - len(texts) + len(paragraphs)
+		case middle[i-head] < 0:
+			keep[i] = -1
+		default:
+			keep[i] = middle[i-head] + head
+		}
+	}
+	return keep, nil
+}
+
+// kept adds the paragraph one base block became. Two cases turn on whether this
+// person changed that paragraph at all, which is what was and now say.
+//
+// A block somebody else deleted while the markdown was being edited: an
+// unchanged paragraph is left out, so that saving an edit made somewhere else
+// in the document does not put a paragraph somebody deleted back again, and a
+// changed one goes in with the id it had, which no longer names anything, so it
+// lands as a new block where it stood. This person's words are not the
+// deletion's to take away.
+//
+// A block somebody else wrote in, holding a paragraph this person did not
+// touch: the save has nothing to say about it, and it is carried as the block
+// reads now so that nothing is written for it. Carrying the paragraph as it was
+// written instead would send a set whose merge can only answer with what they
+// wrote, which is already there, at the cost of a version, a row in the log,
+// their paragraph recorded as this person's, and a save that is not the same
+// the second time it is sent.
 func kept(items []item, ref BlockRef, was, now string, live map[int64]Block) []item {
-	if _, there := live[ref.ID]; !there && was == now {
+	b, there := live[ref.ID]
+	switch {
+	case !there && was == now:
 		return items
+	case there && was == now && b.Text != was:
+		return append(items, item{ID: ref.ID, Version: b.Version, Text: b.Text})
 	}
 	return append(items, item{ID: ref.ID, Version: ref.Version, Text: now})
 }

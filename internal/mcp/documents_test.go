@@ -274,6 +274,26 @@ func TestWriteDocumentTool(t *testing.T) {
 		t.Fatalf("the document reads %+v", blocks)
 	}
 
+	// The same call again changes nothing and reports the same conflict, which
+	// is what an agent retrying a call it never saw the answer to does.
+	var twice writeDocumentOut
+	h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: text, Base: base}, &twice)
+	if len(twice.Conflicts) != 1 || twice.Conflicts[0].Block != last.ID {
+		t.Fatalf("the second call reported %+v", twice.Conflicts)
+	}
+	after, err := docs.Blocks(ctx, h.db, made.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(blocks) {
+		t.Fatalf("the document has %d blocks after the second call, want %d", len(after), len(blocks))
+	}
+	for i, b := range after {
+		if b.ID != blocks[i].ID || b.Version != blocks[i].Version {
+			t.Fatalf("block %d is %d v%d, want %d v%d", i, b.ID, b.Version, blocks[i].ID, blocks[i].Version)
+		}
+	}
+
 	// A base naming a version the database cannot produce the text of is
 	// refused outright, with a reason the caller can act on.
 	res := h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: "Nothing.",
