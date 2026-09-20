@@ -54,3 +54,64 @@ export function rebase(sent, acked, now, caret) {
 }
 
 const clamp = (at, length) => Math.max(0, Math.min(at, length));
+
+const bullet = /^- /;
+const numbered = /^(\d+)\. /;
+
+// enter is what the Enter key does where the caret is, decided from the text
+// alone. A selection is replaced first, so every answer below is about the
+// block as it stands with the selected run gone.
+//
+// Outside a list it is a split: this block keeps `before` and a new one holds
+// `after`. On an item of a list, which is a block whose every line carries a
+// marker, it is the next item written into the same block, because a list is
+// one block and the editor never asks the server to cut one up. An empty item
+// is how somebody leaves a list: the marker goes with the newline in front of
+// it and the block splits where it stood. At or inside the marker of an item
+// that has words in it, the new item goes above rather than cutting the marker
+// in half, which is the one place the caret is not where the text is split.
+export function enter(text, start, end) {
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+  const now = before + after;
+  const caret = before.length;
+  const lines = now.split('\n');
+  const dashes = lines.every((line) => bullet.test(line));
+  const numbers = !dashes && lines.every((line) => numbered.test(line));
+  if (!dashes && !numbers) return { kind: 'split', before, after };
+
+  const from = now.lastIndexOf('\n', caret - 1) + 1;
+  const stop = now.indexOf('\n', caret);
+  const to = stop < 0 ? now.length : stop;
+  const line = now.slice(from, to);
+  const mark = dashes ? '- ' : line.match(numbered)[0];
+  if (line.length === mark.length) {
+    return {
+      kind: 'split',
+      before: now.slice(0, from ? from - 1 : 0),
+      after: now.slice(Math.min(to + 1, now.length)),
+    };
+  }
+  // Nothing is renumbered anywhere below: what the list becomes is drawn from
+  // the markers as they read, and the item being typed is the only one the
+  // person is looking at.
+  //
+  // A caret in the marker is a caret at the front of the words, so the empty
+  // item is made above them and they stay whole. This item's own marker is
+  // reused, because the number that follows it is the one this item had.
+  if (caret <= from + mark.length) {
+    return { kind: 'list', text: now.slice(0, from) + mark + '\n' + now.slice(from), caret: from + mark.length };
+  }
+  const next = dashes ? '\n- ' : '\n' + (Number(line.match(numbered)[1]) + 1) + '. ';
+  return { kind: 'list', text: now.slice(0, caret) + next + now.slice(caret), caret: caret + next.length };
+}
+
+// chunks is what a paste is made of: the paragraphs this editor reads in it,
+// blank line separated, with whatever was only whitespace dropped. All the
+// editor asks of it is whether a paste holds more than one, because the first
+// goes in at the caret and the rest go up as one insert for the server to cut
+// up by its own rule. So this promises nothing about that rule and does not
+// have to agree with it.
+export function chunks(text) {
+  return text.replace(/\r\n?/g, '\n').split(/\n[ \t]*\n/).filter((part) => part.trim());
+}

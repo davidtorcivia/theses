@@ -176,6 +176,26 @@ function ship(cmd, args, revert, row) {
   });
 }
 
+// live is a command that must not be kept for later. The editor's block.insert
+// is the one: it carries text that is in no entry yet and has no row on the
+// page, so the answer is what decides where that text ends up. Queued, it would
+// arrive long after the editor had put the text back into the block it came
+// from, and the paragraph would be there twice. So this goes now or it is
+// refused, and a socket that goes while it is in the air is a refusal too,
+// which is what passing no row below means.
+//
+// It does not wait behind a replay the way send does. The outbox's order is
+// about one field's edits folding into one another; an insert names a block the
+// server already has and has nothing to queue behind.
+//
+// It gives up the way the drain does, for the same reason: a socket can be open
+// and connected to nothing, and a caller holding text until this answers would
+// hold it for the rest of the session.
+export function live(cmd, args) {
+  if (down()) return Promise.reject(new Offline());
+  return answered(ship(cmd, args, null, null), replyWait);
+}
+
 // where tells the others what this tab has open. It is never worth an answer.
 export function where(what) {
   if (socket && socket.readyState === WebSocket.OPEN) {

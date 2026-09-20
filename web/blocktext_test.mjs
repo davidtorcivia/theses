@@ -7,7 +7,7 @@
 // is not served to browsers and kept by the service worker.
 
 import assert from 'node:assert/strict';
-import { rebase } from './static/app/blocktext.js';
+import { rebase, enter, chunks } from './static/app/blocktext.js';
 
 // The caret is written as a pipe in `now` and in `want`, so a case reads as the
 // two texts and where the person is standing in them. A case with no `want` is
@@ -92,3 +92,55 @@ for (const c of cases) {
 }
 
 console.log(`${cases.length} rebase cases pass`);
+
+// The Enter rows. One pipe is the caret and two are a selection, which is
+// replaced before anything else is decided. A case with `want` is one that
+// writes the next list item into the same block, caret and all; a case with
+// `before` and `after` is a split.
+const sel = (text) => {
+  const start = text.indexOf('|');
+  const second = text.indexOf('|', start + 1);
+  return [text.replace(/\|/g, ''), start, second < 0 ? start : second - 1];
+};
+
+const enters = [
+  { name: 'in the middle of a block', in: 'One.| Two.', before: 'One.', after: ' Two.' },
+  { name: 'at the start of a block', in: '|One.', before: '', after: 'One.' },
+  { name: 'at the end of a block', in: 'One.|', before: 'One.', after: '' },
+  { name: 'in an empty block', in: '|', before: '', after: '' },
+  { name: 'a selection goes first', in: 'One |two| three.', before: 'One ', after: ' three.' },
+  { name: 'in the middle of a list item stays in the block', in: '- one\n- t|wo', want: '- one\n- t\n- |wo' },
+  { name: 'a numbered list numbers the next item', in: '1. one\n2. two|', want: '1. one\n2. two\n3. |' },
+  { name: 'at the start of an item the empty one goes above it', in: '- one\n|- two', want: '- one\n- |\n- two' },
+  { name: 'at the start of the block the empty item goes above', in: '|- one\n- two', want: '- |\n- one\n- two' },
+  { name: 'inside the marker counts as the start of the item', in: '-| two', want: '- |\n- two' },
+  { name: 'an empty item above a numbered one keeps its number', in: '1. one\n|2. two', want: '1. one\n2. |\n2. two' },
+  { name: 'an empty item at the end leaves the list', in: '- one\n- |', before: '- one', after: '' },
+  { name: 'an empty item in the middle splits the list', in: '- one\n- |\n- three', before: '- one', after: '- three' },
+];
+
+for (const c of enters) {
+  const [text, start, end] = sel(c.in);
+  const got = enter(text, start, end);
+  if (c.want !== undefined) {
+    const [want, caret] = at(c.want);
+    assert.deepEqual(got, { kind: 'list', text: want, caret }, c.name);
+    continue;
+  }
+  assert.deepEqual(got, { kind: 'split', before: c.before, after: c.after }, c.name);
+}
+
+console.log(`${enters.length} enter cases pass`);
+
+const pastes = [
+  { name: 'one paragraph is one chunk', in: 'One.', want: ['One.'] },
+  { name: 'a blank line ends a chunk', in: 'One.\n\nTwo.', want: ['One.', 'Two.'] },
+  { name: 'a line of spaces is a blank line', in: 'One.\n \nTwo.', want: ['One.', 'Two.'] },
+  { name: 'line endings are normalised', in: 'One.\r\n\r\nTwo.', want: ['One.', 'Two.'] },
+  { name: 'what is only whitespace is dropped', in: 'One.\n\n  \n\nTwo.\n\n', want: ['One.', 'Two.'] },
+  { name: 'a single newline stays inside its chunk', in: 'One.\nTwo.', want: ['One.\nTwo.'] },
+];
+
+for (const c of pastes) assert.deepEqual(chunks(c.in), c.want, c.name);
+
+console.log(`${pastes.length} paste cases pass`);
