@@ -8,7 +8,7 @@
 // applying the guess again; a refusal puts back what was there and, for a
 // command that was queued, leaves a row in the activity panel to choose from.
 
-import { state, apply, emit, predict, baseText, target, retryMaterial } from './state.js';
+import { state, apply, emit, predict, baseText, target, retryMaterial, unmakeLocal } from './state.js';
 import { parseWhere } from './blocktext.js';
 import * as offline from './offline.js';
 import * as api from './api.js';
@@ -227,14 +227,20 @@ function down() {
 // activity panel's undo of a run of saves is the one: it carries older text
 // against an older base, and folding it over a save already waiting for the
 // same block would throw that save away unsent.
+//
+// opts.key names the change, and a caller passes its own when it has drawn
+// something the answer has to be matched back to: the editor draws a block
+// before the server has made it and has nothing but that name to find it by
+// again.
 export function send(cmd, args = {}, proposition = state.open, opts = {}) {
   const fold = opts.fold ?? target(cmd, args);
+  const key = opts.key ?? newKey();
   const baseWas = baseText(cmd, args);
   const revert = predict(cmd, args);
-  const row = { proposition, me: state.me, cmd, args, idem: newKey(),
+  const row = { proposition, me: state.me, cmd, args, idem: key,
     base: args.base ?? null, base_text: baseWas };
   if (down() || replaying) return keep(row, fold, revert);
-  return ship(cmd, args, revert, row, row.idem, fold);
+  return ship(cmd, args, revert, row, key, fold);
 }
 
 // keep puts a command in the outbox and answers as though it had gone. It has
@@ -278,74 +284,16 @@ function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
   });
 }
 
-// live is a command that must not be kept for later. The editor's block.insert
-// is the one: it carries text that is in no entry yet and has no row on the
-// page, so the answer is what decides where that text ends up. Queued, it would
-// arrive long after the editor had put the text back into the block it came
-// from, and the paragraph would be there twice.
-//
-// A socket that goes while it is in the air used to be a refusal, and that was
-// the same duplicate by another route: the server may have applied the insert
-// before the socket died. So the frame carries a key and goes again, under the
-// same key, as soon as there is a socket to go on. The server either does it or
-// says it already did, and either way the answer is the one block.
-//
-// One deadline covers the whole attempt, tries and all, rather than one per
-// try: the caller is holding text with nowhere to be, and what matters to them
-// is how long until it lands somewhere, not how many times this tried. It gives
-// up the way the drain does, for the same reason: a socket can be open and
-// connected to nothing.
-//
-// It does not wait behind a replay the way send does. The outbox's order is
-// about one field's edits folding into one another; an insert names a block the
-// server already has and has nothing to queue behind.
-export function live(cmd, args) {
-  const key = newKey();
-  return new Promise((resolve, reject) => {
-    let over = false;
-    const timer = setTimeout(() => {
-      // The frame that was in the air when this fired may still be applied. The
-      // caller has been told it was not, so it draws nothing; the block arrives
-      // as an ordinary event like anybody else's.
-      over = true;
-      reject(new Offline());
-    }, replyWait);
-    const settle = (fn) => (v) => {
-      if (over) return;
-      over = true;
-      clearTimeout(timer);
-      fn(v);
-    };
-    const attempt = (first) => {
-      if (over) return;
-      if (down()) {
-        // Nothing has gone up yet and there is no connection, so there is
-        // nothing uncertain to wait out: this is the refusal it always was, and
-        // the caller puts the text back now rather than in fifteen seconds.
-        if (first) settle(reject)(new Offline());
-        else setTimeout(() => attempt(false), tryAgainIn);
-        return;
-      }
-      ship(cmd, args, null, null, key).then(settle(resolve), (err) => {
-        if (over) return;
-        // The socket went while the frame was in the air, which says nothing
-        // about whether the server applied it. The key is what makes sending it
-        // again safe either way.
-        if (err instanceof Offline) {
-          setTimeout(() => attempt(false), tryAgainIn);
-          return;
-        }
-        settle(reject)(err);
-      });
-    };
-    attempt(true);
-  });
-}
+// inserted is how docs.js hears that a block it drew has been made, handed here
+// rather than imported for the reason carets is. A block this tab made goes up
+// as an ordinary command, so an insert made with no connection is answered
+// inside the drain, long after send answered the editor with null, and that ack
+// is the moment the block on the page stops being this tab's own.
+let inserted = null;
 
-// tryAgainIn is how long live waits between tries. A reconnection starts at
-// half a second and backs off, so this is short enough to take the first socket
-// that opens and long enough not to spin while there is none.
-const tryAgainIn = 250;
+export function onInserted(fn) {
+  inserted = fn;
+}
 
 // where tells the others what this tab has open. It is never worth an answer,
 // and the same string twice is nothing to tell: a caret moving inside a block
@@ -455,8 +403,13 @@ async function drain() {
         continue;
       }
       try {
-        await answered(row.via === 'api' ? post(row) : ship(row.cmd, row.args, null, null, row.idem),
+        const ev = await answered(row.via === 'api' ? post(row) : ship(row.cmd, row.args, null, null, row.idem),
           row.via === 'api' ? httpWait : replyWait);
+        // Told before anything is awaited, so that the block this ack is about
+        // and the one the editor drew for it are on and off the page inside one
+        // frame: the event was applied a microtask ago and a render between the
+        // two would draw the paragraph twice.
+        if (inserted && row.cmd === 'block.insert' && ev) inserted(row.idem, ev);
         await offline.dropIfUnchanged(row.n, row.at);
         reverts.delete(row.n);
         tries.delete(row.n);
@@ -550,9 +503,15 @@ export async function again(n) {
 // letGo drops a refused row and undraws the guess that was never taken, to what
 // the server says it holds when it said, and to what was there before when it
 // did not.
-export async function letGo(n, detail) {
-  await offline.drop(n);
-  undraw(n, detail);
+//
+// A block drawn for an insert nobody took has no such guess to put back: the
+// closure that would undraw it belongs to the tab that made it and a reload has
+// none. The row names that block itself, by the key the insert was to go up
+// under, which is on the block as well and survives in the snapshot.
+export async function letGo(row) {
+  await offline.drop(row.n);
+  undraw(row.n, row.detail);
+  if (row.cmd === 'block.insert') unmakeLocal(row.idem);
   await count();
 }
 

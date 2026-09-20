@@ -8,10 +8,11 @@
 // between is merged on the server or comes back as a choice.
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit } from './state.js';
-import { send, live, where, onCarets, newKey, Conflict, Offline } from './net.js';
+import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal } from './state.js';
+import { send, newKey, where, onCarets, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
-import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './blocktext.js';
+import { retext, unqueue } from './offline.js';
+import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
 import * as undo from './undo.js';
 import { movable, carrying } from './drag.js';
@@ -47,47 +48,157 @@ let rendering = false;
 // server's detail, and let the activity panel offer the same two answers.
 const work = new Map();
 
-// pending is the block a split is waiting on: the editor drawn where the new
-// block will be, holding the text that went under the caret, before the server
-// has given it an id. It is the one place text lives outside an entry, because
-// there is no block to have an entry for yet, and it lasts exactly as long as
-// the insert is in the air. The ack turns it into that block's editor and the
-// text into that block's entry; a refusal puts the text back on the end of the
-// block it was split from. One at a time: while one is in the air an Enter that
-// would split is a plain newline. Which document it belongs to is held in the
-// count below, where every insert in the air is.
-let pending = null;
-
-// inserting counts the block.insert commands this tab has in the air, by the
-// document each is being made in. A block being made is work outstanding on
-// that document that has no row to be counted on yet, and it is one document's
-// work: the save line speaks for the open document and the tab dots each speak
-// for their own.
-const inserting = new Map();
-
-// insert sends one and counts it while it is gone. Every block this editor
-// makes goes through here, so there is one place that knows a document has a
-// block on the way.
-function insert(document, args) {
-  inserting.set(document, (inserting.get(document) || 0) + 1);
-  status();
-  emit();
-  return live('block.insert', { document, ...args }).finally(() => {
-    const left = inserting.get(document) - 1;
-    if (left > 0) inserting.set(document, left);
-    else inserting.delete(document);
-    status();
-    emit();
+// newBlock draws a block the server has not made yet and sends the command that
+// makes it. The block is a row in the document like any other, with a negative
+// id, so it renders, takes an editor and takes typing while it is still this
+// tab's own; the ack puts the real block in its place underneath whoever is
+// standing in it.
+//
+// The command goes the ordinary way, which is what makes Enter, the + and a
+// paste work with no connection at all: up now if there is a socket, into the
+// outbox if there is not, replayed under the same key either way.
+function newBlock(document, after, text, whole) {
+  // after is where it goes on the page, which is a block this tab made as
+  // readily as one the server has; after_key is the same place said in the one
+  // way the server can hear it, and insert below chooses between them.
+  const above = after < 0 ? blockAnywhere(after) : null;
+  const row = makeLocal({
+    document_id: document, text, whole, key: newKey(),
+    after, after_key: above ? above.key : '',
   });
+  insert(row);
+  return row;
 }
 
-// Online is a socket and a network, and every key below that adds or removes a
-// block asks for both. block.insert and block.delete are not drawn until the
-// server answers, so a split made with nothing to answer it would take what was
-// typed off the page and leave it nowhere anybody could see it. With no
-// connection those keys do what a plain textarea does: an Enter that would
-// split is a newline, a paste is one block, Backspace at nought does nothing.
-// Enter inside a list is typing into a block that exists, so it works either way.
+// insert sends the command that makes a local block, and is also how one the
+// server would not take goes again. It is the one place a block this tab made
+// is named to the server: a negative id means nothing there, so an insert made
+// under another local block says instead which command makes that one, and
+// nothing else in this module ever sends a negative id at all.
+//
+// again marks the second try, which is the one case worth one: the socket went
+// between the check and the frame, and the same command goes into the outbox
+// under the same key. A browser with no storage to keep it in cannot do even
+// that, and there this is a refusal like any other.
+function insert(row, again) {
+  const w = work.get(row.id);
+  // The row is read again rather than trusted: a save of a block this tab made
+  // writes the text into the row as well as into the command, so the one this
+  // was called with may be a copy from before that.
+  const text = w ? w.text : (blockAnywhere(row.id) || row).text;
+  const args = { document: row.document_id, text, whole: row.whole };
+  if (row.after < 0) args.after_key = row.after_key;
+  else args.after = row.after;
+  send('block.insert', args, state.open, { key: row.key })
+    .then((ev) => (ev ? bind(row.key, ev) : acked(row.id, text, 0, null)))
+    .catch((err) => {
+      if (err instanceof Offline && !again) { insert(row, true); return; }
+      refusedInsert(row, err);
+    });
+  status();
+  emit();
+}
+
+// bind is the insert coming back, live or out of the drain or as the answer to
+// a replay. The real block was applied a moment ago, so the local one comes off
+// the page in the same tick and the two are one render: the paragraph is never
+// drawn twice and never blinks out. What this tab has typed into it moves to
+// the real block and goes up as an ordinary save if the server has not got it,
+// and an editor standing in it is re-keyed in place rather than rebuilt, so it
+// keeps its caret, its selection and its height.
+function bind(key, ev) {
+  const row = unmakeLocal(key);
+  // Nothing to bind: another tab's drain answered this insert, or this one
+  // answered it already and the outbox sent it a second time under the same
+  // key, which the server replayed rather than applied.
+  if (!row) return;
+  // A paste is one insert the server cuts into blocks, so this ack is about the
+  // first of several and the local block stood for all of them. There is no one
+  // block for an entry or an editor to move to, and both go with the row:
+  // prune and afterRender below say so if there was anything in them.
+  if (row.whole) {
+    const id = ev.after.id;
+    const w = work.get(row.id);
+    if (w) {
+      work.delete(row.id);
+      w.base = ev.after.version;
+      w.sent = ev.after.text;
+      w.flight = false;
+      work.set(id, w);
+    }
+    if (editing && editing.id === row.id) {
+      editing.id = id;
+      editing.node.dataset.b = id;
+      where('block:' + id);
+      notice(id);
+    }
+    // A block made under this one still points at the id it is losing. It names
+    // the insert by key, which does not change, so this is only so that a
+    // refusal of that one knows which block to put the words back into.
+    for (const d of documents()) for (const b of d.blocks || []) if (b.after === row.id) b.after = id;
+    if (w) arm(id, w);
+  }
+  emit();
+}
+
+// A queued insert is acked inside the drain, long after send answered with
+// null, so the socket is what tells this module about that one.
+onInserted(bind);
+
+// refusedInsert is the server saying no to a block this tab has already drawn.
+// The words go on the end of the block it was made under, through that block's
+// entry and the ordinary save, and the block itself comes off the page. If
+// there is nowhere to put them, because it was made under nothing or what it
+// was made under has gone, the block stays where it is with the reason above it
+// and the two answers beside it: what somebody typed is not something to drop
+// quietly.
+function refusedInsert(row, err) {
+  const w = work.get(row.id);
+  const text = w ? w.text : (blockAnywhere(row.id) || row).text;
+  const why = err instanceof Offline ? 'This device has nowhere to keep that block.' : err.message;
+  // Where it was made, which is a block the server has or one this tab made.
+  // Either can take the words back; a block made under nothing, which is the +
+  // in an empty document, is the case that cannot.
+  const above = row.after ? blockAnywhere(row.after) : null;
+  if (above) {
+    if (w) { clearTimeout(w.timer); work.delete(row.id); }
+    if (editing && editing.id === row.id) editing = null;
+    unmakeLocal(row.key);
+    say(why);
+    // A paste went in under the block it was pasted into and a split under the
+    // block it was cut out of, which is one blank line and one newline: the
+    // same two joins the two of them make when they are taken back.
+    const join = putBack(above.id, (row.whole ? '\n' : '\n\n') + text);
+    if (join >= 0) startEditing(above.id, join);
+    return;
+  }
+  const kept = entryOf(row.id);
+  if (!kept) return;
+  kept.text = text;
+  kept.status = 'refused';
+  kept.reason = why;
+  clearTimeout(kept.timer);
+  kept.timer = 0;
+  kept.first = 0;
+  say(why);
+  notice(row.id);
+  emit();
+  status();
+}
+
+// named says whether a block that is still this tab's own is what another one
+// is waiting to be made under. That insert carries this block's key and nothing
+// else, so taking this one back would leave it with nowhere to go.
+function named(id) {
+  const row = blockAnywhere(id);
+  if (!row || !row.key) return false;
+  return documents().some((d) => (d.blocks || []).some((b) => b.after_key === row.key));
+}
+
+// Online is a socket and a network. Joining two blocks and deleting one still
+// ask for both: the delete is not drawn until the server answers, so a join
+// made with nothing to answer it would leave the paragraph in both blocks.
+// Making a block asks for neither any more.
 const online = () => state.connected && navigator.onLine;
 
 // drawn is the node each block was last rendered as. The whole page is made
@@ -227,10 +338,6 @@ export function renderDocument() {
     for (const b of doc.blocks || []) {
       ids.add(b.id);
       rendered.append(blockNode(b));
-      // The provisional editor is put back directly under the block it came
-      // out of, on every render, so the page reads as it will once the server
-      // has answered. It has no block id, so nothing else here sees it.
-      if (pending && pending.anchor === b.id) rendered.append(pending.ed.node);
     }
     for (const id of drawn.keys()) if (!ids.has(id)) drawn.delete(id);
     // seen goes the same way, by its own keys rather than drawn's: the block
@@ -462,9 +569,15 @@ function entries(doc) {
 // so the two agree.
 const busy = (w) => w.status !== 'ok' || w.flight || w.text !== w.sent;
 
+// making is a block this tab has drawn that the server has not made yet. It is
+// work outstanding on its document whatever its entry says, because the insert
+// still has to land, and the entry of a block nobody is typing in is dropped as
+// soon as its text has reached the outbox.
+const making = (doc) => (doc ? doc.blocks || [] : []).some((b) => b.id < 0);
+
 // A block on its way into a document is outstanding on that document too, so
-// its tab carries the dot while the insert is in the air.
-const held = (doc) => Boolean(doc && inserting.has(doc.id)) || entries(doc).some(busy);
+// its tab carries the dot until it is made.
+const held = (doc) => making(doc) || entries(doc).some(busy);
 
 // Saving is what is in the air, on a timer, or waiting for one of those. Text
 // the server refused, or a block waiting on a choice, is not being saved and
@@ -483,9 +596,9 @@ function saveState() {
     return 'Saving…';
   }
   // A block this document is waiting on is text this tab is answerable for
-  // that has no entry to be counted in yet. A block on its way into another
-  // document is that document's line to say, not this one's.
-  if (doc && inserting.has(doc.id)) return 'Saving…';
+  // whether or not it has an entry to be counted in. A block on its way into
+  // another document is that document's line to say, not this one's.
+  if (making(doc)) return 'Saving…';
   if (here.some((w) => w.status === 'ok' && (w.flight || w.timer || w.text !== w.sent))) return 'Saving…';
   return 'Saved';
 }
@@ -1007,10 +1120,9 @@ function startEditing(id, caret) {
 // It holds nothing: the text lives in the entry, and this is a way of typing
 // into it.
 //
-// id is nought for the provisional editor a split draws, which stands for a
-// block the server has not made yet. It has no block id on the node and no
-// entry behind it, and the keys below that would name a block are off in it
-// until the ack gives it one.
+// id is negative for a block the server has not made yet, which is an ordinary
+// block here and an ordinary entry behind it. The two keys that would name it
+// to the server, the join and the move, are the ones that say no below.
 function editor(id, text) {
   const area = el('textarea', { spellcheck: 'false', 'aria-label': 'This block as markdown' });
   area.value = text;
@@ -1035,8 +1147,8 @@ function editor(id, text) {
     reflect(ed);
   };
   // The listeners read the block off this rather than closing over the argument
-  // above, because a provisional editor becomes the editor of a real block the
-  // moment its insert is acked and all of them have to follow it there.
+  // above, because the editor of a block this tab made becomes the editor of the
+  // real block the moment its insert is acked, and all of them follow it there.
   const ed = { id, node, area, mirror, fit, was: null };
   // What Ctrl+Z in this block will take back, kept while the document is open,
   // so leaving a paragraph and coming back finds what was written in it still
@@ -1052,19 +1164,15 @@ function editor(id, text) {
   // something else starts again from what it reads, and only one that reads
   // what this tab last left keeps its steps. The caret is put at the end,
   // which is where a click that names nowhere lands.
-  if (id) {
-    const open = { text, start: text.length, end: text.length };
-    const h = undo.of(id, open);
-    if (h.now() === text) h.record(open);
-    else undo.reset(id, text);
-  }
+  const open = { text, start: text.length, end: text.length };
+  const history = undo.of(id, open);
+  if (history.now() === text) history.record(open);
+  else undo.reset(id, text);
   area.addEventListener('input', (e) => { stepped(ed, e); typed(ed.id); fit(); });
   area.addEventListener('beforeinput', (e) => {
     // The Edit menu, a phone shaken, three fingers swiped: the same two things
-    // the keys below do, arriving as an input type rather than as a key. A
-    // provisional editor has no history to walk and keeps the browser's own,
-    // so the id is asked first and the event is left alone without one.
-    if (ed.id && (e.inputType === 'historyUndo' || e.inputType === 'historyRedo')) {
+    // the keys below do, arriving as an input type rather than as a key.
+    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
       e.preventDefault();
       stepBack(ed, e.inputType === 'historyRedo');
       return;
@@ -1082,7 +1190,10 @@ function editor(id, text) {
   // put back by the same render and afterRender takes the caret with it.
   area.addEventListener('blur', () => { if (!rendering) leave(ed.id); });
   editing = ed;
-  where(id ? 'block:' + id : docWhere());
+  // Nobody else can be told about a block the server does not have: a negative
+  // id means nothing outside this tab, and an offset in a block no other tab
+  // can see means nothing to anybody. Being in the document is what they hear.
+  where(id > 0 ? 'block:' + id : docWhere());
   // The height is set after the node is in the page, because a detached
   // textarea has no scroll height to measure.
   queueMicrotask(fit);
@@ -1103,7 +1214,7 @@ function editor(id, text) {
 // cannot be placed at all and keeps the last place it was drawn.
 function reflect(ed = editing) {
   if (!ed) return;
-  const w = ed.id ? work.get(ed.id) : null;
+  const w = work.get(ed.id);
   const text = ed.area.value;
   const here = w ? carets(ed.id, inside(ed.id), w.base, (n) => carry(w.sent, text, n)) : [];
   clear(ed.mirror);
@@ -1160,7 +1271,7 @@ onCarets(caretsMoved);
 // until it does, the marker says who is in the block and their last caret
 // stands where it was.
 function tellCaret() {
-  if (!editing || !editing.id || !online()) return;
+  if (!editing || editing.id <= 0 || !online()) return;
   const w = work.get(editing.id);
   if (!w || w.status !== 'ok' || w.text !== w.sent || state.waitingHere) return;
   where(formatWhere(editing.id, w.base, editing.area.selectionStart, editing.area.selectionEnd));
@@ -1260,15 +1371,12 @@ function key(e, ed) {
   // Escape leaves the block. It stops here so that it does not also close the
   // drawer or the palette on its way up.
   if (e.key === 'Escape') { e.stopPropagation(); ed.area.blur(); return; }
-  // A provisional editor has no block to name, and a key pressed mid
-  // composition belongs to the input method.
-  if (!ed.id || e.isComposing) return;
+  // A key pressed mid composition belongs to the input method.
+  if (e.isComposing) return;
   // Undo and redo, taken whether or not this block has anything to give back.
   // The moment anything wrote to this textarea from script the browser's own
   // history went with it, so there is nothing underneath to fall through to and
-  // the key is answered here or not at all. A provisional editor is the one
-  // that falls through, above: nothing has written to it but its own making,
-  // and what the browser kept there is better than nothing.
+  // the key is answered here or not at all.
   if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[zy]$/i.test(e.key)) {
     e.preventDefault();
     stepBack(ed, e.shiftKey || e.key.toLowerCase() === 'y');
@@ -1280,13 +1388,12 @@ function key(e, ed) {
 }
 
 // Enter writes the next item of a list into this block, or cuts the block in
-// two at the caret. The next item is text in a block that already exists, so it
-// is typing and works with no connection like any other typing. Cutting one in
-// two is not: it needs the server to make the block below, and it is a plain
-// newline without one, while a split is already in the air, or in a block
-// waiting on an answer, because a block cut in two under a refusal would leave
-// the half below with nothing to go back into when the refusal is discarded.
-// Shift+Enter is always a plain newline.
+// two at the caret. Both are the same with a connection and without one: the
+// next item is typing, and the block below is drawn here and made when there is
+// somewhere to make it. In a block waiting on an answer it is a plain newline,
+// because a block cut in two under a refusal would leave the half below with
+// nothing to go back into when the refusal is discarded. Shift+Enter is always
+// a plain newline.
 //
 // So is Enter inside a fenced code block, or over a selection that reaches into
 // one: a split there would leave a fence open in the block above and a block
@@ -1307,17 +1414,18 @@ function pressedEnter(e, ed) {
     return;
   }
   const w = work.get(ed.id);
-  if (!online() || pending || (w && w.status !== 'ok')) return;
+  if (w && w.status !== 'ok') return;
   e.preventDefault();
   split(ed, what.before, what.after);
 }
 
 // split is Enter in the middle of a block: this one keeps what was in front of
-// the caret, and what was behind it becomes the block below. That block does
-// not exist yet, so an editor holding the text is drawn where it will be and
-// the caret goes straight into it. Nothing typed during the round trip is lost
-// or lands in the wrong block: the ack takes the text out of that editor as it
-// stands then, wherever the person has got to.
+// the caret, and what was behind it becomes the block below. That block is
+// drawn at once, with the caret in it, and the command that makes it goes now
+// or waits in the outbox. Nothing typed while it waits is lost or lands in the
+// wrong block: it is typed into that block's own entry, which writes it into
+// the command that has not gone yet or hands it to the real block when the ack
+// arrives.
 function split(ed, before, after) {
   const id = ed.id;
   const doc = current();
@@ -1330,90 +1438,7 @@ function split(ed, before, after) {
   // holds and gives the editor up, which is what has to happen anyway now the
   // caret is moving out of it.
   leave(id);
-
-  const node = editor(0, after);
-  pending = { anchor: id, ed: editing };
-  const was = $(`#doc .blk[data-b="${id}"]`);
-  if (was) was.after(node);
-  editing.area.focus();
-  editing.area.setSelectionRange(0, 0);
-  insert(doc.id, { after: id, text: after, whole: true })
-    .then(inserted)
-    // Offline here is the network going between the check above and the send,
-    // or fifteen seconds of trying and never being answered. The text goes back
-    // into the block it came from either way; saying so twice, once on the bar
-    // and once as a line of its own, would be saying it about a block nobody
-    // can see.
-    //
-    // A socket that dies with the insert in the air is no longer one of these:
-    // the frame carries a key and goes again on the next socket, and a server
-    // that already applied it says so rather than making a second block.
-    //
-    // ponytail: what is left is the frame that was in the air when the fifteen
-    // seconds ran out. The server may apply it a moment later, and by then this
-    // has put the paragraph back on the end of the block it was split from, so
-    // the block arrives as an ordinary event and that paragraph is on the page
-    // twice. Nothing is lost and both are visible. Closing it needs the editor
-    // to be able to draw the insert before the answer, which is the change that
-    // makes Enter work with no connection at all.
-    .catch((err) => unsplit(err instanceof Offline ? '' : err.message));
-}
-
-// inserted is the split's ack. The row exists holding exactly what was sent, so
-// the entry starts from it and takes whatever else has been typed into the
-// provisional editor since. If the person is still in that editor it becomes
-// the ordinary editor of the block; if they have moved on, the entry still has
-// their text and sends it.
-function inserted(ev) {
-  if (!pending) return;
-  const ed = pending.ed;
-  const id = ev.after.id;
-  const w = {
-    text: ed.area.value, base: ev.after.version, sent: ev.after.text,
-    first: 0, timer: 0, flight: false, status: 'ok',
-  };
-  work.set(id, w);
-  const mine = editing === ed;
-  pending = null;
-  ed.id = id;
-  ed.node.dataset.b = id;
-  // The provisional editor becomes this block's, so this is where the block's
-  // undo history starts: what it holds now is what the block was made holding
-  // plus whatever was typed inside the round trip, and there is nothing behind
-  // that to take back.
-  undo.reset(id, ed.area.value);
-  if (mine) {
-    where('block:' + id);
-    notice(id);
-    arm(id, w);
-  } else {
-    ed.node.remove();
-    save(id);
-  }
-  emit();
-}
-
-// unsplit is the split coming back refused, or with no socket for it to have
-// gone down at all. The block was cut in two on the page and only one half is
-// on the server, so the halves go back together: what the provisional editor
-// holds goes on the end of the block it was split from and the caret goes back
-// to the join. If that block has gone as well there is nowhere to put the
-// words and the line below says so, which is the one case here that loses
-// anything: a block deleted by somebody else while the server was refusing the
-// half that came out of it.
-function unsplit(why) {
-  if (!pending) return;
-  const { anchor, ed } = pending;
-  const text = ed.area.value;
-  pending = null;
-  // The editor is given up and its node taken out before the block below is
-  // opened, so the blur that raises is still a provisional editor leaving and
-  // still means nothing.
-  if (editing === ed) editing = null;
-  ed.node.remove();
-  if (why) say(why);
-  const join = putBack(anchor, '\n' + text);
-  if (join >= 0) startEditing(anchor, join);
+  startEditing(newBlock(doc.id, id, after, true).id, 0);
 }
 
 // putBack is text this editor drew that the server would not take. It goes on
@@ -1450,7 +1475,7 @@ function putBack(id, text) {
 // of them, which is visible and loses nothing.
 function pressedBackspace(e, ed) {
   const { area } = ed;
-  if (area.selectionStart !== 0 || area.selectionEnd !== 0 || !online()) return;
+  if (area.selectionStart !== 0 || area.selectionEnd !== 0) return;
   const w = work.get(ed.id);
   if (w && w.status !== 'ok') return;
   const list = neighbours();
@@ -1458,6 +1483,18 @@ function pressedBackspace(e, ed) {
   if (at <= 0) return;
   const above = work.get(list[at - 1].id);
   if (above && above.status !== 'ok') return;
+  if (ed.id < 0) {
+    // A block the server has not made yet is taken back rather than deleted:
+    // the words go on the end of the block above and the command that would
+    // have made this one leaves the queue, which needs no server at all. Not
+    // while another block is waiting to be made under this one, though: that
+    // command names this one by key and would have nowhere to go.
+    if (named(ed.id)) return;
+    e.preventDefault();
+    unmake(ed, list[at - 1].id);
+    return;
+  }
+  if (!online()) return;
   e.preventDefault();
   const prev = list[at - 1].id;
   const join = putBack(prev, area.value);
@@ -1468,6 +1505,26 @@ function pressedBackspace(e, ed) {
   send('block.delete', { block: ed.id }).catch((err) => say(err.message));
   startEditing(prev, join);
   save(prev);
+}
+
+// unmake is the join above for a block that was never made: the command that
+// would have made it is dropped and the block comes off the page, so there is
+// nothing for the server to hear about at all. If the command has already gone,
+// because a socket came back and the drain took it while this was being asked,
+// the block is on its way to being real and this does nothing: the alternative
+// is the paragraph in two places, one of them on everybody else's screen.
+function unmake(ed, prev) {
+  const row = blockAnywhere(ed.id);
+  const w = work.get(ed.id);
+  const text = w ? w.text : row.text;
+  unqueue(row.key).then((gone) => {
+    if (!gone || !gone.done) return;
+    if (w) { clearTimeout(w.timer); work.delete(ed.id); }
+    if (editing === ed) editing = null;
+    unmakeLocal(row.key);
+    const join = putBack(prev, text);
+    if (join >= 0) startEditing(prev, join);
+  });
 }
 
 // The arrows walk out of a block the way they walk out of a line: up at the
@@ -1482,8 +1539,12 @@ function pressedArrow(e, ed) {
   if (at < 0) return;
   if (e.altKey) {
     if (up ? at === 0 : at === list.length - 1) return;
-    e.preventDefault();
     const after = up ? (at > 1 ? list[at - 2].id : 0) : list[at + 1].id;
+    // A move is a command about two blocks the server has, and one it has not
+    // made yet is neither: it has no id to be moved and none to be moved behind.
+    // It moves when it is made, which is where the person put it.
+    if (ed.id < 0 || after < 0) return;
+    e.preventDefault();
     send('block.move', { block: ed.id, after }).catch((err) => say(err.message));
     return;
   }
@@ -1511,10 +1572,16 @@ function neighbours() {
 // a time, in an order a refusal halfway could break, and a long one would run
 // into the limit on how fast a tab may send.
 //
+// The block holding that remainder is drawn here as one block, uncut, and the
+// server's blocks take its place when the insert lands. It is not cut up here
+// because the client never imitates the server's rule for cutting; until it is
+// made it is an ordinary block of this tab's own and can be typed into, which
+// writes the words into the insert that has not gone yet.
+//
 // A refusal puts the whole of that remainder back on the end of this block,
 // through the ordinary entry, so nothing pasted is lost.
 function pasted(e, ed) {
-  if (!ed.id || !online() || !e.clipboardData) return;
+  if (!e.clipboardData) return;
   const w = work.get(ed.id);
   if (w && w.status !== 'ok') return;
   const parts = chunks(e.clipboardData.getData('text'));
@@ -1528,26 +1595,18 @@ function pasted(e, ed) {
   wrote(ed.id, was, snap(area));
   typed(ed.id);
   ed.fit();
-  const id = ed.id;
-  insert(current().id, { after: id, text: rest }).catch((err) => {
-    say(err.message);
-    putBack(id, '\n\n' + rest);
-  });
+  newBlock(current().id, ed.id, rest, false);
 }
 
 // The + after the last block is how a document grows a paragraph without being
 // in one already, and how an empty document is started. It is quiet until the
 // pointer or the focus is on it, like the other affordances.
 function addBlock(doc) {
-  const off = !online();
   const last = (doc.blocks || []).at(-1);
   return el('button', {
     type: 'button', class: 'addblk', id: 'blocknew', text: '+', 'aria-label': 'Add a block',
-    disabled: off,
-    title: off ? 'A new block needs the server, and this device has no connection.' : 'Add a block',
-    onclick: () => insert(doc.id, { after: last ? last.id : 0, text: '', whole: true })
-      .then((ev) => startEditing(ev.after.id))
-      .catch((err) => say(err.message)),
+    title: 'Add a block',
+    onclick: () => startEditing(newBlock(doc.id, last ? last.id : 0, '', true).id),
   });
 }
 
@@ -1663,6 +1722,29 @@ function save(id) {
   const sent = w.text;
   const base = w.base;
   w.flight = true;
+  // A block the server has not made yet has no id a save could name, and
+  // nothing with a negative one is ever sent. What it has instead is the
+  // command that will make it, waiting in the outbox: writing this text into
+  // that command is the save, and it is what keeps a block written in with no
+  // connection through a reload, because the outbox is on disk and an entry is
+  // not. When there is no such command to write into, because it is in the air
+  // on a live socket, the text stays in the entry and goes up as an ordinary
+  // save the moment the ack binds the block.
+  if (id < 0) {
+    const row = blockAnywhere(id);
+    retext(row.key, sent).then((held) => {
+      if (held && held.done) {
+        writeLocal(row, sent);
+        acked(id, sent, base, null);
+        return;
+      }
+      const entry = work.get(id);
+      if (entry) entry.flight = false;
+      status();
+    });
+    status();
+    return;
+  }
   send('block.set', { block: id, base, text: sent, whole: true })
     .then((ev) => acked(id, sent, base, ev))
     .catch((err) => refused(id, err));
@@ -1899,6 +1981,11 @@ addEventListener('pagehide', () => {
   }
   for (const [id, w] of work) {
     if (w.status === 'conflict' || w.text === w.sent) continue;
+    // A block the server has not made yet is saved by writing into the command
+    // that will make it, and that is a database this page has no time left to
+    // write to. Up to the last two seconds of typing into one goes, which is
+    // what the ceiling on the timer above bounds.
+    if (id < 0) continue;
     const base = w.status === 'refused' ? blockAnywhere(id)?.version ?? w.base : w.base;
     send('block.set', { block: id, base, text: w.text, whole: true }).catch(() => {});
   }
@@ -1937,6 +2024,17 @@ function resume(id, give) {
     // text would write over that third change without anybody being asked.
     clearTimeout(w.timer);
     work.delete(id);
+    // A block the server would not make has no text to fall back to, because
+    // there is no row anywhere but here. Letting it go takes it off the page,
+    // and its history with it: there is no block left for it to answer for.
+    if (id < 0) {
+      if (openOn(id)) editing = null;
+      undo.reset(id, '');
+      unmakeLocal(b.key);
+      emit();
+      status();
+      return;
+    }
     // Take theirs gives this person's text up, and how they got to it with it:
     // an undo back into it would put it over them again without their being
     // asked a second time. Keep mine, below, keeps the history, because the
@@ -1956,6 +2054,12 @@ function resume(id, give) {
   w.base = w.status === 'conflict' ? w.version : b.version;
   w.status = 'ok';
   notice(id);
+  // Trying again with a block that was never made is the command that makes it
+  // going again, carrying whatever has been typed into it since.
+  if (id < 0) {
+    insert(b);
+    return;
+  }
   emit();
   save(id);
   status();

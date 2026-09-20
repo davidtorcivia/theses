@@ -253,7 +253,7 @@ function refusedRow(row) {
 // made on, which need not be the open one.
 async function resolve(row, args) {
   if (!args) {
-    await letGo(row.n, row.detail);
+    await letGo(row);
     return;
   }
   try {

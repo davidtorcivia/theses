@@ -183,6 +183,58 @@ export function take(n, idem) {
   });
 }
 
+// named is the waiting command with this name, for the two calls below. A
+// command that has been refused is not it: it is waiting on a person rather
+// than on a connection, and the panel is where it is answered.
+//
+// ponytail: it is the same scan queue makes for a fold, with the same ceiling
+// and the same reason it is fine at the few rows a person makes by hand.
+function named(store, idem, then) {
+  const all = store.getAll();
+  all.onsuccess = () => {
+    const found = all.result.find((r) => r.idem === idem && !r.refused);
+    if (found) then(found);
+  };
+}
+
+// retext writes what somebody has typed into the command that has not gone yet,
+// which is how a block the server has not made keeps what is written in it: the
+// insert waiting in the outbox is the only place that text can be, because the
+// block it belongs to has no id to address a save to. It answers whether there
+// was a command there to write into; there is not when the insert is in the air
+// on a live socket, and then the text waits in the editor for the ack.
+//
+// The name is left alone, unlike a fold: this is the same command, carrying
+// what it always carried, rather than a second change from where the first one
+// left the block. If the server has already applied it, because it was in the
+// air when the socket went, the replay is answered with what it did and the
+// text typed since goes up as an ordinary save once the ack binds the block.
+export function retext(idem, text) {
+  return withStore('outbox', 'readwrite', (store) => {
+    const out = { done: false };
+    named(store, idem, (row) => {
+      store.put({ ...row, args: { ...row.args, text }, at: Date.now() });
+      out.done = true;
+    });
+    return out;
+  });
+}
+
+// unqueue drops the command with this name, which is how a block joined back
+// into the one above it before it was ever made stops being made at all. It
+// answers whether it was still there to drop: a command the drain has already
+// taken is on its way and cannot be called back.
+export function unqueue(idem) {
+  return withStore('outbox', 'readwrite', (store) => {
+    const out = { done: false };
+    named(store, idem, (row) => {
+      store.delete(row.n);
+      out.done = true;
+    });
+    return out;
+  });
+}
+
 // dropIfUnchanged is what an answered command leaves the outbox by. A row that
 // was written into while it was in flight, because the person carried on typing
 // in the same field, is left where it is and goes up on the next pass.

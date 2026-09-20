@@ -530,6 +530,75 @@ function local(entity, row) {
   return { seq: 0, proposition: state.open, entity, entity_id: row.id, action: 'edit', after: row };
 }
 
+// The blocks this tab has made that the server has not. Each is a row in its
+// document like any other, so everything that draws or walks a document sees
+// it, with a negative id and three fields of its own: the key the insert that
+// makes it goes up under, and where that insert says it goes, which is a block
+// id or another block's key. They are written into the snapshot with the rest,
+// which is what keeps a block made with no connection on the page across a
+// reload. Nothing with a negative id is ever sent; docs.js is the one place
+// that knows how to name one to the server.
+export function makeLocal(row) {
+  let id = 0;
+  for (const doc of state.documents) for (const b of doc.blocks || []) id = Math.min(id, b.id);
+  const made = {
+    ...row, id: id - 1, position: behindBlock(row.after), version: 0,
+    updated_by: state.me, updated_at: seconds(),
+  };
+  apply(local('block', made));
+  // Written now rather than in two seconds, because this row is in this tab and
+  // nowhere else: a reload before the timer fires would lose the paragraph off
+  // the page, and with no connection there is no server to draw it again from.
+  write();
+  return made;
+}
+
+// behindBlock is the position key a new block is guessed at, by the same rule
+// and with the same ceiling as behind above: a key that sorts after the block
+// this one was made under. Nothing at all sorts first, which is where a block
+// made under no other one goes.
+function behindBlock(after) {
+  const above = after ? rowOf('block', after) : null;
+  return above ? above.position + '~' : '';
+}
+
+// writeLocal is typing reaching the row itself. A block the server holds is
+// written by the event its save comes back as; one it does not hold has no such
+// event, and without this a reload would draw it as it was first made.
+export function writeLocal(row, text) {
+  apply(local('block', { ...row, text, updated_at: seconds() }));
+  // Written now for the reason a new one is: this text is in the command the
+  // outbox holds and in this tab, and nowhere a reload could read it from
+  // otherwise. It is the save rate rather than the typing rate, because the
+  // caller writes here when the text reaches that command and not before.
+  write();
+}
+
+// localOf is the block a key names: what an ack, a refusal and an insert queued
+// behind it all find the row again by.
+export function localOf(key) {
+  for (const doc of state.documents) {
+    const row = (doc.blocks || []).find((b) => b.id < 0 && b.key === key);
+    if (row) return row;
+  }
+  return null;
+}
+
+// unmakeLocal takes one off the page: the ack that puts the real block in its
+// place, letting go of an insert the server would not take, and joining one
+// back into the block above before it was ever made.
+export function unmakeLocal(key) {
+  const row = localOf(key);
+  if (row) {
+    apply({ seq: 0, proposition: state.open, entity: 'block', entity_id: row.id,
+      action: 'delete', before: row });
+    // For the reason above: a reload before the timer fires would draw a block
+    // the server has, and this one that stands for the same paragraph.
+    write();
+  }
+  return row;
+}
+
 // target names the row and the field a command sets, or nothing for a command
 // that adds rather than sets. It is what the outbox folds two edits together
 // on, so a second edit to a title made with no connection replaces the first
