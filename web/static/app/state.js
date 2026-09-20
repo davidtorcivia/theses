@@ -429,7 +429,11 @@ const optimistic = {
   },
   'card.move': {
     entity: 'card', id: (a) => a.card, last: true,
-    fields: (a, row) => ({ column_id: a.column, position: behind(a.after, row) }),
+    fields: (a, row) => ({ column_id: a.column, position: behind('card', a.after, row) }),
+  },
+  'block.move': {
+    entity: 'block', id: (a) => a.block, last: true,
+    fields: (a, row) => ({ position: behind('block', a.after, row) }),
   },
   'column.rename': { entity: 'column', id: (a) => a.column, last: true, fields: (a) => ({ name: a.title }) },
   'checklist.toggle': { entity: 'checklist_item', id: (a) => a.item, last: true, fields: (a) => ({ done: a.done }) },
@@ -443,16 +447,18 @@ const optimistic = {
 
 const seconds = () => Math.floor(Date.now() / 1000);
 
-// behind is a position key that sorts just after the card the drop landed on.
-// Keys are base 62, so a tilde is above every character one can end in.
+// behind is a position key that sorts just after the row the drop landed on, a
+// card in a column or a block in a document. Keys are base 62, so a tilde is
+// above every character one can end in, and an empty key is above nothing,
+// which is where a drop at the head of a list lands.
 //
-// ponytail: it is a guess, not the key the server will allocate, and a card
+// ponytail: it is a guess, not the key the server will allocate, and a row
 // dropped above a neighbor whose key runs deeper than one character can land a
 // place out until the echo arrives with the real one. The upgrade is the
 // server's fractional key generator in the browser as well.
-function behind(after, row) {
+function behind(entity, after, row) {
   if (!after) return '';
-  const previous = state.cards.get(after);
+  const previous = rowOf(entity, after);
   return previous ? previous.position + '~' : row.position;
 }
 
