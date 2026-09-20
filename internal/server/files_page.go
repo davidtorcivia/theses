@@ -124,6 +124,12 @@ const sweepEvery = time.Hour
 // Hourly is more often than the fold needs, which is once a day, but a fold
 // never touches a run younger than core.CompactAfter, so every pass but the
 // first has at most an hour of new runs to find.
+//
+// ponytail: it finds them by walking every block row in the log, chunk by
+// chunk, each chunk taking the write lock, and the rows a fold keeps accumulate
+// forever. The walk is tens of milliseconds today and grows with the log. The
+// upgrade is a settings row remembering the day of the last fold, the way
+// notify.last_tick does, so the walk happens once a day rather than hourly.
 func (s *Server) Sweep(ctx context.Context) {
 	sweep := func() {
 		if err := s.files.Sweep(ctx); err != nil && !errors.Is(err, files.ErrNoBucket) {

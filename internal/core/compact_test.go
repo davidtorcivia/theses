@@ -58,6 +58,16 @@ func TestCompactFoldsRunsOfTypedSaves(t *testing.T) {
 			want: []kept{{2, "t0", "t2"}, {4, "t2", "t4"}},
 		},
 		{
+			name: "two people typing turn about leave nothing to fold",
+			rows: []logRow{
+				set("1", 3*day, "t0", "t1"),
+				set("2", 3*day-30*time.Second, "t1", "t2"),
+				set("1", 3*day-60*time.Second, "t2", "t3"),
+				set("2", 3*day-90*time.Second, "t3", "t4"),
+			},
+			want: []kept{{1, "t0", "t1"}, {2, "t1", "t2"}, {3, "t2", "t3"}, {4, "t3", "t4"}},
+		},
+		{
 			name: "the same person through a token is a different actor",
 			rows: []logRow{
 				set("1", 3*day, "t0", "t1"),

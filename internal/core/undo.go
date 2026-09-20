@@ -77,6 +77,19 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 	}
 
 	return s.Do(ctx, a, proposition.Int64, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+		// The read above was made outside this transaction, to find the
+		// proposition to authorize against. Compact rewrites the before of the
+		// row it folds a run into, and removes the rest of the run, so the
+		// before is read again here: undoing to the text a run held part way
+		// through would leave the block saying one thing and the log another.
+		err := tx.QueryRowContext(ctx,
+			`SELECT before_json FROM activity WHERE id = ?`, activityID).Scan(&before)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Change{}, ErrNotUndoable
+		}
+		if err != nil {
+			return Change{}, err
+		}
 		// Whether this row can be put back is asked after the actor has been
 		// authorized for the proposition it belongs to, not before. Answering
 		// that a change cannot be undone to somebody who may not read the

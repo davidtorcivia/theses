@@ -6,13 +6,11 @@ import (
 	"time"
 )
 
-// CompactAfter is how old every row of a run must be before it is folded.
-//
-// It has to stay comfortably above the lifetime of a client's idempotency key.
-// A command made of several steps spends one key per step against a separate
-// activity row, and folding one of those rows away while its key is still live
-// would let a replay miss on the first step, hit on the rest, and write the
-// same paragraph twice.
+// CompactAfter is how old every row of a run must be before it is folded. It
+// has to stay above the lifetime of a client key: a command of several steps
+// spends one key per step against a separate activity row, and folding one of
+// those away while its key is live would let a replay miss the first step, hit
+// the rest, and write the same paragraph twice.
 const CompactAfter = 48 * time.Hour
 
 // compactGap ends a run. A pause longer than this is somebody coming back to
