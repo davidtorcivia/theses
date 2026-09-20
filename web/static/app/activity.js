@@ -173,7 +173,13 @@ function takeRunBack(group) {
       // whole, because that text was stored exactly as it was typed once
       // already, edges and blank lines included, and putting it back is putting
       // back what was there rather than writing something new.
-      send('block.set', { block: last.entity_id, base: last.after.version, text: was, whole: true })
+      //
+      // It queues under no name, so with no connection it waits behind a save
+      // of the same block rather than folding over it: this is older text
+      // against an older base, and a fold keeps whichever came last. Behind it,
+      // the two go up in order and the server merges or refuses this one like
+      // any other set made from a version somebody has moved past.
+      send('block.set', { block: last.entity_id, base: last.after.version, text: was, whole: true }, state.open, '')
         .catch((err) => say(err instanceof Conflict
           ? 'That block has changed too much since for those saves to be taken back.'
           : err.message));
