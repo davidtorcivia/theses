@@ -312,7 +312,14 @@ export async function file(row, key, why, detail) {
     const out = { n: 0 };
     const all = store.getAll();
     all.onsuccess = () => {
-      const found = all.result.find((r) => r.key === key && r.refused);
+      // By name, and by the name the command itself goes up under: an insert
+      // has no key to fold on, because nothing folds two inserts together, so
+      // its idem is the only thing that says two refusals are about one block.
+      // Without this a refusal the drain made and one filed here would be two
+      // rows for one insert, the panel would ask twice, and a discard that
+      // dropped one of them would leave the other to draw the paragraph again.
+      const found = all.result.find((r) => r.refused
+        && (r.key === key || (row.idem && r.idem === row.idem)));
       const put = store.put({ at: Date.now(), ...row, key, sending: false,
         refused: why, detail: detail || null, ...(found ? { n: found.n } : {}) });
       put.onsuccess = () => { out.n = put.result; };
