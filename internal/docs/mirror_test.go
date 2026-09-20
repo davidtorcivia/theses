@@ -78,7 +78,7 @@ func TestMirrorWritesAFileThatParsesBackToTheSameBlocks(t *testing.T) {
 		t.Fatalf("the front matter is %+v, want document %d revision %d", file, f.doc, document.Revision)
 	}
 	blocks := f.blocks(t)
-	if !sameAs(file, blocks) {
+	if !sameAs(file.items(), blocks) {
 		t.Fatalf("the file parses back to %+v, want %+v", file.Blocks, blocks)
 	}
 	for i, item := range file.Blocks {
@@ -124,7 +124,7 @@ func TestMirrorRoundTripsAFencedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sameAs(file, f.blocks(t)) {
+	if !sameAs(file.items(), f.blocks(t)) {
 		t.Fatalf("the file parses back to %+v, want %+v", file.Blocks, f.blocks(t))
 	}
 	held := map[int64]string{}
@@ -285,7 +285,7 @@ func TestMirrorRoundTripsTextThatQuotesTheFormat(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !sameAs(file, blocks) {
+			if !sameAs(file.items(), blocks) {
 				t.Fatalf("the file parses back to %+v, want %+v", file.Blocks, blocks)
 			}
 		})
@@ -315,7 +315,7 @@ func TestMirrorRoundTripsQuotedFormatEverywhere(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !sameAs(file, blocks) {
+				if !sameAs(file.items(), blocks) {
 					t.Fatalf("%q parses back to %+v", text, file.Blocks)
 				}
 			}
