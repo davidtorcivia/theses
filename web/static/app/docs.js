@@ -505,14 +505,27 @@ function blockNode(b) {
     }));
   }
   if (canEdit()) {
-    node.addEventListener('click', () => startEditing(b.id));
+    node.addEventListener('click', (e) => { if (!onLink(e)) startEditing(b.id); });
     node.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); startEditing(b.id); }
+      if (e.key === 'Enter' && !onLink(e)) { e.preventDefault(); startEditing(b.id); }
     });
   }
   drawn.set(b.id, { key, node });
   return node;
 }
+
+// onLink is whether what was clicked, or what the Enter was pressed on, is a
+// link in the block rather than the block itself. Following a link is not a way
+// of asking to edit the words around it: the click would open the editor behind
+// the navigation, which is invisible in a tab that leaves and is an editor left
+// standing in one that does not, a link opened in a new tab or with a modifier
+// held. The keyboard needs it more: the block's Enter calls preventDefault, so
+// without this a link reached by the Tab key could not be followed at all.
+//
+// It only ever matches in a rendered block. raw(), which draws a block somebody
+// else is standing in, builds text and spans and no links at all, so such a
+// block opens on a click wherever it is clicked, as it did.
+const onLink = (e) => !!e.target.closest('a');
 
 // body is the client renderer: the same markdown the mockup draws, built as
 // nodes so that nothing anybody typed is ever parsed as markup. What the text
