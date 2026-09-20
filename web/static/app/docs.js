@@ -2140,14 +2140,28 @@ function unanswered() {
     const b = blockFor(row);
     if (!b) continue;
     const w = work.get(b.id);
-    // A block this tab is already answering for, or one somebody is typing in
-    // with nothing outstanding: the entry is what this tab goes by, and the row
-    // is the same question written down, so nothing here touches it beyond
-    // noting which row it is. The entry of a block being typed in stops the
-    // question being drawn over the caret; it is drawn the moment that entry is
-    // finished with.
-    if (w) { if (w.status !== 'ok') w.filed = row.n; continue; }
-    work.set(b.id, entryFrom(b, row));
+    // A block this tab is already answering for: the entry is what it goes by
+    // and the row is the same question written down, so nothing here touches it
+    // beyond noting which row that is.
+    if (w && w.status !== 'ok') { w.filed = row.n; continue; }
+    // An entry holding something of this person's is not an answer either, but
+    // it is the only copy of what they are writing. The question waits in the
+    // panel until they have finished with the block.
+    if (w && (w.flight || w.text !== w.sent)) continue;
+    // Anything else is a block with no unsaved work on it and a question in the
+    // outbox nobody has answered, which is a block that has to ask it. An entry
+    // agreed with on the way past is one of those: this tab's own guess at what
+    // a command would store looks exactly like its save coming back, and a row
+    // outliving both is what says it was neither.
+    const put = entryFrom(b, row);
+    if (w) { clearTimeout(w.timer); Object.assign(w, put); } else work.set(b.id, put);
+    // The words go back into the textarea with the entry, because the entry is
+    // where they live and an editor is only a way of typing into it.
+    if (openOn(b.id)) {
+      editing.area.value = put.text;
+      editing.area.setSelectionRange(put.text.length, put.text.length);
+      editing.fit();
+    }
     notice(b.id);
   }
 }
