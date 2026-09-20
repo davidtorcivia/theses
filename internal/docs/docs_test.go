@@ -184,7 +184,7 @@ func TestBlockCommandsAskMembershipAndTheArchivedRule(t *testing.T) {
 		run  func(f *fixture, a core.Actor) error
 	}{
 		{"insert", func(f *fixture, a core.Actor) error {
-			_, err := f.InsertBlock(ctx, a, f.doc, 0, "Hello.")
+			_, err := f.InsertBlock(ctx, a, f.doc, 0, "Hello.", false)
 			return err
 		}},
 		{"set", func(f *fixture, a core.Actor) error {
@@ -314,7 +314,7 @@ func TestSetBlockMergesOrConflicts(t *testing.T) {
 			if tc.seeded {
 				id = f.blocks(t)[0].ID
 			} else {
-				inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.base)
+				inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.base, false)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -432,6 +432,60 @@ func TestSetBlockWholeStoresTheTextAsItWasSent(t *testing.T) {
 			}
 			if n := len(f.blocks(t)); n != tc.blocks {
 				t.Fatalf("the document has %d blocks, want %d", n, tc.blocks)
+			}
+		})
+	}
+}
+
+// The insert the editor makes when Enter splits a block carries the same flag
+// and for the same reason: the half paragraph somebody is in the middle of
+// writing goes in as it was typed, in one block, rather than being trimmed and
+// cut up under their caret.
+func TestInsertBlockWholeStoresTheTextAsItWasSent(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name    string
+		whole   bool
+		text    string
+		want    []string
+		wantErr error
+	}{
+		{name: "whole keeps the edges and the blank line in one block", whole: true,
+			text: "  One.\n\nTwo.\n", want: []string{"  One.\n\nTwo.\n"}},
+		{name: "a plain insert of the same text trims it and cuts it up",
+			text: "  One.\n\nTwo.\n", want: []string{"One.", "Two."}},
+		{name: "whole normalises the line endings and nothing else", whole: true,
+			text: "One.\r\n Two. ", want: []string{"One.\n Two. "}},
+		{name: "a whole insert of nothing is one empty block", whole: true,
+			text: "", want: []string{""}},
+		{name: "a whole insert longer than a block may be is refused", whole: true,
+			text: strings.Repeat("a", board.MaxBody+1), wantErr: board.ErrTooLong},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			was := f.blocks(t)
+
+			_, err := f.InsertBlock(ctx, f.who["editor"], f.doc, was[0].ID, tc.text, tc.whole)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("got %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := f.blocks(t)
+			if len(now) != len(was)+len(tc.want) {
+				t.Fatalf("the document has %d blocks, want %d", len(now), len(was)+len(tc.want))
+			}
+			var got []string
+			for _, b := range now[1 : 1+len(tc.want)] {
+				got = append(got, b.Text)
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Fatalf("the blocks after the first read %q, want %q", got, tc.want)
 			}
 		})
 	}

@@ -280,6 +280,13 @@ POST /api/v1/documents/4/blocks
 {"after": 31, "text": "Tape from the hearing, then the number."}
 ```
 
+`whole` is optional and false by default, and means here what it means on
+`PUT /api/v1/blocks/{id}` below: the text is stored exactly as it was sent,
+edges and blank lines included, in exactly one block whatever it holds. It is
+what the editor sends when Enter splits a block somebody is typing in, so that
+the half paragraph under their caret arrives as they left it. Text longer than
+a block may hold is `422`.
+
 ## `PUT /api/v1/blocks/{id}`
 
 Scope `write`. Replaces one block's text. `base_version` is the version the

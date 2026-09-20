@@ -24,7 +24,7 @@ var docCommands = map[string]func(context.Context, *docs.Service, core.Actor, ar
 		return d.SetBlock(ctx, a, v.Block, v.Base, v.Text, v.Whole)
 	},
 	"block.insert": func(ctx context.Context, d *docs.Service, a core.Actor, v args) (core.Event, error) {
-		return d.InsertBlock(ctx, a, v.Document, v.After, v.Text)
+		return d.InsertBlock(ctx, a, v.Document, v.After, v.Text, v.Whole)
 	},
 	"block.move": func(ctx context.Context, d *docs.Service, a core.Actor, v args) (core.Event, error) {
 		return d.MoveBlock(ctx, a, v.Block, v.After)

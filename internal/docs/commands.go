@@ -339,18 +339,33 @@ func LastBlock(ctx context.Context, q store.Querier, document int64) (int64, err
 // InsertBlock puts a new block after another one, or at the head of the
 // document when after is zero. Text holding more than one paragraph becomes
 // more than one block, because a block is a paragraph.
-func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after int64, text string) (core.Event, error) {
-	text, err := board.Field(text, board.MaxBody)
-	if err != nil {
-		return core.Event{}, err
+//
+// whole is the same flag block.set has, and it is the editor splitting a block
+// under somebody's caret: the text is stored exactly as it was sent and is
+// always one block, so what comes back is what went up and the half paragraph
+// they are in the middle of writing is not trimmed or cut up on the way.
+func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after int64, text string, whole bool) (core.Event, error) {
+	if whole {
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+		if err := board.Fits(text, board.MaxBody); err != nil {
+			return core.Event{}, err
+		}
+	} else {
+		field, err := board.Field(text, board.MaxBody)
+		if err != nil {
+			return core.Event{}, err
+		}
+		text = field
 	}
 	proposition, err := PropositionOfDocument(ctx, s.DB, document)
 	if err != nil {
 		return core.Event{}, err
 	}
-	parts := Paragraphs(text)
-	if len(parts) == 0 {
-		parts = []string{""}
+	parts := []string{text}
+	if !whole {
+		if parts = Paragraphs(text); len(parts) == 0 {
+			parts = []string{""}
+		}
 	}
 	if len(parts) == 1 {
 		e, err := s.insertOne(ctx, a, proposition, document, after, parts[0])
