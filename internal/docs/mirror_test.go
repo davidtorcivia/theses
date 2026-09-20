@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +89,350 @@ func TestMirrorWritesAFileThatParsesBackToTheSameBlocks(t *testing.T) {
 	// One block per paragraph, separated by blank lines, and nothing else.
 	if strings.Contains(content, "\n\n\n") {
 		t.Fatalf("the file has a run of blank lines:\n%s", content)
+	}
+}
+
+// A fenced code block holds blank lines, and the file is a block per paragraph
+// separated by blank lines, so the two only agree if the import reads a fence
+// the way Paragraphs cuts one.
+func TestMirrorRoundTripsAFencedBlock(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+
+	blocks := f.blocks(t)
+	code := "```go\nif tide > 0 {\n\n\treturn true\n}\n```"
+	fenced, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[len(blocks)-1].ID, code, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fence that is never closed is what a save made while somebody is still
+	// typing leaves in a block, and the blocks under it keep their ids anyway.
+	typing := "~~~\nstill typing"
+	open, err := f.InsertBlock(ctx, f.who["editor"], f.doc, fenced.EntityID, typing, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail, err := f.InsertBlock(ctx, f.who["editor"], f.doc, open.EntityID, "After.", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := parseMirror([]byte(read(t, path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameAs(file, f.blocks(t)) {
+		t.Fatalf("the file parses back to %+v, want %+v", file.Blocks, f.blocks(t))
+	}
+	held := map[int64]string{}
+	for _, item := range file.Blocks {
+		held[item.ID] = item.Text
+	}
+	for _, want := range []struct {
+		id   int64
+		text string
+	}{{fenced.EntityID, code}, {open.EntityID, typing}, {tail.EntityID, "After."}} {
+		if held[want.id] != want.text {
+			t.Fatalf("block %d comes back as %q, want %q", want.id, held[want.id], want.text)
+		}
+	}
+
+	// And an edit made at the terminal applies through all of it: the blocks
+	// under the fence that is never closed keep their ids rather than going in
+	// again as new ones.
+	was := f.blocks(t)
+	save(t, path, strings.Replace(read(t, path), "## Who pays?", "## Who pays for it?", 1))
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	now := f.blocks(t)
+	if len(now) != len(was) {
+		t.Fatalf("the import left %d blocks, want %d: %+v", len(now), len(was), now)
+	}
+	for i, b := range now {
+		if b.ID != was[i].ID {
+			t.Fatalf("block %d of the document is now %d, want %d", i, b.ID, was[i].ID)
+		}
+		if b.Text != was[i].Text && b.Text != "## Who pays for it?" {
+			t.Fatalf("block %d holds %q, want %q", b.ID, b.Text, was[i].Text)
+		}
+	}
+	if held := f.blocks(t); held[len(held)-3].Text != code || held[len(held)-2].Text != typing {
+		t.Fatalf("the import rewrote the code blocks: %+v", held[len(held)-3:])
+	}
+}
+
+// Where the body is cut: at a blank line outside a fenced code block, and at
+// every comment the file writes itself, which is the start of the next block
+// wherever it stands and ends whatever fence is open.
+func TestMirrorChunksCutsWhereParagraphsDoes(t *testing.T) {
+	for _, tc := range []struct {
+		name, in string
+		want     []string
+	}{
+		{"a blank line cuts", "A\n\nB", []string{"A", "B"}},
+		{"a blank line inside a fence does not", "```\nA\n\nB\n```", []string{"```\nA\n\nB\n```"}},
+		{"a line holding a no-break space is not blank", "A\n" + noBreakSpace + "\nB", []string{"A\n" + noBreakSpace + "\nB"}},
+		{"a comment cuts", "<!-- block 7 v1 -->\nA\n\n<!-- block 9 v1 -->\nB",
+			[]string{"<!-- block 7 v1 -->\nA", "<!-- block 9 v1 -->\nB"}},
+		{"a comment with no blank line in front of it still cuts",
+			"<!-- block 7 v1 -->\nA\n<!-- block 9 v1 -->\nB",
+			[]string{"<!-- block 7 v1 -->\nA", "<!-- block 9 v1 -->\nB"}},
+		{"a comment inside a fence cuts and ends the fence",
+			"```\nA\n<!-- block 7 v1 -->\nB\n\nC",
+			[]string{"```\nA", "<!-- block 7 v1 -->\nB", "C"}},
+		{"a comment written with a backslash in front of it is text",
+			"```\nA\n\\<!-- block 7 v1 -->\nB\n```",
+			[]string{"```\nA\n\\<!-- block 7 v1 -->\nB\n```"}},
+		{"the conflict marker is not a cut", "<!-- block 7 v1 -->\n<!-- conflict -->\nA",
+			[]string{"<!-- block 7 v1 -->\n<!-- conflict -->\nA"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mirrorChunks(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("chunk %d is %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// The two halves of the escape are each other's inverse, over the lines the
+// parser reads as structure and the lines that only look close to one. An
+// escaped line is never a boundary, and text that is not a structural line is
+// written as it stands.
+func TestMirrorEscapesTextThatReadsLikeStructure(t *testing.T) {
+	for _, line := range []string{
+		"<!-- block 3 v1 -->", "<!-- block 3 v1 -->  ", "<!-- block 3 v1 -->\t",
+		"<!-- block 3 v1 -->\r", "\\<!-- block 3 v1 -->", "\\\\<!-- block 3 v1 -->",
+		conflictMarker, conflictMarker + " \t", "\\" + conflictMarker, "<!-- block 0 v0 -->",
+	} {
+		if got := unescaped(escaped(line)); got != line {
+			t.Fatalf("%q was written as %q and read back as %q", line, escaped(line), got)
+		}
+		if id, _ := commentOf(escaped(line)); id != 0 {
+			t.Fatalf("%q was written as %q, which the file reads as block %d", line, escaped(line), id)
+		}
+		if marker(escaped(line)) {
+			t.Fatalf("%q was written as %q, which the file reads as a conflict", line, escaped(line))
+		}
+	}
+	// The same lines bare, which is what the file writes above a block: every
+	// one of them is read as that block, whatever is on the end of it, so a
+	// block whose comment an editor left a space or a tab on keeps its id and
+	// its words rather than coming back as a block somebody added.
+	for _, line := range []string{
+		"<!-- block 3 v1 -->", "<!-- block 3 v1 --> ", "<!-- block 3 v1 -->  \t",
+		"<!-- block 3 v1 -->\r",
+	} {
+		if id, version := commentOf(line); id != 3 || version != 1 {
+			t.Fatalf("%q is read as block %d at version %d, want block 3 at version 1", line, id, version)
+		}
+	}
+	for _, line := range []string{conflictMarker, conflictMarker + "  ", conflictMarker + "\r"} {
+		if !marker(line) {
+			t.Fatalf("%q is not read as a conflict", line)
+		}
+	}
+	// Lines that only read a little like one of the file's own, which are
+	// written and read back with nothing done to them. The parser does not take
+	// any of these for structure either, which is what keeps the two in step.
+	for _, line := range []string{
+		"Plain words.", "<!-- block -->", "<!-- block 3 -->", "<!-- block 3 v1 --> and more",
+		" <!-- block 3 v1 -->", "<!-- conflicted -->", "<!--block 3 v1-->",
+	} {
+		if got := escaped(line); got != line {
+			t.Fatalf("%q was written as %q", line, got)
+		}
+		if got := unescaped(line); got != line {
+			t.Fatalf("%q was read back as %q", line, got)
+		}
+		if id, _ := commentOf(line); id != 0 {
+			t.Fatalf("%q is read as block %d", line, id)
+		}
+	}
+}
+
+// A block whose text reads like the file's own structure: the comment above a
+// block, the marker on a conflicted one, a line already written with a
+// backslash in front of one. render writes one more backslash in front of each
+// and parseMirror takes one off, so the text is its own round trip whatever it
+// quotes, and none of it can be read as a boundary.
+func TestMirrorRoundTripsTextThatQuotesTheFormat(t *testing.T) {
+	blocks := []Block{{ID: 1, Version: 1, Text: "Before."}, {ID: 2, Version: 4}, {ID: 3, Version: 1, Text: "After."}}
+	for _, tc := range []struct{ name, text string }{
+		{"a fenced quote of the next block's comment", "```\n<!-- block 3 v1 -->\ncode\n```"},
+		{"a fenced quote of a later block's comment", "```\n<!-- block 9 v2 -->\ncode\n```"},
+		{"a quote of a comment naming nothing", "```\n<!-- block 999999 v1 -->\ncode\n```"},
+		{"a quoted comment in an ordinary paragraph", "As in:\n<!-- block 3 v1 -->\nwhich names a block."},
+		{"a line that already starts with a backslash", "\\<!-- block 3 v1 -->"},
+		{"two backslashes already", "\\\\<!-- block 3 v1 -->"},
+		{"a quoted conflict marker", "```\n" + conflictMarker + "\n```"},
+		{"a quoted comment on a line of its own", "<!-- block 3 v1 -->"},
+		{"an unclosed fence", "~~~\nstill typing"},
+		{"an unclosed fence over a quoted comment", "~~~\n<!-- block 3 v1 -->"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			blocks[1].Text = tc.text
+			file, err := parseMirror(render(Document{ID: 7, Proposition: 1, Revision: 2}, blocks, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !sameAs(file, blocks) {
+				t.Fatalf("the file parses back to %+v, want %+v", file.Blocks, blocks)
+			}
+		})
+	}
+}
+
+// The same, over every text three of those lines make: what render writes,
+// parseMirror reads back as the block it was.
+func TestMirrorRoundTripsQuotedFormatEverywhere(t *testing.T) {
+	lines := []string{
+		"Plain words.", "# A heading", "```", "~~~", "```\nA\n\nB\n```",
+		"<!-- block 3 v1 -->", "<!-- block 999999 v1 -->", "\\<!-- block 3 v1 -->",
+		conflictMarker, "\\" + conflictMarker,
+	}
+	blocks := []Block{{ID: 1, Version: 1, Text: "Before."}, {ID: 2, Version: 4}, {ID: 3, Version: 1, Text: "After."}}
+	covered := 0
+	var walk func(text string, left int)
+	walk = func(text string, left int) {
+		if text != "" {
+			// A blank line outside a fenced code block is a block boundary and
+			// always has been, so a block whose text holds one comes back as
+			// more than one block. That is the rule this is not about.
+			if !cutByABlankLine(text) {
+				covered++
+				blocks[1].Text = text
+				file, err := parseMirror(render(Document{ID: 7, Proposition: 1, Revision: 2}, blocks, nil))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !sameAs(file, blocks) {
+					t.Fatalf("%q parses back to %+v", text, file.Blocks)
+				}
+			}
+		}
+		if left == 0 {
+			return
+		}
+		for _, line := range lines {
+			if text == "" {
+				walk(line, left-1)
+				continue
+			}
+			walk(text+"\n"+line, left-1)
+		}
+	}
+	walk("", 3)
+	if covered < 500 {
+		t.Fatalf("only %d texts were covered", covered)
+	}
+}
+
+// cutByABlankLine is a text the property above leaves out: one holding a blank
+// line that no fence covers, which the importer has always read as the end of a
+// block.
+func cutByABlankLine(text string) bool {
+	var f fence
+	for _, line := range strings.Split(text, "\n") {
+		if !f.track(line) && blank(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// The document that quotes the comment of the block written directly under it,
+// imported after a hand edit somewhere else in the file. Every block keeps its
+// id and its words: the quote is escaped in the file, so it is not a boundary,
+// and the real comment below it still is.
+func TestImportKeepsABlockQuotingAnotherBlocksComment(t *testing.T) {
+	ctx := context.Background()
+	for _, next := range []bool{true, false} {
+		name := "the block written next"
+		which := 1
+		if !next {
+			name = "a block further down"
+			which = 2
+		}
+		t.Run("quoting "+name, func(t *testing.T) {
+			f, path := mirrorFixture(t)
+			blocks := f.blocks(t)
+			quote := "```\n" + lineFor(t, path, blocks[which].ID) + "\ncode\n```"
+			if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, quote, false); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+				t.Fatal(err)
+			}
+			was := f.blocks(t)
+			if was[0].Text != quote {
+				t.Fatalf("the code block went in as %q", was[0].Text)
+			}
+
+			save(t, path, strings.Replace(read(t, path), "## Who pays?", "## Who pays for it?", 1))
+			if err := f.Import(ctx, path); err != nil {
+				t.Fatal(err)
+			}
+			now := f.blocks(t)
+			if len(now) != len(was) {
+				t.Fatalf("the import left %d blocks, want %d: %+v", len(now), len(was), now)
+			}
+			for i, b := range now {
+				if b.ID != was[i].ID {
+					t.Fatalf("block %d of the document is now %d, want %d", i, b.ID, was[i].ID)
+				}
+				if b.Text != was[i].Text && b.Text != "## Who pays for it?" {
+					t.Fatalf("block %d holds %q, want %q", b.ID, b.Text, was[i].Text)
+				}
+			}
+			if now[len(now)-1].Text != "## Who pays for it?" {
+				t.Fatalf("the edit in the file did not go in: %+v", now[len(now)-1])
+			}
+		})
+	}
+}
+
+// A paragraph copied in the file, comment line and all, is a paragraph: the
+// block it names keeps what it had, the copy goes in after it as a block of its
+// own, and the rest of that save is applied with it.
+func TestImportMakesANewBlockOfACopiedParagraph(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	was := f.blocks(t)
+
+	copied := lineFor(t, path, was[2].ID) + "\n" + was[2].Text + "\n"
+	save(t, path, strings.Replace(read(t, path), "## Is it true?", "## Is it true, though?", 1)+"\n"+copied)
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+
+	now := f.blocks(t)
+	if len(now) != len(was)+1 {
+		t.Fatalf("the import left %d blocks, want %d: %+v", len(now), len(was)+1, now)
+	}
+	for i, b := range was {
+		if now[i].ID != b.ID {
+			t.Fatalf("block %d of the document is now %d, want %d", i, now[i].ID, b.ID)
+		}
+	}
+	if now[1].Text != "## Is it true, though?" {
+		t.Fatalf("the edit made in the same save did not go in: %+v", now[1])
+	}
+	if now[2].Text != was[2].Text {
+		t.Fatalf("the block that was copied holds %q, want %q", now[2].Text, was[2].Text)
+	}
+	last := now[len(now)-1]
+	if last.Text != was[2].Text || last.ID == was[2].ID {
+		t.Fatalf("the copy came out as %+v, want %q in a block of its own", last, was[2].Text)
 	}
 }
 
@@ -253,8 +596,9 @@ func TestImportAppliesEditsInsertsAndDeletes(t *testing.T) {
 func lineFor(t *testing.T, path string, id int64) string {
 	t.Helper()
 	for _, line := range strings.Split(read(t, path), "\n") {
-		if m := blockComment.FindStringSubmatch(strings.TrimSpace(line)); m != nil && m[1] == strconv.FormatInt(id, 10) {
-			return strings.TrimRight(line, "\r")
+		line = strings.TrimRight(line, "\r")
+		if named, _ := commentOf(line); named == id {
+			return line
 		}
 	}
 	t.Fatalf("no comment for block %d in %s", id, path)
@@ -493,6 +837,122 @@ func TestRunImportsAnEditMadeWhileTheProcessWasDown(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// legacyRender is compared against a file byte for byte, so it has to be what
+// the version before this one wrote, down to where the conflict marker stands
+// and the newline on the end.
+func TestLegacyRenderIsWhatTheOlderVersionWrote(t *testing.T) {
+	d := Document{ID: 7, Proposition: 3, Revision: 12}
+	blocks := []Block{
+		{ID: 1, Version: 2, Text: "# A heading"},
+		{ID: 2, Version: 1, Text: "```\n<!-- block 1 v2 -->\ncode\n```"},
+		{ID: 3, Version: 5, Text: "Last."},
+	}
+	want := "---\nproposition: 3\ndocument: 7\nrevision: 12\n---\n" +
+		"\n<!-- block 1 v2 -->\n# A heading\n" +
+		"\n<!-- block 2 v1 -->\n```\n<!-- block 1 v2 -->\ncode\n```\n" +
+		"\n<!-- block 3 v5 -->\n<!-- conflict -->\nLast.\n"
+	if got := string(legacyRender(d, blocks, map[int64]bool{3: true})); got != want {
+		t.Fatalf("legacyRender wrote:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// Every file on disk at the first start after this version is one the older
+// version wrote, with nothing escaped. A document quoting the format is the one
+// that matters: read back, the comment it quotes would be a block boundary and
+// two blocks would be rewritten from a file nobody had touched. It is
+// recognized by what that version would have written and simply written again.
+func TestRunRewritesAFileTheOlderVersionWrote(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := setup(t, t.TempDir())
+	f.Debounce = 40 * time.Millisecond
+	f.Every = 0
+
+	blocks := f.blocks(t)
+	quoted := fmt.Sprintf(blockCommentFmt, blocks[1].ID, blocks[1].Version)
+	quote := "```\n" + quoted + "\ncode\n```"
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, quote, false); err != nil {
+		t.Fatal(err)
+	}
+	was := f.blocks(t)
+	legacy(t, f, nil)
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	_, path, err := f.paths(ctx, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the file to be written in this version's format", func() bool {
+		return strings.Contains(read(t, path), "\\"+quoted)
+	})
+
+	now := f.blocks(t)
+	if len(now) != len(was) {
+		t.Fatalf("the start left %d blocks, want %d: %+v", len(now), len(was), now)
+	}
+	for i, b := range now {
+		if b.ID != was[i].ID || b.Text != was[i].Text || b.Version != was[i].Version {
+			t.Fatalf("block %d is %+v, want %+v", i, b, was[i])
+		}
+	}
+	if n := len(revisionsOf(t, f)); n != 0 {
+		t.Fatalf("the file was imported: %d revisions", n)
+	}
+	cancel()
+	<-done
+}
+
+// The same file with a hand edit in it is not what that version wrote, so it is
+// read back the way any other file changed while the process was down is.
+func TestRunImportsAFileTheOlderVersionWroteAndSomebodyEdited(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := setup(t, t.TempDir())
+	f.Debounce = 40 * time.Millisecond
+	f.Every = 0
+
+	legacy(t, f, func(content string) string {
+		return strings.Replace(content, "## Is it true?", "## Is it true, though?", 1)
+	})
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	waitFor(t, "the edit made while the process was down", func() bool {
+		return f.blocks(t)[1].Text == "## Is it true, though?"
+	})
+	if list := revisionsOf(t, f); len(list) != 1 || list[0].Reason != ReasonPreImport {
+		t.Fatalf("revisions are %+v", list)
+	}
+	cancel()
+	<-done
+}
+
+// legacy writes the document's file as the version before this one wrote it,
+// which is the state of every mirror file the first time this version starts.
+// edit is what somebody did to it while the process was down, or nil.
+func legacy(t *testing.T, f *fixture, edit func(string) string) {
+	t.Helper()
+	ctx := context.Background()
+	d, err := GetDocument(ctx, f.db, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, path, err := f.paths(ctx, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(legacyRender(d, f.blocks(t), nil))
+	if edit != nil {
+		content = edit(content)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // The file an import leaves behind carries a marker on every block the database

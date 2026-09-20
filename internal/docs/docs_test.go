@@ -101,6 +101,14 @@ func (f *fixture) user(t *testing.T, handle string) *store.User {
 	return u
 }
 
+// The two characters some of the rows below turn on, written as their code
+// points: neither can be seen in the source, and a tool that swallowed one on
+// the way through would leave a row that tested nothing.
+var (
+	lineSeparator = string(rune(0x2028))
+	noBreakSpace  = string(rune(0x00a0))
+)
+
 func TestParagraphs(t *testing.T) {
 	for _, tc := range []struct {
 		name, in string
@@ -114,6 +122,26 @@ func TestParagraphs(t *testing.T) {
 		{"a list stays one block", "- one\n- two", []string{"- one\n- two"}},
 		{"whitespace only is nothing", "  \n\n\t", nil},
 		{"a hash without a space is not a heading", "#hashtag", []string{"#hashtag"}},
+		{"a blank line inside a fence does not cut", "```\nA\n\nB\n```", []string{"```\nA\n\nB\n```"}},
+		{"a hash inside a tilde fence is not a heading", "~~~\n# A\n~~~", []string{"~~~\n# A\n~~~"}},
+		{"a shorter fence does not close a longer one", "````\nA\n\n```\nB\n````", []string{"````\nA\n\n```\nB\n````"}},
+		{"a tilde does not close a backtick fence", "```\n~~~\n\nA\n```\n\nAfter.",
+			[]string{"```\n~~~\n\nA\n```", "After."}},
+		{"a fence needs nothing but space after it to close", "```\nA\n``` and more\n\nB",
+			[]string{"```\nA\n``` and more\n\nB"}},
+		{"four spaces is not a fence", "    ```\n\nAfter.", []string{"```", "After."}},
+		{"a backtick in the info string is not a fence", "```a``` b\n\nAfter.", []string{"```a``` b", "After."}},
+		{"a fence that is never closed runs to the end", "```go\nA\n\n# B", []string{"```go\nA\n\n# B"}},
+		{"two fences with a paragraph between them", "```\nA\n\nB\n```\n\nBetween.\n\n~~~\nC\n\nD\n~~~",
+			[]string{"```\nA\n\nB\n```", "Between.", "~~~\nC\n\nD\n~~~"}},
+		{"a fence under a heading is its own block", "# Title\n```\nA\n\nB\n```",
+			[]string{"# Title", "```\nA\n\nB\n```"}},
+		{"windows line endings inside a fence", "```\r\nA\r\n\r\nB\r\n```", []string{"```\nA\n\nB\n```"}},
+		{"a closing fence with spaces after it closes", "```\nA\n```  \n\nB", []string{"```\nA\n```", "B"}},
+		{"a line separator in the info string does not stop a fence opening",
+			"```" + lineSeparator + "js\nA\n\n# B", []string{"```" + lineSeparator + "js\nA\n\n# B"}},
+		{"a line holding a no-break space is not blank",
+			"A\n" + noBreakSpace + "\nB", []string{"A\n" + noBreakSpace + "\nB"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Paragraphs(tc.in)

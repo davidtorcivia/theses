@@ -33,7 +33,64 @@ const (
 	blockCommentFmt = "<!-- block %d v%d -->"
 )
 
-var blockComment = regexp.MustCompile(`^<!-- block (\d+) v(\d+) -->$`)
+// structural matches the lines the file carries as structure: the comment above
+// a block and the marker on one an import could not take. The backslashes in
+// front are how a line of somebody's text that reads like one of them is
+// written, so that text and structure are never the same line. Every number of
+// them matches, because escaping a line that is already escaped adds one more
+// and reading it back takes that one off.
+//
+// A carriage return counts as trailing space. Nothing that reaches here has one
+// today, because every text is normalized on the way in and the file is
+// normalized on the way back, but a line that reads as structure after that and
+// as text here would be a line written to the file bare and read back as a
+// block boundary, and this is one regular expression rather than five places
+// that have to keep normalizing.
+var structural = regexp.MustCompile(`^(\\*)<!-- (?:block (\d+) v(\d+)|conflict) -->[ \t\r]*$`)
+
+// commentOf is the block a line stands above and the version it was at, or a
+// zero id for anything else: a line of text quoting one of these comments, the
+// conflict marker, or an ordinary line. It is the one reader of a comment, so
+// that the cut and the block it starts can never disagree about which lines are
+// structure. No block is at id nought, so a line naming one is text.
+func commentOf(line string) (id, version int64) {
+	m := structural.FindStringSubmatch(line)
+	if m == nil || m[1] != "" || m[2] == "" {
+		return 0, 0
+	}
+	id, err := strconv.ParseInt(m[2], 10, 64)
+	if err != nil || id == 0 {
+		return 0, 0
+	}
+	version, _ = strconv.ParseInt(m[3], 10, 64)
+	return id, version
+}
+
+// marker is the line an import writes onto a block it could not take from the
+// file. It stands under that block's comment and is not part of the text.
+func marker(line string) bool {
+	m := structural.FindStringSubmatch(line)
+	return m != nil && m[1] == "" && m[2] == ""
+}
+
+// escaped is a line of a block's text as the file carries it: one more
+// backslash in front when it reads like a line the file writes itself, and the
+// line as it stands otherwise.
+func escaped(line string) string {
+	if structural.MatchString(line) {
+		return `\` + line
+	}
+	return line
+}
+
+// unescaped is the other half of that, and the two are a bijection, so text the
+// app stores comes back as itself whatever it quotes.
+func unescaped(line string) string {
+	if m := structural.FindStringSubmatch(line); m != nil && m[1] != "" {
+		return line[1:]
+	}
+	return line
+}
 
 // paths returns the file this document is mirrored to. The directory is the
 // proposition, numbered and named the way an object key is, so a listing of
@@ -88,7 +145,43 @@ func within(root, path string) error {
 // render is the whole file: the front matter, then one block per paragraph with
 // its id comment above it, and a conflict marker on any block an import could
 // not take from the file.
+//
+// The front matter needs no escaping of its own. It is four lines and a fence
+// of hyphens either side, and the read below cuts at the first of those after
+// the first line, which is always the one written here: every block comes after
+// it, so a block holding a line of hyphens is a line in the body like any
+// other.
 func render(d Document, blocks []Block, conflicted map[int64]bool) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\nproposition: %d\ndocument: %d\nrevision: %d\n%s\n",
+		frontMatter, d.Proposition, d.ID, d.Revision, frontMatter)
+	for _, block := range blocks {
+		b.WriteString("\n")
+		fmt.Fprintf(&b, blockCommentFmt+"\n", block.ID, block.Version)
+		if conflicted[block.ID] {
+			b.WriteString(conflictMarker + "\n")
+		}
+		for _, line := range strings.Split(block.Text, "\n") {
+			b.WriteString(escaped(line))
+			b.WriteString("\n")
+		}
+	}
+	return []byte(b.String())
+}
+
+// legacyRender is render as the version before this one wrote it, with nothing
+// escaped, kept whole so that a file can be compared against it byte for byte.
+// Every mirror file on disk is one of these at the first start after this
+// version is deployed, and reading one back through the parser would take a
+// line of somebody's text that quotes a block comment for a block boundary,
+// with no hand edit anywhere near it.
+//
+// ponytail: this is for one start per deployment, and it can be deleted once
+// every deployment has run this version once. Its ceiling is a file the older
+// version wrote that is no longer what it wrote: a hand edit made while the
+// process was down, or a conflict marker, leaves it to be read back the
+// ordinary way, which is right unless that file also quotes the format.
+func legacyRender(d Document, blocks []Block, conflicted map[int64]bool) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\nproposition: %d\ndocument: %d\nrevision: %d\n%s\n",
 		frontMatter, d.Proposition, d.ID, d.Revision, frontMatter)
@@ -336,8 +429,13 @@ type fileDoc struct {
 var ErrNotMirror = errors.New("that file is not a document mirror")
 
 // parseMirror reads a markdown file back into the blocks it stands for. The
-// body is cut on blank lines, exactly as Paragraphs cuts a block, so a file
+// body is cut by mirrorChunks, which cuts where Paragraphs cuts, so a file
 // written by render and read back here is the same list of blocks.
+//
+// A block named twice keeps its id the first time and loses it after that. The
+// file is the one that says so, and two chunks cannot both be that block: the
+// second is a paragraph somebody copied, comment line and all, and an id of
+// nought is how the import is told to put it in as a block of its own.
 func parseMirror(content []byte) (fileDoc, error) {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(content), "\r\n", "\n"), "\r", "\n")
 	if !strings.HasPrefix(text, frontMatter+"\n") {
@@ -370,24 +468,28 @@ func parseMirror(content []byte) (fileDoc, error) {
 		return fileDoc{}, ErrNotMirror
 	}
 
-	for _, chunk := range blankLine.Split(body, -1) {
+	seen := map[int64]bool{}
+	for _, chunk := range mirrorChunks(body) {
 		var block fileBlock
 		lines := strings.Split(strings.Trim(chunk, "\n"), "\n")
 		for len(lines) > 0 {
-			if m := blockComment.FindStringSubmatch(strings.TrimSpace(lines[0])); m != nil {
-				block.ID, _ = strconv.ParseInt(m[1], 10, 64)
-				block.Version, _ = strconv.ParseInt(m[2], 10, 64)
-				lines = lines[1:]
-				continue
-			}
-			// A marker this process wrote onto a block it could not take from
-			// the file is not part of the text.
-			if strings.TrimSpace(lines[0]) == conflictMarker {
+			if id, version := commentOf(lines[0]); id != 0 {
+				block.ID, block.Version = id, version
+			} else if !marker(lines[0]) {
+				break
+			} else {
 				block.Conflicted = true
-				lines = lines[1:]
-				continue
 			}
-			break
+			lines = lines[1:]
+		}
+		if seen[block.ID] {
+			block.ID, block.Version = 0, 0
+		}
+		if block.ID != 0 {
+			seen[block.ID] = true
+		}
+		for i, line := range lines {
+			lines[i] = unescaped(line)
 		}
 		block.Text = strings.TrimSpace(strings.Join(lines, "\n"))
 		if block.ID == 0 && block.Text == "" {
@@ -396,4 +498,53 @@ func parseMirror(content []byte) (fileDoc, error) {
 		doc.Blocks = append(doc.Blocks, block)
 	}
 	return doc, nil
+}
+
+// mirrorChunks cuts the body into the runs of lines each block was written as:
+// at a blank line, unless it is inside a fenced code block, which is where
+// Paragraphs cuts too, so a block holding code comes back as the one block it
+// went out as, and at every block comment, which is a boundary wherever it
+// stands. A comment ends whatever fence is open, because it is the start of
+// another block: a block holding a fence that is never closed, which is what a
+// save made while somebody is typing leaves behind, cannot swallow the blocks
+// written under it.
+//
+// Nothing a block holds can be read as one of those comments, because render
+// writes a line of text that looks like one with a backslash in front. What is
+// left is the hand edit: somebody who types a bare comment line into the file
+// themselves has written a boundary, and the words on either side of it are all
+// kept, but they land in the blocks the comments name. A conflict marker moved
+// above its block's comment rather than under it is dropped rather than read as
+// that block's, since it falls at the end of the block before it; render always
+// writes one under the comment.
+func mirrorChunks(body string) []string {
+	out := []string{}
+	var current []string
+	var f fence
+	// A run with nothing in it is no block: the body opens with the blank line
+	// render writes above the first comment, and two boundaries in a row are
+	// somebody's spacing rather than an empty block.
+	cut := func() {
+		if len(current) > 0 {
+			out = append(out, strings.Join(current, "\n"))
+			current = nil
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		id, _ := commentOf(line)
+		switch {
+		case id != 0:
+			cut()
+			f = fence{}
+			current = append(current, line)
+		case f.track(line):
+			current = append(current, line)
+		case blank(line):
+			cut()
+		default:
+			current = append(current, line)
+		}
+	}
+	cut()
+	return out
 }

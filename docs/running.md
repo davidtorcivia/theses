@@ -92,6 +92,20 @@ echo and is left alone. A block the import could not take, because it had
 changed on both sides, is written back with a conflict marker above it and the
 version from the database in it.
 
+Those comments are the boundary between one block and the next, so a line of
+your own text that reads like one is written with a backslash in front of it
+and read back without it, and a document about this file format is a document
+like any other. Copying a paragraph in the file, comment line and all, makes a
+new block of the copy and leaves the one it came from alone.
+
+Two things follow if you edit the comments themselves. One you have indented is
+no longer a comment, so the block it named loses its id and its words come back
+as a block somebody added. And a bare comment line typed into the middle of a
+block is a boundary: the block above keeps only what stood above that line,
+which may be nothing at all, the words below it go to the block the comment
+names, and that block's own words come back as a new block. Both are one
+restore away, since an import keeps a `pre-import` revision before it writes.
+
 ## Background work
 
 Six goroutines run beside the server and stop with it: the mail outbox, the
