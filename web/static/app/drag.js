@@ -11,6 +11,7 @@
 // that lifts before then has tapped to open what is under it.
 
 import { hold } from './state.js';
+import { say } from './dom.js';
 
 const PRESS = 300;
 const SLOP = 6;
@@ -27,7 +28,9 @@ let active = null;
 // one finishes the drag rather than asking to open what it landed on. It is
 // the one click it swallows, and the next press clears it anyway, because
 // where the click lands after a row has been reparented is the browser's
-// business and it may not land on the row at all.
+// business and it may not land on the row at all. A press whose row was rebuilt
+// under it swallows its click too, because the finger was holding a row rather
+// than asking to open one.
 let carried = false;
 
 export function carrying() {
@@ -35,6 +38,36 @@ export function carrying() {
   carried = false;
   return was;
 }
+
+// Any next press clears it, whether or not what is pressed can be carried. A
+// row that asks the question without being movable, which an archived one is,
+// would otherwise answer for a drag that ended somewhere else entirely. In the
+// capture phase, so the press that picks a row up clears it before it runs.
+addEventListener('pointerdown', () => { carried = false; }, true);
+
+// Whether the row in the air is being carried by a finger, which is the only
+// case where a touchmove has to be refused.
+let touchDrag = false;
+
+// Neither value of the touch action property answers this. The browser reads
+// the rule when the finger lands, a third of a second before the press that
+// picks the row up, so a rule written at either moment is read too late to stop
+// the scroll, and a card that refused touch action outright would stop the
+// board scrolling under every finger that lands on one, which on a phone is
+// most of the screen. Refusing touchmove does stop it: the press needed the
+// finger still, so no scroll has begun. The refusal is registered here, once,
+// at import, because Safari does not honor a preventDefault from a touchmove
+// listener that was added after the touch began.
+addEventListener('touchmove', (ev) => {
+  if (touchDrag && ev.cancelable) ev.preventDefault();
+}, { passive: false });
+
+// A phone has no console, so with dragdebug set in local storage the bar names
+// what ended each drag. This goes away once a device has shown whether the
+// press holds.
+const debug = () => {
+  try { return localStorage.getItem('dragdebug'); } catch { return null; }
+};
 
 // movable carries node with the pointer. zone is the selector of a container a
 // row may be let go over, list finds the element inside one whose children are
@@ -47,13 +80,13 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
   node.classList.add('movable');
 
   node.addEventListener('pointerdown', (e) => {
-    carried = false;
     // A button on the row answers for itself, a second mouse button is not a
     // drag, and a row is already in somebody's hand.
     if (active || e.button !== 0 || e.target.closest('button')) return;
 
     const token = {};
     const mouse = e.pointerType === 'mouse';
+    const began = Date.now();
     const from = { x: e.clientX, y: e.clientY };
     let at = { ...from };
     let grab = null;
@@ -64,17 +97,17 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
     let frame = 0;
     let press = mouse ? 0 : setTimeout(start, PRESS);
 
-    // Neither value of the touch action property answers this. The browser
-    // reads the rule when the finger lands, a third of a second before the
-    // press that picks the row up, so a rule written at either moment is read
-    // too late to stop the scroll. Refusing the first touchmove of the drag
-    // does stop it: the press needed the finger still, so no scroll has begun.
-    const still = (ev) => ev.preventDefault();
     // Android answers a long press with a context menu and cancels the pointer
     // behind it, which would drop the row in the moment it was picked up.
     const quiet = (ev) => ev.preventDefault();
 
     active = token;
+    // The platform's own long press lands at around half a second, after the
+    // press that picks the row up, and whatever it starts takes the touch away
+    // for good. Selection is refused for the whole document from the moment the
+    // finger lands, well before that, because iOS selects the nearest
+    // selectable text even when what was pressed is not selectable itself.
+    if (!mouse) document.documentElement.classList.add('pressing');
     node.setPointerCapture(e.pointerId);
     addEventListener('pointermove', moved);
     addEventListener('pointerup', up);
@@ -90,7 +123,13 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
 
     function start() {
       press = 0;
+      // Any change applied during the press rebuilt the list and took this row
+      // out of the page, because rendering is only held from here on. The node
+      // in hand is a stale one; putting it back among the fresh rows would show
+      // the card twice until the drop drew the board again.
+      if (!node.isConnected) { carried = true; end(); return; }
       on = true;
+      touchDrag = !mouse;
       const box = node.getBoundingClientRect();
       grab = { x: at.x - box.left, y: at.y - box.top };
       ghost = node.cloneNode(true);
@@ -102,7 +141,6 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
       // A change arriving mid drag would rebuild the list and take the row out
       // of the hand holding it, so rendering waits until the drop.
       hold(true);
-      addEventListener('touchmove', still, { passive: false });
       frame = requestAnimationFrame(tick);
       follow();
       place();
@@ -158,8 +196,9 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
 
     function up(ev) {
       if (ev.pointerId !== e.pointerId) return;
-      if (on && zone) drop(zone);
-      end();
+      // A drop that throws still puts the row down, or the document would stay
+      // unselectable and the page unable to scroll.
+      try { if (on && zone) drop(zone); } finally { end(ev); }
     }
 
     // Escape puts the row down. Nothing is sent, and the render held through
@@ -169,11 +208,16 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
       if (ev.key !== 'Escape' || !on) return;
       ev.preventDefault();
       ev.stopPropagation();
-      end();
+      end(ev);
     }
 
-    function end() {
+    // ev is the event that ended the drag, which pointercancel and blur pass
+    // themselves and the rest hand over, because which one it was is the only
+    // thing a phone can be asked about a drag that let go by itself.
+    function end(ev) {
       if (active === token) active = null;
+      touchDrag = false;
+      document.documentElement.classList.remove('pressing');
       clearTimeout(press);
       cancelAnimationFrame(frame);
       removeEventListener('pointermove', moved);
@@ -182,7 +226,6 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
       removeEventListener('contextmenu', quiet);
       removeEventListener('blur', end);
       removeEventListener('keydown', abandon, true);
-      removeEventListener('touchmove', still);
       if (node.hasPointerCapture(e.pointerId)) node.releasePointerCapture(e.pointerId);
       if (!on) return;
       on = false;
@@ -192,6 +235,7 @@ export function movable(node, { zone: zoneSel, list = (z) => z, over = '', drop 
       if (zone && over) zone.classList.remove(over);
       zone = null;
       hold(false);
+      if (debug()) say(`drag ended by ${ev.key || ev.type} after ${Date.now() - began}ms`);
     }
   });
 }
