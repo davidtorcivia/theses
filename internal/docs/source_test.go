@@ -3,9 +3,9 @@ package docs
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 )
 
@@ -432,7 +432,7 @@ func TestWriteSourceAuthorization(t *testing.T) {
 		{name: "a researcher writes", who: "researcher"},
 		{name: "a guest may not", who: "guest", want: core.ErrForbidden},
 		{name: "somebody who is not a member may not", who: "outsider", want: core.ErrForbidden},
-		{name: "an archived proposition is read only", who: "editor", archive: true, want: errArchivedHere},
+		{name: "an archived proposition is read only", who: "editor", archive: true, want: board.ErrArchived},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -447,20 +447,12 @@ func TestWriteSourceAuthorization(t *testing.T) {
 			switch {
 			case tc.want == nil && err != nil:
 				t.Fatalf("the save answered %v, want it to go through", err)
-			case tc.want == errArchivedHere:
-				if err == nil || !strings.Contains(err.Error(), "archived") {
-					t.Fatalf("the save answered %v, want the archived refusal", err)
-				}
 			case tc.want != nil && !errors.Is(err, tc.want):
 				t.Fatalf("the save answered %v, want %v", err, tc.want)
 			}
 		})
 	}
 }
-
-// errArchivedHere names the archived refusal in the table above without this
-// package importing board for one comparison.
-var errArchivedHere = errors.New("archived")
 
 // The whole save is one transaction of keyed commands, and the revision it
 // opens with is the one the key is spent on, so a request sent twice because

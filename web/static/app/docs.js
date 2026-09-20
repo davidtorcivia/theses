@@ -1688,7 +1688,7 @@ async function openHistory(doc) {
   const keep = el('button', { class: 'lnk', type: 'button', text: 'Save a version now' });
   const dialog = el('dialog', { class: 'history' },
     el('h3', { text: 'History of ' + doc.name }),
-    el('p', { text: 'Changes are saved as you type. A version is kept when you ask, every two minutes while somebody is editing, and before anything is read back in from the markdown file.' }),
+    el('p', { text: 'Changes are saved as you type. A version is kept when you ask, every two minutes while somebody is editing, and before markdown for the whole document is read back in from the file or from the source view.' }),
     list, pane,
     el('div', { class: 'acts' }, keep, close));
   close.addEventListener('click', () => dialog.close());
@@ -1702,7 +1702,9 @@ async function openHistory(doc) {
 }
 
 function label(reason) {
-  if (reason === 'pre-import') return 'Before a file was read in';
+  // One reason covers both roads markdown for a whole document comes back in
+  // by: the file on disk, and Save in the source view.
+  if (reason === 'pre-import') return 'Before markdown was read in';
   if (reason === 'periodic') return 'While editing';
   return 'Saved';
 }
