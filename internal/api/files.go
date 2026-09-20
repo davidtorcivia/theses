@@ -52,7 +52,10 @@ func SessionHandler(a *API, svc *files.Service, user func(*http.Request) *store.
 			h(w, r, core.Actor{Kind: core.KindUser, ID: u.ID, Name: u.Name})
 		}
 	})
-	return mux
+	// The browser names its changes the same way an agent does, through the
+	// same middleware: the outbox replays a queued link as a request, and a
+	// request it never saw the answer to must not add the link twice.
+	return a.WithKey(mux)
 }
 
 func mount(mux *http.ServeMux, prefix string, a *API, svc *files.Service, wrap wrapper) {

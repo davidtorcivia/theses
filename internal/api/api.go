@@ -14,6 +14,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/search"
@@ -176,6 +177,33 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
+// IdempotencyKey is the header a client names its change with, so that a
+// request it has to send again, because it never saw the answer to the first,
+// is answered with what the first one did rather than doing it twice. It is
+// honored by every route that answers with an event; a read carries no change
+// to remember and ignores it.
+const IdempotencyKey = "Idempotency-Key"
+
+// WithKey is the one place the header becomes a key, for /api/v1 and for the
+// same handlers under /app. A key that is not one is a malformed request rather
+// than something quietly dropped: a client that meant to be safe against a
+// repeat and was not would never find out.
+func (a *API) WithKey(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get(IdempotencyKey)
+		if key == "" || r.Method == http.MethodGet || r.Method == http.MethodHead {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, err := core.WithKey(r.Context(), key)
+		if err != nil {
+			a.refuse(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // anyScope is the scope of a route that needs a token but no permission beyond
 // having one.
 const anyScope = ""
@@ -217,7 +245,7 @@ func (a *API) Handler() http.Handler {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})
 	a.notificationRoutes(mux)
-	return a.Authenticate(mux)
+	return a.Authenticate(a.WithKey(mux))
 }
 
 func (a *API) me(w http.ResponseWriter, r *http.Request, p Principal) {

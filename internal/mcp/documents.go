@@ -183,6 +183,7 @@ func (s *Server) readDocument(ctx context.Context, req *sdk.CallToolRequest, in 
 type createDocumentArgs struct {
 	Proposition int64  `json:"proposition" jsonschema:"the proposition to put the document in"`
 	Name        string `json:"name" jsonschema:"what the tab above the document says"`
+	Key         string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 type writeOut struct {
@@ -197,6 +198,10 @@ func (s *Server) createDocument(ctx context.Context, req *sdk.CallToolRequest, i
 	if err != nil {
 		return nil, writeOut{}, err
 	}
+	ctx, err = keyed(ctx, in.Key)
+	if err != nil {
+		return nil, writeOut{}, err
+	}
 	e, err := service.CreateDocument(ctx, who, in.Proposition, in.Name)
 	if err != nil {
 		return nil, writeOut{}, s.refusal("create the document", err)
@@ -207,6 +212,7 @@ func (s *Server) createDocument(ctx context.Context, req *sdk.CallToolRequest, i
 type appendBlockArgs struct {
 	Document int64  `json:"document" jsonschema:"the document to add to"`
 	Text     string `json:"text" jsonschema:"the markdown of the paragraph; text holding a blank line becomes one block per paragraph"`
+	Key      string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 func (s *Server) appendBlock(ctx context.Context, req *sdk.CallToolRequest, in appendBlockArgs) (*sdk.CallToolResult, writeOut, error) {
@@ -218,6 +224,10 @@ func (s *Server) appendBlock(ctx context.Context, req *sdk.CallToolRequest, in a
 	if err != nil {
 		return nil, writeOut{}, s.refusal("read the document", err)
 	}
+	ctx, err = keyed(ctx, in.Key)
+	if err != nil {
+		return nil, writeOut{}, err
+	}
 	return s.inserted(ctx, service, who, in.Document, last, in.Text)
 }
 
@@ -225,6 +235,7 @@ type insertAfterHeadingArgs struct {
 	Document int64  `json:"document" jsonschema:"the document to add to"`
 	Heading  string `json:"heading" jsonschema:"the heading to add under, with or without its hashes"`
 	Text     string `json:"text" jsonschema:"the markdown of the paragraph"`
+	Key      string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 func (s *Server) insertAfterHeading(ctx context.Context, req *sdk.CallToolRequest, in insertAfterHeadingArgs) (*sdk.CallToolResult, writeOut, error) {
@@ -243,6 +254,10 @@ func (s *Server) insertAfterHeading(ctx context.Context, req *sdk.CallToolReques
 	after, found := endOfSection(doc.Blocks, in.Heading)
 	if !found {
 		return nil, writeOut{}, fmt.Errorf("that document has no heading %q", in.Heading)
+	}
+	ctx, err = keyed(ctx, in.Key)
+	if err != nil {
+		return nil, writeOut{}, err
 	}
 	return s.inserted(ctx, service, who, in.Document, after, in.Text)
 }

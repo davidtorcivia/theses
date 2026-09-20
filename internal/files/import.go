@@ -43,7 +43,11 @@ func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
 	if size <= 0 || size > maxImport {
 		return File{}, ErrImportSize
 	}
-	row, bucket, err := s.record(ctx, a, proposition, name, folder, size, 0)
+	// An import streams the bytes through this process, so a second one under
+	// the same client key writes the same object over itself rather than
+	// leaving anything in flight to pick up. Whether the row is new is nothing
+	// to it.
+	row, bucket, _, err := s.record(ctx, a, proposition, name, folder, size, 0)
 	if err != nil {
 		return File{}, err
 	}

@@ -116,10 +116,11 @@ func contains(list []string, want string) bool {
 // hours, so an hour's granularity is plenty and a restart never misses one.
 const sweepEvery = time.Hour
 
-// Sweep is the housekeeping pass: it abandons uploads nobody finished and folds
-// the activity log's runs of typed saves, now and every hour after. It stops
-// with ctx and holds nothing between ticks, so a cancellation costs whatever
-// the current pass has done and no more.
+// Sweep is the housekeeping pass: it abandons uploads nobody finished, forgets
+// the client keys nobody can still be replaying and folds the activity log's
+// runs of typed saves, now and every hour after. It stops with ctx and holds
+// nothing between ticks, so a cancellation costs whatever the current pass has
+// done and no more.
 //
 // Hourly is more often than the fold needs, which is once a day, but a fold
 // never touches a run younger than core.CompactAfter, so every pass but the
@@ -134,6 +135,11 @@ func (s *Server) Sweep(ctx context.Context) {
 	sweep := func() {
 		if err := s.files.Sweep(ctx); err != nil && !errors.Is(err, files.ErrNoBucket) {
 			s.log.Error("upload sweep", "err", err)
+		}
+		// The keys go before the fold, so a fold never meets a key that was
+		// due to be forgotten anyway.
+		if err := s.board.PruneKeys(ctx); err != nil {
+			s.log.Error("client key prune", "err", err)
 		}
 		folded, err := s.board.Compact(ctx, core.CompactAfter)
 		if err != nil {

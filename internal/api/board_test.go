@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -630,4 +631,72 @@ func TestMembershipAndDeleteOverREST(t *testing.T) {
 	if w := h.do("GET", "/api/v1/propositions/"+prop, token, ""); w.Code != http.StatusNotFound {
 		t.Fatalf("the proposition is still there: %d %s", w.Code, w.Body)
 	}
+}
+
+// An Idempotency-Key makes a request that arrives twice one change. An agent
+// whose connection dropped before the answer came back cannot tell a request
+// that was lost from one that was applied; the header is how it says the second
+// attempt is the same change as the first.
+func TestIdempotencyKeyMakesARepeatedRequestOneChange(t *testing.T) {
+	h := newBoardHarness(t)
+	token := h.token(auth.ScopeRead, auth.ScopeWrite)
+	body := `{"title":"Read the almanac"}`
+	path := "/api/v1/columns/" + strconv.FormatInt(h.column, 10) + "/cards"
+
+	var events []core.Event
+	for i := 0; i < 2; i++ {
+		w := h.keyed("POST", path, token, body, "a-caller-key")
+		if w.Code != http.StatusOK {
+			t.Fatalf("attempt %d gave %d: %s", i+1, w.Code, w.Body)
+		}
+		events = append(events, h.event(w))
+	}
+	if events[0].Replayed {
+		t.Error("the first answer says it was replayed")
+	}
+	if !events[1].Replayed {
+		t.Error("the second answer does not say it was replayed")
+	}
+	if events[1].EntityID != events[0].EntityID {
+		t.Errorf("the second answer is card %d, want the first one, %d",
+			events[1].EntityID, events[0].EntityID)
+	}
+	var n int
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM cards WHERE column_id = ?`, h.column).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	// The card the harness starts with, and the one this test made.
+	if n != 2 {
+		t.Errorf("%d cards in the column, want 2", n)
+	}
+
+	// A different key is a different change, and a key that is not one is the
+	// request malformed rather than something quietly ignored.
+	if w := h.keyed("POST", path, token, body, "another-key"); w.Code != http.StatusOK {
+		t.Fatalf("a second key gave %d: %s", w.Code, w.Body)
+	}
+	if w := h.keyed("POST", path, token, body, "not a key"); w.Code != http.StatusBadRequest {
+		t.Errorf("a malformed key gave %d: %s", w.Code, w.Body)
+	}
+	// A read carries no change to remember, so the header is nothing to it.
+	if w := h.keyed("GET", "/api/v1/propositions", token, "", "not a key"); w.Code != http.StatusOK {
+		t.Errorf("a read with a malformed key gave %d: %s", w.Code, w.Body)
+	}
+}
+
+// keyed is do with the header a caller names its change with.
+func (h *harness) keyed(method, target, token, body, key string) *httptest.ResponseRecorder {
+	h.Helper()
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, target, nil)
+	} else {
+		r = httptest.NewRequest(method, target, strings.NewReader(body))
+	}
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set(IdempotencyKey, key)
+	w := httptest.NewRecorder()
+	h.handler.ServeHTTP(w, r)
+	return w
 }

@@ -214,10 +214,15 @@ func (t *boardTools) getProposition(ctx context.Context, req *sdk.CallToolReques
 
 type createPropositionArgs struct {
 	Title string `json:"title" jsonschema:"what the proposition is called"`
+	Key   string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 func (t *boardTools) createProposition(ctx context.Context, req *sdk.CallToolRequest, in createPropositionArgs) (*sdk.CallToolResult, writeOut, error) {
 	p, who, err := t.writing(ctx, req, auth.ScopeWrite)
+	if err != nil {
+		return nil, writeOut{}, err
+	}
+	ctx, err = keyed(ctx, in.Key)
 	if err != nil {
 		return nil, writeOut{}, err
 	}
@@ -276,10 +281,15 @@ type createCardArgs struct {
 	Column    int64   `json:"column" jsonschema:"the column to add it to, as list_cards reports the columns"`
 	Title     string  `json:"title" jsonschema:"one line saying what the card is"`
 	Assignees []int64 `json:"assignees,omitempty" jsonschema:"the ids of the people to put on it, as list_users reports them"`
+	Key       string  `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 func (t *boardTools) createCard(ctx context.Context, req *sdk.CallToolRequest, in createCardArgs) (*sdk.CallToolResult, writeOut, error) {
 	p, who, err := t.writing(ctx, req, auth.ScopeWrite)
+	if err != nil {
+		return nil, writeOut{}, err
+	}
+	ctx, err = keyed(ctx, in.Key)
 	if err != nil {
 		return nil, writeOut{}, err
 	}
@@ -354,10 +364,15 @@ func (t *boardTools) completeCard(ctx context.Context, req *sdk.CallToolRequest,
 type commentArgs struct {
 	Card int64  `json:"card" jsonschema:"the card to write on"`
 	Text string `json:"text" jsonschema:"the markdown of the note; an @handle in it mentions that person"`
+	Key  string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
 func (t *boardTools) comment(ctx context.Context, req *sdk.CallToolRequest, in commentArgs) (*sdk.CallToolResult, writeOut, error) {
 	p, who, err := t.writing(ctx, req, auth.ScopeWrite)
+	if err != nil {
+		return nil, writeOut{}, err
+	}
+	ctx, err = keyed(ctx, in.Key)
 	if err != nil {
 		return nil, writeOut{}, err
 	}

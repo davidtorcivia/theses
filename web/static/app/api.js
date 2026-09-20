@@ -17,8 +17,8 @@ export class Refused extends Error {
   }
 }
 
-async function call(method, path, body) {
-  const headers = { Accept: 'application/json' };
+async function call(method, path, body, extra) {
+  const headers = { Accept: 'application/json', ...extra };
   if (method !== 'GET') {
     headers['Content-Type'] = 'application/json';
     headers['X-CSRF-Token'] = token;
@@ -63,7 +63,11 @@ async function call(method, path, body) {
 }
 
 export const get = (path) => call('GET', path);
-export const post = (path, body) => call('POST', path, body ?? {});
+
+// post takes extra headers, which is how a replay out of the outbox names the
+// change it is making: a request whose answer never came back goes again under
+// the same Idempotency-Key and adds one link rather than two.
+export const post = (path, body, extra) => call('POST', path, body ?? {}, extra);
 export const patch = (path, body) => call('PATCH', path, body);
 export const del = (path) => call('DELETE', path);
 

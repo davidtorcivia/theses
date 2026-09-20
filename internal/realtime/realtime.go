@@ -98,9 +98,16 @@ type message struct {
 
 // command is every frame a tab sends. ID is the tab's own request number, which
 // comes back on the answer so an optimistic change knows which reply is its own.
+//
+// Key names the change rather than the attempt: a tab that sends the same
+// command again, because its socket went while the command was in the air,
+// sends it under the key it used the first time, and the server answers with
+// what that key already did rather than doing it twice. It is optional, so a
+// frame without one is applied as it always was.
 type command struct {
 	ID   int64  `json:"id"`
 	Cmd  string `json:"cmd"`
+	Key  string `json:"key"`
 	Args args   `json:"args"`
 }
 

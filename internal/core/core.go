@@ -49,6 +49,12 @@ type Event struct {
 	Before      json.RawMessage `json:"before,omitempty"`
 	After       json.RawMessage `json:"after,omitempty"`
 	At          int64           `json:"at"`
+	// Replayed says this command arrived under a key the actor had already
+	// spent, so nothing was applied and what follows is the event that key
+	// produced the first time. A client that draws an event as it arrives must
+	// not draw this one: the payload is the row as it was when it was applied,
+	// which may be older than what the client holds now.
+	Replayed bool `json:"replayed,omitempty"`
 }
 
 var (
@@ -60,6 +66,9 @@ var (
 	ErrNotUndoable = errors.New("that change cannot be undone")
 	// ErrNotFound is re-exported so callers need not import store for it.
 	ErrNotFound = store.ErrNotFound
+	// ErrKey is a client's key that is not one: it is the shape of a malformed
+	// request rather than a refusal about anything in the workspace.
+	ErrKey = errors.New("a key is 1 to 64 letters, digits, hyphens or underscores")
 )
 
 // ConflictError is what a versioned text field refuses a stale write with. It
@@ -147,6 +156,20 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 	if err := authorise(ctx, tx, a, proposition, need); err != nil {
 		return Event{}, err
 	}
+	// The key is spent after the authorization and before anything is applied,
+	// so somebody who may not write here is refused rather than told what
+	// somebody else's key did, and so a command that has already happened does
+	// not happen again.
+	mine := spend(ctx, a)
+	if mine != "" {
+		e, found, err := replayed(ctx, tx, a.ID, mine)
+		if err != nil {
+			return Event{}, err
+		}
+		if found {
+			return e, nil
+		}
+	}
 	change, err := apply(ctx, tx)
 	if err != nil {
 		return Event{}, err
@@ -172,6 +195,13 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 	seq, err := insertActivity(ctx, tx, a, filed, change, before, after, at)
 	if err != nil {
 		return Event{}, err
+	}
+	if mine != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO client_keys
+			(actor_id, key, activity_id, created_at) VALUES (?, ?, ?, ?)`,
+			a.ID, mine, seq, at); err != nil {
+			return Event{}, err
+		}
 	}
 	e := Event{
 		Seq: seq, Proposition: prop, Entity: change.Entity, EntityID: change.EntityID,
