@@ -132,6 +132,14 @@ function receive(m) {
     case 'gap':
       catchUp();
       break;
+    case 'ping':
+      // The server's heartbeat, answered from here rather than on a timer of
+      // this tab's own: a hidden tab's timers are throttled to one a minute,
+      // and a message handler runs when the frame arrives whatever the tab is
+      // doing. A tab that is frozen answers nothing, is dropped, and reconnects
+      // on the close event it gets when it wakes.
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ cmd: 'pong' }));
+      break;
   }
 }
 

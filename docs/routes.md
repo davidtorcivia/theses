@@ -56,7 +56,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /p/{id}/publish` | Save which document and which recording this proposition publishes with, and, with `do=publish`, send it to Transistor. |
 | `GET /app/drive` | One Drive folder's contents, or a search. For anybody who may edit. |
 | `POST /app/drive/import` | Copy one Drive file into the bucket as a file on a proposition. |
-| `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. |
+| `GET /ws?proposition={id}` | One websocket per tab, on the session cookie, subscribed to that proposition: presence, and every command as it is applied. The server sends `{"type":"ping"}` every twenty five seconds and the tab answers `{"cmd":"pong"}`, which spends no part of its command allowance. A socket that has said nothing for sixty seconds is closed and the person behind it is no longer shown as present. A tab that is still there reconnects on its own and is present again. |
 | `GET /offline` | What the service worker serves for a navigation the network refused that the shell cannot stand in for. |
 | `GET /sw.js` | The service worker, from the root so its scope is the whole site. The URL never moves; the bytes carry the asset hash, so a deploy installs a new worker and the old cache goes with it. |
 | `GET /shell` | The app with an empty payload, no account, no CSRF token and not even the workspace name. Anyone may fetch it. The worker keeps a copy and hands it to an offline navigation to `/` or `/p/{id}`; the page draws itself, the top bar included, from the snapshot in IndexedDB. |
