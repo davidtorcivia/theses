@@ -14,6 +14,7 @@ import { replace } from './api.js';
 import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
 import * as undo from './undo.js';
+import { movable, carrying } from './drag.js';
 
 // The block this tab has open: its node and its textarea, and nothing else. The
 // editor is a way of typing into an entry below, not a place anything is kept,
@@ -771,10 +772,17 @@ function blockNode(b) {
     }));
   }
   if (canEdit()) {
-    node.addEventListener('click', (e) => { if (!onLink(e)) startEditing(b.id); });
+    node.addEventListener('click', (e) => {
+      // The pointer that has just carried the block ends in a click as well,
+      // and that one finishes the drag rather than asking to write in it. So
+      // does a press on the handle that moved too little to carry anything:
+      // the handle says grab and is not where anybody asks to write.
+      if (!carrying() && !onLink(e)) startEditing(b.id);
+    });
     node.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !onLink(e)) { e.preventDefault(); startEditing(b.id); }
     });
+    grip(node, b.id);
   }
   drawn.set(b.id, { key, node });
   return node;
@@ -792,6 +800,57 @@ function blockNode(b) {
 // else is standing in, builds text and spans and no links at all, so such a
 // block opens on a click wherever it is clicked, as it did.
 const onLink = (e) => !!e.target.closest('a');
+
+// grip is the handle a block is carried by, in the margin beside it, and the
+// drag it starts. Only the handle carries the block: pressing the text of one
+// has to go on meaning what it already means, which is click to write in it,
+// drag across it to select what it says, and follow a link in it. It is not a
+// button and takes no focus, because the keyboard already moves a block with
+// Alt and an arrow, which is what the title says; this is the pointer's way,
+// and the only one a phone has.
+function grip(node, id) {
+  // Only a block the server has can be named in a command, so only one with a
+  // block id of its own is given a handle at all, rather than one that would
+  // ask for something nobody could answer.
+  if (id <= 0) return;
+  node.append(el('span', {
+    class: 'grip', 'aria-hidden': 'true', text: '≡',
+    title: 'Drag to move this block. Alt with an arrow key moves it too.',
+  }));
+  movable(node, {
+    zone: '#docwrap', list: (z) => $('#doc', z), rows: '.blk', handle: '.grip',
+    drop: () => {
+      const list = neighbours();
+      const at = list.findIndex((b) => b.id === id);
+      // Somebody deleted the block while it was in the air. There is nothing
+      // left to move and nothing to move it among.
+      if (at < 0) return;
+      // Where it was, by the same rule the page is read by below: the nearest
+      // block above it the server has. It is read out of the state rather than
+      // off the page, because a move by somebody else arriving mid drag is held
+      // off the page until the drop and is still where this one started.
+      let was = 0;
+      for (let i = at - 1; i >= 0 && !was; i--) if (list[i].id > 0) was = list[i].id;
+      const after = previousBlock(node);
+      // A block let go where it already was asks the server for nothing.
+      if (after === was) return;
+      send('block.move', { block: id, after }).catch((err) => { say(err.message); emit(); });
+    },
+  });
+}
+
+// previousBlock is what a drop landed behind: the nearest row above it on the
+// page carrying the id of a block the server has, or nought for the head of the
+// document. A row without one is not somewhere a block can be put after, and
+// the list holds two of those: the button that adds a block, and the editor
+// drawn where a split is going before the block it stands for exists.
+function previousBlock(node) {
+  for (let at = node.previousElementSibling; at; at = at.previousElementSibling) {
+    const id = Number(at.dataset.b);
+    if (id > 0) return id;
+  }
+  return 0;
+}
 
 // body is the client renderer: the same markdown the mockup draws, built as
 // nodes so that nothing anybody typed is ever parsed as markup. What the text
@@ -1075,8 +1134,11 @@ function caretsMoved() {
     if (!was) continue;
     // A block somebody has tabbed to keeps its node: taking it out of the page
     // would drop the focus to the body, and every fifth of a second at that.
-    // It catches up on the next render like everything else.
-    if (was.contains(document.activeElement)) continue;
+    // A block in the hand keeps its node for a harder reason: replacing it
+    // would leave the pointer carrying a node that is no longer on the page,
+    // and the page holding two nodes for one block until the drop. Both catch
+    // up on the next render like everything else.
+    if (was.contains(document.activeElement) || was.classList.contains('dragging')) continue;
     const node = blockNode(b);
     if (node !== was) was.replaceWith(node);
   }
@@ -1502,6 +1564,10 @@ function clashed(id, w) {
   if (canEdit()) area.addEventListener('click', () => startEditing(id));
   const node = el('div', { class: 'blk clash' + heading(w.text), 'data-b': id },
     choice(id), area);
+  // A block waiting on an answer is still a block in an order, and moving one
+  // touches neither its text nor its version, so the answer it is waiting for
+  // is the same answer wherever it stands.
+  if (canEdit()) grip(node, id);
   queueMicrotask(() => { area.style.height = 'auto'; area.style.height = area.scrollHeight + 'px'; });
   return node;
 }

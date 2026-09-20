@@ -53,6 +53,11 @@ func (s *Server) addDocumentTools() {
 		Description: "Replaces the text of one block, merging in a change somebody else made when the version read_document reported is sent with it and overwriting when it is not.",
 		Annotations: overwrites("Replace a block"),
 	}, s.replaceBlock)
+	sdk.AddTool(s.srv, &sdk.Tool{
+		Name:        "move_block",
+		Description: "Moves one block within its document, after another block or to the head of it.",
+		Annotations: overwrites("Move a block"),
+	}, s.moveBlock)
 }
 
 // adds is the hint for a tool that puts something new there. It takes nothing
@@ -428,6 +433,26 @@ func (s *Server) replaceBlock(ctx context.Context, req *sdk.CallToolRequest, in 
 		return nil, writeOut{}, s.failed("read the block back", err)
 	}
 	return nil, writeOut{ID: block.ID, Version: block.Version}, nil
+}
+
+type moveBlockArgs struct {
+	Block int64 `json:"block" jsonschema:"the block to move, as read_document reports its id"`
+	After int64 `json:"after,omitempty" jsonschema:"the block to put it after, in the same document, or leave it out for the head of the document"`
+}
+
+// moveBlock puts a block somewhere else in its own document. It takes no key,
+// like the other tools that set a field rather than make something: moving a
+// block to the same place twice leaves it in that place.
+func (s *Server) moveBlock(ctx context.Context, req *sdk.CallToolRequest, in moveBlockArgs) (*sdk.CallToolResult, writeOut, error) {
+	service, who, err := s.writer(ctx, req)
+	if err != nil {
+		return nil, writeOut{}, err
+	}
+	e, err := service.MoveBlock(ctx, who, in.Block, in.After)
+	if err != nil {
+		return nil, writeOut{}, s.refusal("move the block", err)
+	}
+	return nil, writeOut{ID: e.EntityID}, nil
 }
 
 // writer is the service and the actor a write is recorded as: the person whose

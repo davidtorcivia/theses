@@ -131,7 +131,7 @@ func TestToolsAreListedWithOneSentenceEach(t *testing.T) {
 		"get_settings": true, "set_setting": true,
 		"list_documents": true, "read_document": true, "create_document": true,
 		"append_block": true, "insert_after_heading": true, "replace_block": true,
-		"write_document": true}
+		"move_block": true, "write_document": true}
 	for _, tool := range res.Tools {
 		if !want[tool.Name] {
 			t.Errorf("unexpected tool %q", tool.Name)
@@ -329,7 +329,7 @@ func TestAToolCannotOutrankTheTokenOwner(t *testing.T) {
 // that only add must say they take nothing away.
 func TestToolsCarryTheirHints(t *testing.T) {
 	overwriting := map[string]bool{"set_setting": true, "replace_block": true,
-		"write_document": true}
+		"move_block": true, "write_document": true}
 	adding := map[string]bool{"create_document": true, "append_block": true,
 		"insert_after_heading": true}
 	h := newHarness(t)

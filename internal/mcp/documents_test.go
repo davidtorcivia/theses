@@ -209,6 +209,7 @@ func TestDocumentToolsRefuseSomebodyWhoIsNotAMember(t *testing.T) {
 		{"read_document", readDocumentArgs{Document: document.EntityID}},
 		{"append_block", appendBlockArgs{Document: document.EntityID, Text: "Mine."}},
 		{"replace_block", replaceBlockArgs{Block: blocks[0].ID, Text: "Mine.", BaseVersion: blocks[0].Version}},
+		{"move_block", moveBlockArgs{Block: blocks[len(blocks)-1].ID}},
 		{"create_document", createDocumentArgs{Proposition: prop, Name: "Mine"}},
 		{"write_document", writeDocumentArgs{Document: document.EntityID, Text: "Mine."}},
 	} {
@@ -308,5 +309,75 @@ func TestWriteDocumentTool(t *testing.T) {
 		Base: []sourceBlock{{ID: last.ID, Version: 999}}}, nil)
 	if !res.IsError || !strings.Contains(say(res), "no longer on record") {
 		t.Fatalf("an unrecoverable base answered %v: %s", res.IsError, say(res))
+	}
+}
+
+// move_block puts a block somewhere else in its own document, at the head when
+// it names nothing to go after, and refuses to put one after a block of another
+// document, which has no place in this one's order.
+func TestMoveBlockTool(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	cs := h.connect(auth.ScopeRead, auth.ScopeWrite)
+	prop := h.proposition()
+
+	var made writeOut
+	h.call(cs, "create_document", createDocumentArgs{Proposition: prop, Name: "Research"}, &made)
+	for _, text := range []string{"One.", "Two.", "Three."} {
+		h.call(cs, "append_block", appendBlockArgs{Document: made.ID, Text: text}, &writeOut{})
+	}
+	reads := func() []string {
+		t.Helper()
+		blocks, err := docs.Blocks(ctx, h.db, made.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(blocks))
+		for _, b := range blocks {
+			out = append(out, b.Text)
+		}
+		return out
+	}
+	before := reads()
+	if len(before) != 4 || before[3] != "Three." {
+		t.Fatalf("the document reads %v", before)
+	}
+
+	var read readDocumentOut
+	h.call(cs, "read_document", readDocumentArgs{Document: made.ID}, &read)
+	last := read.Blocks[len(read.Blocks)-1]
+	first := read.Blocks[0]
+
+	var moved writeOut
+	h.call(cs, "move_block", moveBlockArgs{Block: last.ID}, &moved)
+	if moved.ID != last.ID {
+		t.Fatalf("move_block returned %+v", moved)
+	}
+	if got := reads(); got[0] != "Three." {
+		t.Fatalf("after the move to the head the document reads %v", got)
+	}
+
+	h.call(cs, "move_block", moveBlockArgs{Block: last.ID, After: first.ID}, &writeOut{})
+	if got := reads(); strings.Join(got, "|") != strings.Join([]string{before[0], "Three.", "One.", "Two."}, "|") {
+		t.Fatalf("after the move after the first block the document reads %v", got)
+	}
+
+	// Moving it twice to the same place leaves it there, which is why the tool
+	// takes no key.
+	h.call(cs, "move_block", moveBlockArgs{Block: last.ID, After: first.ID}, &writeOut{})
+	if got := reads(); got[1] != "Three." {
+		t.Fatalf("a second identical move left the document %v", got)
+	}
+
+	var other writeOut
+	h.call(cs, "create_document", createDocumentArgs{Proposition: prop, Name: "Script"}, &other)
+	var elsewhere readDocumentOut
+	h.call(cs, "read_document", readDocumentArgs{Document: other.ID}, &elsewhere)
+	res := h.call(cs, "move_block", moveBlockArgs{Block: last.ID, After: elsewhere.Blocks[0].ID}, nil)
+	if !res.IsError {
+		t.Fatal("a block moved after a block of another document")
+	}
+	if got := reads(); got[1] != "Three." {
+		t.Fatalf("the refused move still moved something: %v", got)
 	}
 }

@@ -399,6 +399,20 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
    way to start, so it is not quiet there. */
 #doc .addblk:only-child{opacity:1}
 #doc .addblk:disabled{opacity:.35;cursor:not-allowed}
+/* The handle a block is carried by, at the left of the same gutter the presence
+   initials stand at the right of, and quiet until the block is under the
+   pointer or has the focus, like the + above. It refuses touch action of its
+   own, which is what lets a finger on it start a drag at once rather than
+   having to hold still first, and it is the only part of a block that is not
+   selectable, because dragging the text is still selecting it. It is a finger's
+   target as well as a pointer's, so it is twenty four pixels each way. */
+.blk .grip{position:absolute;left:calc(-1 * var(--gut));top:.15em;width:1.5rem;text-align:center;color:rgba(0,0,0,.45);cursor:grab;opacity:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.blk:hover .grip,.blk:focus-visible .grip{opacity:1}
+.blk.dragging{opacity:.35}
+/* The ghost is a copy of the block standing on the page rather than in it, so
+   it carries none of the page it was cut out of with it. */
+.blk.ghost{background:var(--p);color:var(--k);font-size:17px;line-height:1.45;padding-right:.8rem;outline:1px solid var(--k)}
+.blk.ghost .who,.blk.ghost .grip{display:none}
 mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #doc .mention{color:var(--uc)}
 /* The line above the markdown when the document has moved under it. This pane
@@ -531,7 +545,11 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #palette .k{color:var(--dim)}
 #palette li a:hover .k{color:rgba(0,0,0,.6)}
 #palette .none{padding:.8rem 1rem;color:var(--dim)}
-@media (max-width:900px){#work,#admin{padding:1.2rem 1rem 3rem}.doc-ph{margin:2rem -1rem 0;padding:1rem 1rem 0}#docwrap{margin:0 -1rem;padding:1.2rem 1rem 2.5rem}#top{padding:0 .8rem}}
+/* There is no gutter at this width, so the handle comes inside the block, at
+   the top right under the initials rather than beside them. It is written here
+   rather than beside the rule that moves the initials, which is further up the
+   file, because the handle's own rule is below that one and would win. */
+@media (max-width:900px){#work,#admin{padding:1.2rem 1rem 3rem}.doc-ph{margin:2rem -1rem 0;padding:1rem 1rem 0}#docwrap{margin:0 -1rem;padding:1.2rem 1rem 2.5rem}#top{padding:0 .8rem}.blk{padding-right:1.6rem}.blk .grip{left:auto;right:0}}
 /* The mockup put these on style attributes. The CSP has no 'unsafe-inline' in
    style-src and the palette is a fixed list of eight, so they are classes.
    The swatch picker is radio inputs so it needs no script. */
@@ -712,7 +730,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
    that assigns and the rail row's menu are drawn at full strength on a phone
    and still appear on hover at 1440. */
 @media (hover:none){
-  .card .asg,.card .cm .tick,.ws .more{opacity:1}
+  .card .asg,.card .cm .tick,.ws .more,.blk .grip{opacity:1}
 }
 /* The board's hint tells a mouse to drag and a finger to press and hold, and
    each reader is shown the one that is true for them. */
