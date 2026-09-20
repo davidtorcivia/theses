@@ -117,9 +117,7 @@ func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 			c.send(message{Type: "error", ID: cmd.ID, Error: reason(err)})
 			return
 		}
-		c.mu.Lock()
-		c.where = where
-		c.mu.Unlock()
+		c.moveTo(where)
 		h.announce(c.proposition)
 		return
 	}

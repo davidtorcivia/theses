@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -46,6 +48,11 @@ type Hub struct {
 	log   *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
+
+	// moves numbers the `where` frames of every tab on this server in the order
+	// they arrive, so Presence can tell which of a person's tabs moved last
+	// without a clock two of them could read the same value from.
+	moves atomic.Uint64
 
 	mu    sync.Mutex
 	rooms map[int64]map[*client]struct{}
@@ -128,8 +135,20 @@ type client struct {
 
 	mu     sync.Mutex
 	where  string
+	moved  uint64
 	member map[int64]bool
 	owner  bool
+}
+
+// moveTo records what this tab has open and where in the order of everything
+// this server has been told. Both fields are written together, because one
+// without the other is a tab whose place is known and whose turn is not.
+func (c *client) moveTo(where string) {
+	n := c.hub.moves.Add(1)
+	c.mu.Lock()
+	c.where = where
+	c.moved = n
+	c.mu.Unlock()
 }
 
 // Handler is the websocket endpoint. Everything is refused in the handshake
@@ -221,17 +240,31 @@ func (h *Hub) serve(ws *websocket.Conn) {
 		if err := websocket.Message.Receive(ws, &raw); err != nil {
 			return
 		}
-		// The limiter first, because it is the cheap check and a flood of
-		// rubbish should not buy a session query per frame. The frame was
-		// capped before it was read, so parsing one to answer under its own
-		// number costs nothing either.
-		allowed := h.auth.Allow(auth.BucketSocket, c.tab, strconv.FormatInt(c.user.ID, 10))
+		// The frame is parsed first, because which allowance it spends depends
+		// on what it is, and the frame was capped before it was read, so
+		// parsing one to answer under its own number costs nothing. A frame
+		// that is not a command at all spends the command allowance, so that a
+		// flood of rubbish is still held back. Both come before the session
+		// query, which is the expensive check.
 		var cmd command
-		if err := json.Unmarshal([]byte(raw), &cmd); err != nil {
+		bad := json.Unmarshal([]byte(raw), &cmd) != nil
+		bucket := auth.BucketSocket
+		keys := []string{c.tab, strconv.FormatInt(c.user.ID, 10)}
+		if !bad && cmd.Cmd == "where" {
+			bucket, keys = auth.BucketPresence, []string{c.tab}
+		}
+		allowed := h.auth.Allow(bucket, keys...)
+		if bad {
 			c.send(message{Type: "error", Error: "that was not a command"})
 			continue
 		}
 		if !allowed {
+			// A caret over its allowance is dropped in silence: nothing on the
+			// page changed, the tab has nothing to do about it, and the next
+			// one it sends says the same thing a moment later.
+			if bucket == auth.BucketPresence {
+				continue
+			}
 			c.send(message{Type: "error", ID: cmd.ID, Error: "too many changes at once; wait a moment"})
 			continue
 		}
@@ -405,27 +438,37 @@ func (h *Hub) leave(c *client) {
 
 // Presence is who is on a proposition and what they have open, which is what
 // the initials in the top bar and the marker beside a card are drawn from. One
-// person in two tabs is one person, showing whichever of them moved last.
+// person in two tabs is one person, showing whichever of them moved last, and
+// the answer is in one order however often it is asked for.
 func (h *Hub) Presence(proposition int64) []Person {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	byUser := map[int64]Person{}
+	// moved is the turn the place each person is shown at was taken from, so a
+	// tab that has not moved since cannot take it back off the one that did.
+	moved := map[int64]uint64{}
 	order := []int64{}
 	for c := range h.rooms[proposition] {
 		c.mu.Lock()
-		where := c.where
+		where, at := c.where, c.moved
 		c.mu.Unlock()
-		if _, seen := byUser[c.user.ID]; !seen {
+		p, seen := byUser[c.user.ID]
+		if !seen {
 			order = append(order, c.user.ID)
+			p = Person{ID: c.user.ID, Name: c.user.Name, Initials: c.user.Initials, Colour: c.user.Colour}
 		}
-		p := Person{ID: c.user.ID, Name: c.user.Name, Initials: c.user.Initials, Colour: c.user.Colour}
-		if where != "" {
+		// A tab with nothing open says nothing about where its person is: the
+		// drawer they closed must not take the block their other tab is in.
+		if where != "" && at > moved[c.user.ID] {
 			p.Where = where
-		} else if seen, ok := byUser[c.user.ID]; ok {
-			p.Where = seen.Where
+			moved[c.user.ID] = at
 		}
 		byUser[c.user.ID] = p
 	}
+	// By id, because the order a Go map ranges in is fresh every time: the
+	// initials in the top bar would reshuffle on every frame, and a block two
+	// people are in would take first one colour and then the other.
+	slices.Sort(order)
 	out := make([]Person, 0, len(order))
 	for _, id := range order {
 		out = append(out, byUser[id])

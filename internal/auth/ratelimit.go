@@ -9,11 +9,12 @@ import (
 // client address and whatever it named, so one address cannot grind through
 // accounts and one account cannot be ground at from many addresses.
 const (
-	BucketLogin  = "login"
-	BucketReset  = "reset"
-	BucketInvite = "invite"
-	BucketAPI    = "api"
-	BucketSocket = "socket"
+	BucketLogin    = "login"
+	BucketReset    = "reset"
+	BucketInvite   = "invite"
+	BucketAPI      = "api"
+	BucketSocket   = "socket"
+	BucketPresence = "presence"
 )
 
 type limit struct {
@@ -32,6 +33,13 @@ var limitsByBucket = map[string]limit{
 	// one and typing a note ever needs, and low enough that a loop in a page
 	// cannot hold the one writer connection.
 	BucketSocket: {n: 300, window: time.Minute},
+	// A caret moves far more often than a person edits, so where a tab is has
+	// an allowance of its own: spending the one above on carets would get a
+	// save refused. Twice what a tab sending one every fifth of a second uses,
+	// and counted against the tab alone, because one person's tabs each have
+	// their own caret to send and sharing an allowance between them would
+	// leave a third tab's caret where it was for the rest of the minute.
+	BucketPresence: {n: 600, window: time.Minute},
 }
 
 // longestWindow is how old a key's newest attempt has to be before no bucket
