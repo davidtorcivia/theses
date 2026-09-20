@@ -514,6 +514,13 @@ const sources = new Map();
 // so one cannot be drawn or saved under another.
 const sourceOf = (doc) => (doc && sources.get(doc.id)) || null;
 
+// fresh is the document of that id as the state holds it now. A session is
+// taken from it rather than from the document a render closed over, because
+// leave sends and renders before the markdown is read, and because the person
+// may have moved to another tab while a dialog was open: current() would then
+// be a different document and its markdown would be thrown away.
+const fresh = (id) => documents().find((d) => d.id === id) || null;
+
 const markdownOf = (doc) => (doc.blocks || []).map((b) => b.text).join('\n\n');
 
 function source(doc) {
@@ -568,9 +575,9 @@ function openSource(doc) {
     say('Something here is still saving. Open the markdown again in a moment.');
     return false;
   }
-  // leave sends and renders, so the document is asked for again rather than
-  // read off the one this render closed over.
-  reopen(current() || doc);
+  const now = fresh(doc.id);
+  if (!now) return false;
+  reopen(now);
   return true;
 }
 
@@ -642,8 +649,9 @@ async function writeSource(doc) {
     `${left} ${one ? 'paragraph was' : 'paragraphs were'} left as ${one ? 'it is' : 'they are'}, because somebody else changed ${one ? 'it' : 'them'} while you were writing.`,
     `Everything else you wrote went in. Saving again reports the same ${one ? 'paragraph' : 'paragraphs'}: to take what they wrote, read the markdown again, which throws away what is in front of you. Or keep yours and edit around theirs.`,
     'Read it again');
-  if (yes) {
-    reopen(current());
+  const now = yes && fresh(doc.id);
+  if (now) {
+    reopen(now);
     emit();
   }
 }
