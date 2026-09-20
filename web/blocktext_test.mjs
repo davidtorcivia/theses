@@ -7,7 +7,7 @@
 // is not served to browsers and kept by the service worker.
 
 import assert from 'node:assert/strict';
-import { rebase, enter, chunks } from './static/app/blocktext.js';
+import { rebase, enter, chunks, carry, parseWhere, formatWhere } from './static/app/blocktext.js';
 
 // The caret is written as a pipe in `now` and in `want`, so a case reads as the
 // two texts and where the person is standing in them. A case with no `want` is
@@ -144,3 +144,55 @@ const pastes = [
 for (const c of pastes) assert.deepEqual(chunks(c.in), c.want, c.name);
 
 console.log(`${pastes.length} paste cases pass`);
+
+// Somebody else's caret carried through what this tab has typed since the text
+// they counted it in went up. The pipe in `sent` is where they said they were,
+// and the pipe in `want` is where that lands in `now`.
+const carries = [
+  { name: 'nothing typed leaves it alone', sent: 'One. |Two.', now: 'One. Two.', want: 'One. |Two.' },
+  { name: 'an insert before it moves it', sent: 'One. |Two.', now: 'One! Wait. Two.', want: 'One! Wait. |Two.' },
+  { name: 'an insert after it leaves it', sent: 'One. |Two.', now: 'One. Two. Three.', want: 'One. |Two. Three.' },
+  { name: 'a delete before it moves it back', sent: 'One. |Two.', now: 'Two.', want: '|Two.' },
+  { name: 'an insert exactly where they stand puts them after it', sent: 'One. |Two.', now: 'One. and Two.', want: 'One. and |Two.' },
+  { name: 'a replacement spanning them ends at what was written', sent: 'One. T|wo.', now: 'One. Zebra.', want: 'One. Zebra|.' },
+  { name: 'a replacement starting where they stand leaves them in front of it', sent: 'One. |Two.', now: 'One. Zebra.', want: 'One. |Zebra.' },
+  { name: 'everything taken away puts them at nought', sent: 'One. T|wo.', now: '', want: '|' },
+  { name: 'a caret past the end of what was typed is clamped', sent: 'One.|', now: 'On', want: 'On|' },
+];
+
+for (const c of carries) {
+  const [sent, offset] = at(c.sent);
+  const [now, want] = at(c.want);
+  assert.equal(now, c.now, c.name + ' (the case itself)');
+  assert.equal(carry(sent, now, offset), want, c.name);
+}
+
+console.log(`${carries.length} carry cases pass`);
+
+// What a tab says about where it is standing, read back. A string that is not
+// about a block at all is nothing to this, and a block with a caret nobody can
+// place is still a block somebody is in.
+const wheres = [
+  { name: 'the older form is a block with no caret', in: 'block:12', want: { block: 12, version: 0, start: 0, end: 0 } },
+  { name: 'a caret in a block at a version', in: 'block:12:5:3:3', want: { block: 12, version: 5, start: 3, end: 3 } },
+  { name: 'a selection', in: 'block:12:5:3:9', want: { block: 12, version: 5, start: 3, end: 9 } },
+  { name: 'a document is not a block', in: 'doc:4', want: null },
+  { name: 'a card is not a block', in: 'card:7', want: null },
+  { name: 'nothing open', in: '', want: null },
+  { name: 'nothing at all', in: null, want: null },
+  { name: 'rubbish', in: 'block!12', want: null },
+  { name: 'a block that is not a number', in: 'block:x', want: null },
+  { name: 'block nought is no block', in: 'block:0', want: null },
+  { name: 'a field short', in: 'block:12:5:3', want: null },
+  { name: 'a negative offset keeps the block and loses the caret', in: 'block:12:5:-1:3', want: { block: 12, version: 0, start: 0, end: 0 } },
+  { name: 'a field that is not a number keeps the block', in: 'block:12:5:x:3', want: { block: 12, version: 0, start: 0, end: 0 } },
+  { name: 'an empty field keeps the block', in: 'block:12:5::3', want: { block: 12, version: 0, start: 0, end: 0 } },
+  { name: 'a range that reads backwards keeps the block', in: 'block:12:5:9:3', want: { block: 12, version: 0, start: 0, end: 0 } },
+];
+
+for (const c of wheres) assert.deepEqual(parseWhere(c.in), c.want, c.name);
+assert.equal(formatWhere(12, 5, 3, 9), 'block:12:5:3:9', 'a caret is written as it is read');
+assert.deepEqual(parseWhere(formatWhere(12, 5, 3, 9)), { block: 12, version: 5, start: 3, end: 9 },
+  'what is written comes back');
+
+console.log(`${wheres.length} where cases pass`);

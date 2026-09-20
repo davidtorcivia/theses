@@ -80,7 +80,26 @@ textarea{resize:vertical}
 .blk{position:relative;outline:0;cursor:text}
 .blk>*:first-child{margin-top:0}
 .blk>*:last-child{margin-bottom:0}
-.blk textarea{display:block;width:100%;overflow:hidden;resize:none;font:inherit;line-height:inherit}
+/* The editor's textarea, the mirror under it and the source of a block
+   somebody else is standing in are laid out by one rule, so that an offset
+   counted in their text lands on the same character in all three. pre-wrap and
+   break-word are what a textarea does on its own; naming them is what brings a
+   div under the same rule. overflow is the textarea's alone: the flag above a
+   caret is drawn out of the flow and an ancestor that hides its overflow would
+   cut the initials off the top line. */
+.blk textarea,.blk .mirror,.blk .src{display:block;width:100%;font:inherit;line-height:inherit;white-space:pre-wrap;overflow-wrap:break-word;margin:0;padding:0;border:0}
+.blk textarea{overflow:hidden;resize:none}
+/* One cell holds both, so the mirror is exactly under the text it mirrors and
+   the box is as tall as the taller of them. Without align-self each would be
+   stretched to the other, and fit() would measure a textarea being held open
+   by the mirror rather than by its own text. The column has its floor taken
+   out because a grid item is at least as wide as its longest unbreakable run:
+   a block holding a long address would otherwise widen the cell, the textarea
+   with it, and wrap while being edited where the same block does not wrap when
+   it is read. A textarea alone never did that, its own overflow being hidden. */
+.blk .tbox{display:grid;grid-template-columns:minmax(0,1fr)}
+.blk .tbox>*{grid-area:1/1;align-self:start}
+.blk .mirror{color:transparent;pointer-events:none;-webkit-user-select:none;user-select:none}
 .blk .who{position:absolute;left:calc(-1 * var(--gut));top:.15em;width:calc(var(--gut) - .6rem);text-align:right;font-family:var(--monof);font-size:10px;letter-spacing:.06em;text-transform:uppercase}
 .tools{display:flex;align-items:baseline;flex-wrap:wrap;gap:.4rem 1.2rem}
 .facets{display:flex;flex-wrap:wrap;gap:.1rem .9rem}
@@ -333,8 +352,20 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .blk textarea{background:transparent}
 .blk .who{color:var(--uc)}
 .blk:has(> .who:not(.me)):not(.editing){border-left-color:var(--uc)}
-.blk.h1 textarea{font-weight:800;font-size:clamp(30px,3.8vw,50px);line-height:.98;letter-spacing:-.03em;margin:.4rem 0 1.2rem}
-.blk.h2 textarea{font-weight:800;text-transform:uppercase;font-stretch:85%;font-size:15px;letter-spacing:.06em;margin:2rem 0 .5rem}
+.blk.h1 textarea,.blk.h1 .mirror,.blk.h1 .src{font-weight:800;font-size:clamp(30px,3.8vw,50px);line-height:.98;letter-spacing:-.03em;margin:.4rem 0 1.2rem}
+.blk.h2 textarea,.blk.h2 .mirror,.blk.h2 .src{font-weight:800;text-transform:uppercase;font-stretch:85%;font-size:15px;letter-spacing:.06em;margin:2rem 0 .5rem}
+/* Somebody else standing in a block. The span itself has no size, so the text
+   is laid out as though it were not there and the offsets stay honest; the bar
+   and the initials above it are drawn out of the flow beside it. It does not
+   blink: a caret that moves is noticed without one, and a still caret is the
+   same caret under prefers-reduced-motion as without it. */
+.blk .caret{position:relative}
+.blk .caret::after{content:"";position:absolute;left:-1px;top:-.1em;width:2px;height:1.25em;background:var(--uc)}
+/* The flag sits on top of the line rather than a fixed distance up it: bottom
+   is measured against the caret's own inline box, so it clears a heading's
+   line as well as a paragraph's, while an em here would be its own nine pixels. */
+.blk .caret .flag{position:absolute;left:-1px;bottom:100%;background:var(--uc);color:#fff;font-family:var(--monof);font-size:9px;line-height:1.4;letter-spacing:.06em;padding:0 .25em;white-space:nowrap}
+.blk .tint{background:color-mix(in srgb,var(--uc) 22%,transparent)}
 /* The + under the last block, quiet until it is wanted. Offline it is disabled
    and stays visible, because a control nobody can see cannot explain itself. */
 #doc .addblk{display:block;width:100%;text-align:left;margin-left:-.8rem;padding:.15rem 0 .15rem .8rem;border-left:3px solid transparent;font-size:18px;font-weight:700;color:var(--k);opacity:0}
