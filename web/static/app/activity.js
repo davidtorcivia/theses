@@ -72,7 +72,13 @@ export function renderPanel(drawer) {
       ? 'The log is read from the server. It is here when you are back online.'
       : 'Nothing yet.' }));
   }
-  for (const group of grouped(state.activity)) list.append(activityRow(group));
+  // The oldest group is drawn without the run undo, because the read is one
+  // page of the log and a run reaching the bottom of it may carry on below:
+  // the oldest row here would then be the middle of a run rather than its
+  // start, and taking it back would restore a text from the middle of somebody
+  // typing. It costs the bottom line of the panel its control and nothing else.
+  const groups = grouped(state.activity);
+  groups.forEach((group, i) => list.append(activityRow(group, i === groups.length - 1)));
   drawer.append(list);
 }
 
@@ -98,15 +104,22 @@ function grouped(rows) {
 // whole afternoon back in one press.
 const sitting = 120;
 
+// via is part of who, not only kind and id. An agent writing through a token
+// or MCP is attributed to the person who owns it, so without this their own
+// typing and their agent's edits would read as one run and the undo below
+// would take the agent's work back as though it were one of their saves.
+// core.Compact keys a run the same way, on kind, id and via.
 const follows = (a, b) => a.entity === 'block' && a.action === 'set'
   && b.entity === 'block' && b.action === 'set' && a.entity_id === b.entity_id
   && Boolean(a.actor) && Boolean(b.actor)
   && a.actor.kind === b.actor.kind && a.actor.id === b.actor.id
+  && (a.actor.via || '') === (b.actor.via || '')
   && a.at - b.at <= sitting;
 
 // A group is drawn at the newest of its rows, which is where its time comes
-// from and what its text says.
-function activityRow(group) {
+// from and what its text says. oldest says this is the last group on the page,
+// whose run may not be a whole one.
+function activityRow(group, oldest) {
   const row = group[0];
   const who = row.actor && row.actor.id ? user(row.actor.id) : { name: row.actor ? row.actor.name : '', initials: '··', colour: 'c8' };
   const line = el('div', {},
@@ -114,7 +127,9 @@ function activityRow(group) {
     el('span', { class: 'mono when', text: when(row.at)
       + (group.length > 1 ? ` · ${group.length} saves` : '')
       + (row.undone ? ' · undone' : '') }));
-  const back = canEdit() ? (group.length > 1 ? takeRunBack(group) : takeRowBack(row)) : null;
+  const back = canEdit()
+    ? (group.length > 1 ? (oldest ? null : takeRunBack(group)) : takeRowBack(row))
+    : null;
   if (back) line.append(' ', back);
   return el('li', {}, initials(who), line);
 }
@@ -179,7 +194,8 @@ function takeRunBack(group) {
       // against an older base, and a fold keeps whichever came last. Behind it,
       // the two go up in order and the server merges or refuses this one like
       // any other set made from a version somebody has moved past.
-      send('block.set', { block: last.entity_id, base: last.after.version, text: was, whole: true }, state.open, '')
+      send('block.set', { block: last.entity_id, base: last.after.version, text: was, whole: true },
+        state.open, { fold: '' })
         .catch((err) => say(err instanceof Conflict
           ? 'That block has changed too much since for those saves to be taken back.'
           : err.message));

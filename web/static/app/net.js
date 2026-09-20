@@ -216,15 +216,19 @@ function down() {
 // with the applied event, with null for a command that was queued, and rejects
 // with a Conflict or a refusal the caller can offer a choice about.
 //
-// fold is the name two queued commands are folded together under, which by
-// default is the row and field the command sets: a second edit to one title
+// opts is what a caller says about the sending rather than about the command,
+// so that each thing one of them wants is a name rather than a position.
+//
+// opts.fold is the name two queued commands are folded together under, which
+// by default is the row and field the command sets: a second edit to one title
 // replaces the first rather than queueing behind it, because the newer text is
 // the whole of what the person means. A caller whose command is not the newest
 // word on that field passes an empty name and queues behind instead. The
 // activity panel's undo of a run of saves is the one: it carries older text
 // against an older base, and folding it over a save already waiting for the
 // same block would throw that save away unsent.
-export function send(cmd, args = {}, proposition = state.open, fold = target(cmd, args)) {
+export function send(cmd, args = {}, proposition = state.open, opts = {}) {
+  const fold = opts.fold ?? target(cmd, args);
   const baseWas = baseText(cmd, args);
   const revert = predict(cmd, args);
   const row = { proposition, me: state.me, cmd, args, idem: newKey(),
