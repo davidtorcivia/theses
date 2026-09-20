@@ -44,6 +44,11 @@ func (s *Server) addDocumentTools() {
 		Annotations: adds("Add a paragraph under a heading"),
 	}, s.insertAfterHeading)
 	sdk.AddTool(s.srv, &sdk.Tool{
+		Name:        "write_document",
+		Description: "Replaces a document, or the part of it the base names, with markdown, keeping the blocks whose paragraphs did not change and answering with the block each paragraph now stands in.",
+		Annotations: overwrites("Write a document"),
+	}, s.writeDocument)
+	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "replace_block",
 		Description: "Replaces the text of one block, merging in a change somebody else made when the version read_document reported is sent with it and overwriting when it is not.",
 		Annotations: overwrites("Replace a block"),
@@ -93,6 +98,7 @@ func (s *Server) refusal(what string, err error) error {
 		errors.Is(err, board.ErrColumnNotEmpty), errors.Is(err, board.ErrNotYours),
 		errors.Is(err, core.ErrNotUndoable),
 		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrReason),
+		errors.Is(err, docs.ErrSourceBase), errors.Is(err, docs.ErrSourceSpread),
 		errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
 		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),
@@ -315,6 +321,81 @@ func (s *Server) inserted(ctx context.Context, service *docs.Service, who core.A
 		return nil, writeOut{}, s.failed("read the paragraph back", err)
 	}
 	return nil, writeOut{ID: block.ID, Version: block.Version}, nil
+}
+
+// A sourceBlock is one block a write_document call says its markdown was
+// written from. It is this package's own shape rather than the command's so
+// that the schema an agent reads describes it in the words the tool uses.
+type sourceBlock struct {
+	ID      int64 `json:"id" jsonschema:"the block's id, as read_document reports it"`
+	Version int64 `json:"version" jsonschema:"the version read_document reported for that block"`
+}
+
+type writeDocumentArgs struct {
+	Document int64         `json:"document" jsonschema:"the document to write, as list_documents reports its id"`
+	Text     string        `json:"text" jsonschema:"the whole document as markdown; it is cut into blocks at blank lines and headings, except inside a fenced code block"`
+	Base     []sourceBlock `json:"base,omitempty" jsonschema:"the blocks read_document reported, in order, so a paragraph nobody touched keeps its block and a block somebody else changed is merged or reported; leave it out for the document as it stands now"`
+	Key      string        `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than writing a second time"`
+}
+
+// A conflictOut is a paragraph the write did not make: somebody else changed
+// that block while the markdown was being written, and the two cannot be put
+// together. The block is left holding what they wrote.
+type conflictOut struct {
+	Block   int64  `json:"block"`
+	Version int64  `json:"version"`
+	Current string `json:"current"`
+}
+
+type writeDocumentOut struct {
+	// Base is the block each paragraph of the text just written now stands in,
+	// in the order of the text, and is what the next write of this text sends
+	// back as its own base. It is empty on a replayed call.
+	Base      []sourceBlock `json:"base"`
+	Conflicts []conflictOut `json:"conflicts"`
+	// Merged is the blocks that took somebody else's words in on the way, so
+	// what is stored there is neither this text nor theirs but both. The text
+	// this call sent is out of date for those paragraphs, and sending it again
+	// would write it back over the merge; read the document again to keep them.
+	Merged []int64 `json:"merged"`
+	// Replayed is a call answered out of the key it was sent under, having
+	// written nothing because the first one did. Read the document again before
+	// writing more: nothing remembers what the first answer said.
+	Replayed bool `json:"replayed,omitempty"`
+}
+
+func (s *Server) writeDocument(ctx context.Context, req *sdk.CallToolRequest, in writeDocumentArgs) (*sdk.CallToolResult, writeDocumentOut, error) {
+	service, who, err := s.writer(ctx, req)
+	if err != nil {
+		return nil, writeDocumentOut{}, err
+	}
+	ctx, err = keyed(ctx, in.Key)
+	if err != nil {
+		return nil, writeDocumentOut{}, err
+	}
+	// A base left out is the document as it stands, which the command reads
+	// for itself inside the transaction that writes, so no agent has to send
+	// one back to replace a document wholesale.
+	var base []docs.BlockRef
+	if in.Base != nil {
+		base = make([]docs.BlockRef, 0, len(in.Base))
+		for _, b := range in.Base {
+			base = append(base, docs.BlockRef{ID: b.ID, Version: b.Version})
+		}
+	}
+	save, err := service.WriteSource(ctx, who, in.Document, base, in.Text)
+	if err != nil {
+		return nil, writeDocumentOut{}, s.refusal("write the document", err)
+	}
+	out := writeDocumentOut{Base: []sourceBlock{}, Conflicts: []conflictOut{},
+		Merged: save.Merged, Replayed: save.Replayed}
+	for _, b := range save.Base {
+		out.Base = append(out.Base, sourceBlock{ID: b.ID, Version: b.Version})
+	}
+	for _, c := range save.Conflicts {
+		out.Conflicts = append(out.Conflicts, conflictOut{Block: c.Block, Version: c.Version, Current: c.Current})
+	}
+	return nil, out, nil
 }
 
 type replaceBlockArgs struct {

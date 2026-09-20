@@ -198,6 +198,50 @@ func (a *API) deleteBlock(w http.ResponseWriter, r *http.Request, p Principal) {
 	})
 }
 
+// sourceBody is a whole document as markdown, with the blocks it was written
+// from. A base left out altogether means the document as it stands, which is
+// what an agent replacing a document it has just read sends; an empty list is a
+// document that had no blocks, so the two are told apart rather than folded
+// together. A base naming some of the blocks is that much of the document: the
+// text stands for those blocks and every other one is left where it is.
+type sourceBody struct {
+	Text string          `json:"text"`
+	Base []docs.BlockRef `json:"base"`
+}
+
+// maxSourceBytes is as large as a document written back as markdown may be.
+const maxSourceBytes = 1 << 20
+
+// writeSource replaces a document from its markdown. It answers with the blocks
+// the save could not take rather than with an event, because it is many
+// commands in one transaction and the caller's next move is about the ones that
+// did not go in. It is mounted under both prefixes, so this is the browser's
+// source view as well as the API's.
+func (a *API) writeSource(w http.ResponseWriter, r *http.Request, who core.Actor) {
+	id, ok := a.pathID(w, r, "document")
+	if !ok {
+		return
+	}
+	var body sourceBody
+	// A whole document is more than the sixty four kilobytes a body that names
+	// one field of one row is held to, and a megabyte is a long document with
+	// room to spare. It also bounds the base list, which is a block to look up
+	// each, and so bounds the work one request can ask of the write lock.
+	if !a.decodeUpTo(w, r, maxSourceBytes, &body) {
+		return
+	}
+	if a.Docs == nil {
+		a.fail(w, http.StatusNotFound, "no such document")
+		return
+	}
+	save, err := a.Docs.WriteSource(r.Context(), who, id, body.Base, body.Text)
+	if err != nil {
+		a.refuse(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, save)
+}
+
 // actorOf is how a call with this token is recorded: the person who owns it,
 // with the token's name as via.
 func actorOf(p Principal) core.Actor {

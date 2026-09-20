@@ -424,6 +424,16 @@ type fileDoc struct {
 	Blocks      []fileBlock
 }
 
+// items is the file as the list an import applies, which is the same list a
+// source save builds from what the browser sent.
+func (f fileDoc) items() []item {
+	out := make([]item, 0, len(f.Blocks))
+	for _, b := range f.Blocks {
+		out = append(out, item{ID: b.ID, Version: b.Version, Text: b.Text})
+	}
+	return out
+}
+
 // ErrNotMirror is a file with no usable front matter, which is not a document
 // this process wrote and has no business being imported.
 var ErrNotMirror = errors.New("that file is not a document mirror")

@@ -325,15 +325,12 @@ func (s *Service) Import(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	live := map[int64]Block{}
-	for _, b := range blocks {
-		live[b.ID] = b
-	}
 	document, err := GetDocument(ctx, s.DB, file.Document)
 	if err != nil {
 		return err
 	}
-	if sameAs(file, blocks) {
+	items := file.items()
+	if sameAs(items, blocks) {
 		// Whitespace, a reordered comment, an editor's newline at the end.
 		// Nothing is applied, but the file is still rewritten, because that is
 		// what puts the hash this process remembers back in step with what is
@@ -349,12 +346,95 @@ func (s *Service) Import(ctx context.Context, path string) error {
 		return err
 	}
 
-	conflicted := map[int64]bool{}
+	// A block the file no longer has was either deleted at the terminal or
+	// added in the browser after the file was written. Those look the same from
+	// here, so the database only gives one up when the file was written against
+	// the revision the database still holds; otherwise the block stays and the
+	// file comes back with a marker on it. Deleting it again against the fresh
+	// file goes through.
+	fresh := file.Revision == document.Revision
+	conflicted, _, _, err := s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
+		if fresh {
+			return dropMissing
+		}
+		return markMissing
+	})
+	if err != nil {
+		return err
+	}
+	return s.Mirror(ctx, document.ID, conflicted, true)
+}
+
+// An item is one paragraph as a save says the document should read: the block
+// it belongs to, the version that save was written from, and the text to put
+// there. An id of nought is a paragraph with no block behind it, which goes in
+// as a new one after whatever came before it.
+type item struct {
+	ID      int64
+	Version int64
+	Text    string
+}
+
+// An applied is what one item became: the block its text stands in now and the
+// version it stands at, and whether the block ended up holding something other
+// than what the item sent, which is the merge having folded somebody else's
+// words in. The two together are what lets a caller press save again knowing
+// exactly what that would assert.
+type applied struct {
+	Ref    BlockRef
+	Merged bool
+}
+
+// missing is what becomes of a block the document still has that no item names.
+type missing int
+
+const (
+	// keepMissing leaves it alone: the save was not written against it, so it
+	// is somebody else's paragraph and none of this save's business.
+	keepMissing missing = iota
+	// dropMissing deletes it, which is a paragraph taken out.
+	dropMissing
+	// markMissing leaves it where it is and reports it, which is a paragraph
+	// taken out of a block that has moved on since the save was written.
+	markMissing
+)
+
+// applyItems writes a list of paragraphs over a document's blocks and reports
+// the blocks it could not take, which are the ones somebody else changed while
+// the save was being written. It is the whole of what an import applies and the
+// whole of what a source save applies: the two differ in how they arrive at the
+// list and in what they make of a block the list does not name, which is what
+// gone answers.
+//
+// blocks is the document as it stands, read by the caller, and live is built
+// from it. A save that is refused partway through leaves what it has already
+// written, which for an import is a file and for a source save is a
+// transaction that rolls the lot back.
+//
+// wrote says whether any command ran, which is how a source save tells a list
+// that changed nothing from one that changed something: a set whose text the
+// block already holds is not a command, and neither is a conflict.
+//
+// done is one entry per item, in item order, and is what a source save answers
+// with so that the next one need guess nothing. An item whose text holds more
+// than one paragraph, which only an import has, is answered by the first block
+// of them; an import ignores the whole list.
+func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, items []item,
+	blocks []Block, gone func(Block) missing) (conflicted map[int64]bool, wrote bool, done []applied, err error) {
+	live := map[int64]Block{}
+	for _, b := range blocks {
+		live[b.ID] = b
+	}
+	conflicted = map[int64]bool{}
 	seen := map[int64]bool{}
 	var after int64
-	for _, item := range file.Blocks {
+	for _, item := range items {
 		current, known := live[item.ID]
 		if !known {
+			// A paragraph with no block is one block, whatever happens to it,
+			// so the answer for it is settled in this branch. A block made for
+			// it holds exactly what was sent, so nothing was merged into it.
+			done = append(done, applied{})
 			// A paragraph somebody added, or one whose block the browser
 			// deleted while the file was open. Either way the words are in the
 			// file and not in the database, so they go in as a new block: a
@@ -367,17 +447,34 @@ func (s *Service) Import(ctx context.Context, path string) error {
 			// InsertBlock answers with the first block when the text it is
 			// given holds more than one paragraph, and following that one
 			// would put the next chunk of the file in among them.
-			for _, part := range Paragraphs(item.Text) {
-				e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part, false)
+			for n, part := range Paragraphs(item.Text) {
+				e, err := s.InsertBlock(ctx, a, document, after, part, false)
 				if err != nil {
-					return err
+					return nil, false, nil, err
 				}
+				if n == 0 {
+					done[len(done)-1].Ref, _ = rowOf(e, item.ID)
+				}
+				wrote = true
 				after = e.EntityID
 			}
 			continue
 		}
 		seen[item.ID] = true
 		after = item.ID
+		// The block as it stands is the answer unless something below writes
+		// to it: a conflict leaves it exactly here, holding their words and
+		// none of this item's, which is reported as a conflict and not as a
+		// merge.
+		done = append(done, applied{Ref: BlockRef{ID: current.ID, Version: current.Version}})
+		// An item carrying the block's own text is nothing to do, and saying so
+		// here rather than after the cut is what keeps a block whose text
+		// Paragraphs would cut, which is what a save made while somebody is
+		// typing leaves behind, from being cut by a save that had nothing to
+		// say about it.
+		if item.Text == current.Text {
+			continue
+		}
 		// The paragraphs are cut here for the same reason they are on the
 		// branch above: a set whose text holds more than one paragraph writes
 		// the first to the named block and puts the rest in after it, and
@@ -388,49 +485,66 @@ func (s *Service) Import(ctx context.Context, path string) error {
 			parts = []string{""}
 		}
 		if parts[0] != current.Text {
-			// The version in the comment is the version the person at the
-			// terminal started from, so this is the same stale set the browser
-			// sends and it goes through the same merge.
-			if _, err := s.SetBlock(ctx, fileActor, item.ID, item.Version, parts[0], false); err != nil {
+			// The version the item carries is the version whoever wrote it
+			// started from, so this is the same stale set the browser sends and
+			// it goes through the same merge.
+			if e, err := s.SetBlock(ctx, a, item.ID, item.Version, parts[0], false); err != nil {
 				var clash *core.ConflictError
 				if !errors.As(err, &clash) {
-					return err
+					return nil, false, nil, err
 				}
 				conflicted[item.ID] = true
+			} else {
+				ref, stored := rowOf(e, item.ID)
+				done[len(done)-1] = applied{Ref: ref, Merged: stored != parts[0]}
+				wrote = true
 			}
 		}
 		// What was written under the block is words that are in the file and
 		// not in the database, so it goes in whether or not the block itself
 		// would take its own change, which is the rule the branch above uses.
 		for _, part := range parts[1:] {
-			e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part, false)
+			e, err := s.InsertBlock(ctx, a, document, after, part, false)
 			if err != nil {
-				return err
+				return nil, false, nil, err
 			}
+			wrote = true
 			after = e.EntityID
 		}
 	}
 
-	// A block the file no longer has was either deleted at the terminal or
-	// added in the browser after the file was written. Those look the same from
-	// here, so the database only gives one up when the file was written against
-	// the revision the database still holds; otherwise the block stays and the
-	// file comes back with a marker on it. Deleting it again against the fresh
-	// file goes through.
-	fresh := file.Revision == document.Revision
 	for _, b := range blocks {
 		if seen[b.ID] {
 			continue
 		}
-		if !fresh {
+		switch gone(b) {
+		case dropMissing:
+			if _, err := s.DeleteBlock(ctx, a, b.ID); err != nil {
+				return nil, false, nil, err
+			}
+			wrote = true
+		case markMissing:
 			conflicted[b.ID] = true
-			continue
-		}
-		if _, err := s.DeleteBlock(ctx, fileActor, b.ID); err != nil {
-			return err
 		}
 	}
-	return s.Mirror(ctx, document.ID, conflicted, true)
+	return conflicted, wrote, done, nil
+}
+
+// rowOf is the block a command wrote and the text it left in it, read out of
+// the row the event carries rather than asked for again, since the transaction
+// it was written in has not committed and no other connection can see it yet.
+// An event without a readable row answers with the id it was about at no
+// version, which is a base the next save cannot line up against and refuses on
+// rather than guesses.
+func rowOf(e core.Event, fallback int64) (BlockRef, string) {
+	var b Block
+	if err := json.Unmarshal(e.After, &b); err == nil && b.ID != 0 {
+		return BlockRef{ID: b.ID, Version: b.Version}, b.Text
+	}
+	if e.EntityID != 0 {
+		return BlockRef{ID: e.EntityID}, ""
+	}
+	return BlockRef{ID: fallback}, ""
 }
 
 // markedIn is the blocks the file already carries a conflict marker on, which
@@ -445,14 +559,14 @@ func markedIn(file fileDoc) map[int64]bool {
 	return out
 }
 
-// sameAs reports whether the file already says exactly what the database holds,
-// which is every event the watcher hears about its own writes and every save
-// that changed nothing.
-func sameAs(file fileDoc, blocks []Block) bool {
-	if len(file.Blocks) != len(blocks) {
+// sameAs reports whether a list of items already says exactly what the database
+// holds, which is every event the watcher hears about its own writes and every
+// save, from the file or from the source view, that changed nothing.
+func sameAs(items []item, blocks []Block) bool {
+	if len(items) != len(blocks) {
 		return false
 	}
-	for i, item := range file.Blocks {
+	for i, item := range items {
 		if item.ID != blocks[i].ID || item.Text != blocks[i].Text {
 			return false
 		}

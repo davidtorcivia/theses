@@ -12,11 +12,12 @@ import (
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
-// The links and files routes are written once and mounted twice: under
-// /api/v1 for a bearer token, and under /app for the browser's session cookie.
-// They are the same handlers because they are the same commands; only who is
-// asking is resolved differently, and the service refuses whatever the actor
-// may not do either way.
+// The links and files routes, and the one document route whose answer is not
+// an event, are written once and mounted twice: under /api/v1 for a bearer
+// token, and under /app for the browser's session cookie. They are the same
+// handlers because they are the same commands; only who is asking is resolved
+// differently, and the service refuses whatever the actor may not do either
+// way.
 
 // A handler is one route, already told who is asking.
 type handler func(http.ResponseWriter, *http.Request, core.Actor)
@@ -83,6 +84,12 @@ func mount(mux *http.ServeMux, prefix string, a *API, svc *files.Service, wrap w
 	mux.HandleFunc("DELETE "+prefix+"/cards/{card}/links/{id}", wrap(auth.ScopeWrite, f.detachLink))
 	mux.HandleFunc("POST "+prefix+"/cards/{card}/files/{id}", wrap(auth.ScopeWrite, f.attachFile))
 	mux.HandleFunc("DELETE "+prefix+"/cards/{card}/files/{id}", wrap(auth.ScopeWrite, f.detachFile))
+
+	// Writing a whole document from its markdown is mounted here rather than
+	// beside the other document routes because it is the one of them the
+	// browser calls: the source view is a request with an answer of its own
+	// rather than a command with an event, so it does not go over the socket.
+	mux.HandleFunc("PUT "+prefix+"/documents/{id}/source", wrap(auth.ScopeWrite, a.writeSource))
 }
 
 // fileAPI is the API with the service these routes need. It is a type of its

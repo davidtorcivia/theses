@@ -94,7 +94,13 @@ func (a *API) boardBody(w http.ResponseWriter, r *http.Request) (boardBody, bool
 // cannot, and reports whether the handler should carry on. An empty body is all
 // defaults, so a route whose fields are every one optional need send nothing.
 func (a *API) decode(w http.ResponseWriter, r *http.Request, into any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	return a.decodeUpTo(w, r, maxBodyBytes, into)
+}
+
+// decodeUpTo is decode with a ceiling of its own, for the one body that is a
+// whole document rather than one field of one row.
+func (a *API) decodeUpTo(w http.ResponseWriter, r *http.Request, most int64, into any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, most)
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
 		if errors.Is(err, io.EOF) {
 			return true

@@ -25,7 +25,8 @@ import (
 //     is there at all;
 //   - a refusal about the state of the thing rather than about the body is 409:
 //     an archived proposition, a column with cards still in it, a change that
-//     cannot be undone;
+//     cannot be undone, markdown written from blocks the database can no longer
+//     produce the text of;
 //   - somebody else's note is 403, because the caller may write here and not to
 //     that row, and being told so gives nothing away;
 //   - object storage nobody has set up yet is 503, because it is this side that
@@ -54,7 +55,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
 		a.fail(w, http.StatusNotFound, "that is not there")
 	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrColumnNotEmpty),
-		errors.Is(err, core.ErrNotUndoable):
+		errors.Is(err, core.ErrNotUndoable), errors.Is(err, docs.ErrSourceBase):
 		a.fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, board.ErrNotYours):
 		a.fail(w, http.StatusForbidden, err.Error())
@@ -72,7 +73,8 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
 		errors.Is(err, board.ErrDueDate),
 		errors.Is(err, docs.ErrNameTaken),
-		errors.Is(err, docs.ErrReason), errors.Is(err, docs.ErrTooManyDocuments),
+		errors.Is(err, docs.ErrReason), errors.Is(err, docs.ErrSourceSpread),
+		errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
 		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),
 		errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),

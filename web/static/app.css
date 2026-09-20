@@ -82,7 +82,7 @@ html.pressing,html.pressing *{-webkit-user-select:none;user-select:none;-webkit-
 .newcard textarea{display:block;width:100%}
 #docwrap{position:relative}
 #docwrap.source #doc{display:none}
-#docwrap:not(.source) #docsrc{display:none}
+#docwrap:not(.source) #docsource{display:none}
 #docsrc{width:100%;min-height:60vh;display:block}
 .blk{position:relative;outline:0;cursor:text}
 .blk>*:first-child{margin-top:0}
@@ -401,6 +401,10 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 #doc .addblk:disabled{opacity:.35;cursor:not-allowed}
 mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #doc .mention{color:var(--uc)}
+/* The line above the markdown when the document has moved under it. This pane
+   is the paper colour, and the dim .notice inherits is written for the dark
+   side of the page, where it would be all but invisible here. */
+#docsource .notice{max-width:680px;margin:0 0 1rem;font-size:14px;color:rgba(0,0,0,.6)}
 #docsrc{max-width:680px;font-family:var(--monof);font-size:13px;line-height:1.6;background:transparent;border-left:3px solid var(--k);padding:0 0 0 .8rem;margin-left:-.8rem}
 .addline{border:1px solid var(--p);padding:.55rem .8rem;font-weight:500;font-size:15px}
 .addline::placeholder{color:var(--dim)}

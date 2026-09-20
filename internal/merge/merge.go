@@ -62,8 +62,8 @@ func merge3(budget *int, base, ours, theirs []string, refine refiner) ([]string,
 		return nil, false
 	}
 	*budget -= cells
-	mo := match(base, ours)
-	mt := match(base, theirs)
+	mo := Match(base, ours)
+	mt := Match(base, theirs)
 	var out []string
 	i, o, t := 0, 0, 0
 	for i < len(base) || o < len(ours) || t < len(theirs) {
@@ -167,10 +167,15 @@ func words(s string) []string {
 	return out
 }
 
-// match pairs each element of a with the element of b it keeps in a longest
+// Match pairs each element of a with the element of b it keeps in a longest
 // common subsequence, or -1 if b no longer has it. Callers take the cells out
 // of the budget first.
-func match(a, b []string) []int {
+//
+// It is exported because lining a document's paragraphs up against the blocks
+// they were written from is the same question asked of whole paragraphs rather
+// than of lines, and a second longest common subsequence would be a second set
+// of answers to it.
+func Match(a, b []string) []int {
 	lcs := make([][]int, len(a)+1)
 	for i := range lcs {
 		lcs[i] = make([]int, len(b)+1)
