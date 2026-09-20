@@ -7,7 +7,7 @@
 // is not served to browsers and kept by the service worker.
 
 import assert from 'node:assert/strict';
-import { rebase, enter, chunks, carry, parseWhere, formatWhere } from './static/app/blocktext.js';
+import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './static/app/blocktext.js';
 
 // The caret is written as a pipe in `now` and in `want`, so a case reads as the
 // two texts and where the person is standing in them. A case with no `want` is
@@ -132,6 +132,59 @@ for (const c of enters) {
 
 console.log(`${enters.length} enter cases pass`);
 
+// Where Enter writes a newline rather than cutting the block in two: a caret
+// the text in front of which ends inside a fenced code block, or a selection
+// with an end like that. One pipe is a caret and two are a selection, as in the
+// Enter rows above, and `want` is whether Enter there is a newline. The fence
+// rule is the server's, in internal/docs/commands.go, so these read like its
+// own cases.
+// U+2028 is a line terminator to a regular expression and an ordinary
+// character to everything else. It is written as its code point because it
+// cannot be seen in the source, and a tool that swallowed it on the way
+// through would leave a row that tested nothing.
+const lineSeparator = String.fromCharCode(0x2028);
+
+const fences = [
+  { name: 'ordinary text is not code', in: 'One.| Two.', want: false },
+  { name: 'the end of an opening fence is code', in: '```go|', want: true },
+  { name: 'inside a fence is code', in: '```\nA|\nB\n```', want: true },
+  { name: 'a blank line inside a fence is code', in: '```\nA\n|\nB\n```', want: true },
+  { name: 'the start of the closing fence is code', in: '```\nA\n|```', want: true },
+  { name: 'the end of the closing fence is not', in: '```\nA\n```|', want: false },
+  { name: 'after a closed fence is not', in: '```\nA\n```\n\nB|', want: false },
+  { name: 'in front of an opening fence is not', in: 'One.\n|```\nA\n```', want: false },
+  { name: 'a fence that is never closed runs to the end', in: '```\nA\n\nB|', want: true },
+  { name: 'a tilde does not close a backtick fence', in: '```\nA\n~~~\nB|', want: true },
+  { name: 'a shorter fence does not close a longer one', in: '````\nA\n```\nB|', want: true },
+  { name: 'a longer fence does close a shorter one', in: '```\nA\n`````\nB|', want: false },
+  { name: 'a fence with words after it does not close', in: '```\nA\n``` and more\nB|', want: true },
+  { name: 'four spaces is not a fence', in: '    ```\nA|', want: false },
+  { name: 'a backtick in the info string is not a fence', in: '```a``` b\nA|', want: false },
+  { name: 'a tilde fence takes an info string with backticks', in: '~~~`\nA|', want: true },
+  { name: 'a caret at nought is not in code', in: '|```', want: false },
+  { name: 'a closing fence with spaces after it still closes', in: '```\nA\n```  \n\nB|', want: false },
+  { name: 'a line separator in the info string does not stop the fence opening', in: '```' + lineSeparator + 'js\nA|', want: true },
+  {
+    name: 'a selection ending inside a fence is not split',
+    in: 'Int|ro line\n```\nA\n|B\n```', want: true,
+  },
+  {
+    name: 'a selection that is nowhere near a fence splits',
+    in: 'One |two| three.\n\n```\nA\n```', want: false,
+  },
+  {
+    name: 'a selection ending at the end of the closing fence splits',
+    in: 'Intro.\n|```\nA\n```|', want: false,
+  },
+];
+
+for (const c of fences) {
+  const [text, start, end] = sel(c.in);
+  assert.equal(inFence(text, start, end), c.want, c.name);
+}
+
+console.log(`${fences.length} fence cases pass`);
+
 const pastes = [
   { name: 'one paragraph is one chunk', in: 'One.', want: ['One.'] },
   { name: 'a blank line ends a chunk', in: 'One.\n\nTwo.', want: ['One.', 'Two.'] },
@@ -139,6 +192,14 @@ const pastes = [
   { name: 'line endings are normalised', in: 'One.\r\n\r\nTwo.', want: ['One.', 'Two.'] },
   { name: 'what is only whitespace is dropped', in: 'One.\n\n  \n\nTwo.\n\n', want: ['One.', 'Two.'] },
   { name: 'a single newline stays inside its chunk', in: 'One.\nTwo.', want: ['One.\nTwo.'] },
+  {
+    name: 'a blank line inside a fence stays in its chunk',
+    in: '```\nOne.\n\nTwo.\n```', want: ['```\nOne.\n\nTwo.\n```'],
+  },
+  {
+    name: 'a paragraph after a closed fence is its own chunk',
+    in: '```\nOne.\n\nTwo.\n```\n\nThree.', want: ['```\nOne.\n\nTwo.\n```', 'Three.'],
+  },
 ];
 
 for (const c of pastes) assert.deepEqual(chunks(c.in), c.want, c.name);

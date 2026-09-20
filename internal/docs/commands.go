@@ -57,50 +57,102 @@ func writer(a core.Actor) any {
 }
 
 // Paragraphs is the one rule for cutting text into blocks: a blank line ends a
-// block, and a heading is always a block of its own. It is used for the
-// template a document starts from, for text pasted into one block, and for the
-// paragraphs an import finds in the markdown file, so that a block written to
-// disk and read back is the same block.
-//
-// ponytail: a fenced code block containing a blank line or a line starting with
-// a hash is cut up by this. The upgrade path is a fence aware scan, worth it
-// the day a document holds code.
+// block, and a heading is always a block of its own, except inside a fenced
+// code block, where neither cuts anything, because a fence cut in two is two
+// halves of a fence. It is used for the template a document starts from, for
+// text pasted into one block, and for the paragraphs an import finds in the
+// markdown file, so that a block written to disk and read back is the same
+// block.
 func Paragraphs(text string) []string {
 	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	out := []string{}
-	for _, chunk := range blankLine.Split(text, -1) {
-		var current []string
-		flush := func() {
-			if len(current) > 0 {
-				out = append(out, strings.Join(current, "\n"))
-				current = nil
-			}
+	var current []string
+	// Everything that was only whitespace falls out here, which is what keeps a
+	// file with a trailing newline from growing an empty block each import.
+	flush := func() {
+		if p := strings.TrimSpace(strings.Join(current, "\n")); p != "" {
+			out = append(out, p)
 		}
-		for _, line := range strings.Split(chunk, "\n") {
-			if heading.MatchString(line) {
-				flush()
-				out = append(out, strings.TrimRight(line, " \t"))
-				continue
-			}
+		current = nil
+	}
+	var f fence
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case f.track(line):
+			current = append(current, line)
+		case blank(line):
+			flush()
+		case heading.MatchString(line):
+			flush()
+			out = append(out, strings.TrimSpace(line))
+		default:
 			current = append(current, line)
 		}
-		flush()
 	}
-	// Everything that was only whitespace falls out here, which is what keeps
-	// a file with a trailing newline from growing an empty block each import.
-	kept := out[:0]
-	for _, p := range out {
-		if strings.TrimSpace(p) != "" {
-			kept = append(kept, strings.TrimSpace(p))
+	flush()
+	return out
+}
+
+// blank is a line that ends a block, and the mirror file cuts blocks at the
+// same one. Spaces and tabs only: a line holding a no-break space is a line
+// with something on it, and the day it stopped being one every document holding
+// one would be cut differently the next time anything touched it.
+func blank(line string) bool { return strings.Trim(line, " \t") == "" }
+
+// fence is where a line by line scan stands in a text: inside a fenced code
+// block, holding the delimiter that opened it, or outside one. The web editor
+// decides whether the caret is in code by the same rule, in step in
+// web/static/app/blocktext.js.
+type fence struct {
+	char byte
+	long int
+}
+
+// track takes the next line and answers whether it is code: the line that opens
+// a fence, a line inside one, or the line that closes it. Those are the lines
+// nothing else may cut at.
+func (f *fence) track(line string) bool {
+	char, long, info := fenceAt(line)
+	switch {
+	case char == 0:
+		return f.char != 0
+	case f.char == 0:
+		// A backtick opener's info string holds no backtick, which is what
+		// keeps a line of inline code from opening a fence that never closes.
+		if char == '`' && strings.Contains(info, "`") {
+			return false
 		}
+		f.char, f.long = char, long
+	case char == f.char && long >= f.long && strings.TrimSpace(info) == "":
+		f.char, f.long = 0, 0
 	}
-	return kept
+	return true
+}
+
+// fenceAt reads a line as a fence delimiter the way CommonMark does: up to
+// three spaces, then at least three backticks or at least three tildes, and
+// whatever follows them. A line that is not one answers with a zero character.
+func fenceAt(line string) (char byte, long int, info string) {
+	at := 0
+	for at < 3 && at < len(line) && line[at] == ' ' {
+		at++
+	}
+	if at == len(line) || (line[at] != '`' && line[at] != '~') {
+		return 0, 0, ""
+	}
+	char = line[at]
+	for at+long < len(line) && line[at+long] == char {
+		long++
+	}
+	if long < 3 {
+		return 0, 0, ""
+	}
+	return char, long, line[at+long:]
 }
 
 var (
-	blankLine = regexp.MustCompile(`\n[ \t]*\n`)
-	heading   = regexp.MustCompile(`^#{1,6} `)
-	notSlug   = regexp.MustCompile(`[^a-z0-9]+`)
+	heading = regexp.MustCompile(`^#{1,6} `)
+	notSlug = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
 // Slug is the name as it appears in a path: lower case, words joined by

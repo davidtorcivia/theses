@@ -341,7 +341,9 @@ underneath and neither one changed; they differ only in what an absent `after`
 means.
 
 Text with a blank line in it arrives as one block per paragraph, in order, and
-the answer is the command that made the first of them.
+the answer is the command that made the first of them. A fenced code block is
+one paragraph whatever is inside it, so code holding blank lines or lines
+beginning with a hash is stored in one block rather than cut into several.
 
 ```
 POST /api/v1/documents/4/blocks
@@ -377,11 +379,12 @@ the next attempt is that text with yours worked into it and that number as
 `base_version`. Text longer than a block may hold is `422`.
 
 `whole` is optional and false by default. Without it the text is trimmed and
-cut into blocks at blank lines and headings, which is what a finished edit
-wants. With it the block stores the text exactly as it was sent, which is what
-an editor saving every few hundred milliseconds needs: trimming the blank line
-somebody is in the middle of writing, or cutting the paragraph above the caret
-off into a block of its own, is not something to do to a person as they type.
+cut into blocks at blank lines and headings, except inside a fenced code block,
+where neither cuts, which is what a finished edit wants. With it the block
+stores the text exactly as it was sent, which is what an editor saving every
+few hundred milliseconds needs: trimming the blank line somebody is in the
+middle of writing, or cutting the paragraph above the caret off into a block of
+its own, is not something to do to a person as they type.
 Everything else is the same, the merge included. A block saved this way keeps
 what was sent, edge whitespace and blank lines included, until an ordinary set,
 another route into this API, MCP or an import from the markdown mirror touches

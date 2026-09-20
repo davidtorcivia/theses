@@ -157,12 +157,76 @@ export function enter(text, start, end) {
   return { kind: 'list', text: now.slice(0, caret) + next + now.slice(caret), caret: caret + next.length };
 }
 
+// A fenced code block opens on up to three spaces and then at least three
+// backticks or at least three tildes, and closes on the same character, at
+// least as many of them, and nothing but space after them. It is the rule the
+// server cuts blocks by, in fence.track in internal/docs/commands.go.
+//
+// The info string is written as anything but a newline rather than as a dot,
+// because a dot does not match U+2028 or U+2029. Those are ordinary characters
+// on an ordinary line to the server, and a fence line holding one has to open
+// here as well or the two would disagree about where the code is.
+const fence = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
+
+// step is the fence a line leaves open: the delimiter that opened it, or null
+// outside one. A backtick opener's info string holds no backtick, which is what
+// keeps a line of inline code from opening a fence that never closes.
+function step(open, line) {
+  const m = fence.exec(line);
+  if (!m) return open;
+  const [, marks, info] = m;
+  if (open === null) return marks[0] === '`' && info.includes('`') ? null : marks;
+  if (marks[0] === open[0] && marks.length >= open.length && !info.trim()) return null;
+  return open;
+}
+
+// inFence is whether a split between start and end would cut a fenced code
+// block in two, which is why Enter in code writes a newline instead. It is two
+// questions, one per end of what Enter replaces.
+//
+// The text in front of start ends with a fence still open: the block above
+// would keep a fence nothing closes and the one below would start inside one. A
+// caret at the end of the closing fence is out of it and splits as usual, which
+// is how somebody writes the paragraph after their code.
+//
+// And the text in front of end ends with one open, which only differs when
+// something is selected: a selection that reaches into a fence takes its
+// opening away, and what is left below the cut is the rest of a fence with no
+// beginning. Enter over that selection writes a newline into the block the
+// person is looking at, where they can see what became of it.
+export function inFence(text, start, end = start) {
+  const open = (at) => {
+    let fenced = null;
+    for (const line of text.slice(0, Math.max(0, at)).split('\n')) fenced = step(fenced, line);
+    return fenced !== null;
+  };
+  return open(start) || open(Math.max(start, end));
+}
+
 // chunks is what a paste is made of: the paragraphs this editor reads in it,
-// blank line separated, with whatever was only whitespace dropped. All the
-// editor asks of it is whether a paste holds more than one, because the first
-// goes in at the caret and the rest go up as one insert for the server to cut
-// up by its own rule. So this promises nothing about that rule and does not
-// have to agree with it.
+// blank line separated, with whatever was only whitespace dropped, and blank
+// lines inside a fenced code block left where they are. All the editor asks of
+// it is whether a paste holds more than one, because the first goes in at the
+// caret and the rest go up as one insert for the server to cut up by its own
+// rule. So this promises nothing about that rule beyond not handing the server
+// half a fence.
 export function chunks(text) {
-  return text.replace(/\r\n?/g, '\n').split(/\n[ \t]*\n/).filter((part) => part.trim());
+  const out = [];
+  let part = [];
+  let open = null;
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
+    open = step(open, line);
+    // Spaces and tabs make a line blank and nothing else does, which is the
+    // rule the server cuts paragraphs by. A trim here would also read a line
+    // holding a no-break space as the end of one, and the two would disagree
+    // about how many paragraphs a paste holds.
+    if (open === null && !/[^ \t]/.test(line)) {
+      out.push(part.join('\n'));
+      part = [];
+      continue;
+    }
+    part.push(line);
+  }
+  out.push(part.join('\n'));
+  return out.filter((each) => each.trim());
 }

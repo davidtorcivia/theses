@@ -10,7 +10,7 @@
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit } from './state.js';
 import { send, live, where, onCarets, Conflict, Offline } from './net.js';
-import { rebase, enter, chunks, carry, parseWhere, formatWhere } from './blocktext.js';
+import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './blocktext.js';
 
 // The block this tab has open: its node and its textarea, and nothing else. The
 // editor is a way of typing into an entry below, not a place anything is kept,
@@ -803,7 +803,14 @@ function key(e, ed) {
 // waiting on an answer, because a block cut in two under a refusal would leave
 // the half below with nothing to go back into when the refusal is discarded.
 // Shift+Enter is always a plain newline.
+//
+// So is Enter inside a fenced code block, or over a selection that reaches into
+// one: a split there would leave a fence open in the block above and a block
+// below starting inside one, and the server keeps a fence in one block whatever
+// is in it. This decides not to split; it does not decide where a block ends,
+// which stays the server's alone.
 function pressedEnter(e, ed) {
+  if (inFence(ed.area.value, ed.area.selectionStart, ed.area.selectionEnd)) return;
   const what = enter(ed.area.value, ed.area.selectionStart, ed.area.selectionEnd);
   if (what.kind === 'list') {
     e.preventDefault();

@@ -211,7 +211,7 @@ func (s *Server) createDocument(ctx context.Context, req *sdk.CallToolRequest, i
 
 type appendBlockArgs struct {
 	Document int64  `json:"document" jsonschema:"the document to add to"`
-	Text     string `json:"text" jsonschema:"the markdown of the paragraph; text holding a blank line becomes one block per paragraph"`
+	Text     string `json:"text" jsonschema:"the markdown of the paragraph; text holding a blank line becomes one block per paragraph, and a fenced code block stays one block whatever is in it"`
 	Key      string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with what the first call did rather than making a second"`
 }
 
