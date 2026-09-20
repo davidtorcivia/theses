@@ -112,6 +112,12 @@ function schedule(p) {
   return 'Episode ' + p.episode + (p.target_date ? ' · target ' + p.target_date : '');
 }
 
+// editOnClick leans on head() being built again from nothing on every render.
+// editable leaves what it wrote in the node, and on Escape or an unchanged
+// commit that is not what the state holds, so the node it put it in has to be
+// a new one. Anything that starts keeping the head between renders has to throw
+// the node away when an edit ends, the way the board's column heading and the
+// rail's row do.
 function editOnClick(node, read, save) {
   const edit = () => {
     if (node.isContentEditable) return;

@@ -106,6 +106,18 @@ function rename(id, title) {
   hold(true);
   editable(title, p.title, (value) => {
     hold(false);
+    // editable wrote into the node to open it: it put the title's own text
+    // there, which took the status tail out of the span beside it, and Escape
+    // leaves whatever was typed sitting in it. The render below used to draw
+    // the row again out of the state, because the rail was built from nothing
+    // every time; now a row whose key has not moved is handed back exactly as
+    // the editor left it. So the row is dropped from the cache whichever way
+    // the edit ended, a refusal included: one refused in the same frame as its
+    // own guess is a single render with the key where it started. Building the
+    // row again cannot take one out from under a finger, because rendering was
+    // held for as long as the editor was open and the hand that was typing is
+    // this one.
+    drawn.delete(id);
     const now = proposition(id);
     if (value === null || !value || !now || value === now.title) { emit(); return; }
     send('proposition.edit', { proposition: id, title: value, statement: now.statement, blurb: now.blurb })

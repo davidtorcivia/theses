@@ -194,6 +194,15 @@ function header(column, count) {
       const was = column.name;
       editable(name, was, (value) => {
         hold(false);
+        // The heading holds whatever the editor left in it, which on Escape or
+        // on a name cleared to nothing is not the name at all. A header whose
+        // key has not moved would be handed straight back with it, so the key
+        // is dropped whichever way the edit ended, a refusal included: one
+        // refused in the same frame as its own guess is a single render with
+        // the key where it started. Only the header is built again; the section
+        // and the cards in it are the same nodes either way.
+        const col = cols.get(column.id);
+        if (col) col.key = null;
         if (!value || value === was) { emit(); return; }
         send('column.rename', { column: column.id, title: value })
           .catch((err) => { say(err.message); emit(); });
