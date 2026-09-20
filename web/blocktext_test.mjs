@@ -260,9 +260,10 @@ assert.deepEqual(parseWhere(formatWhere(12, 5, 3, 9)), { block: 12, version: 5, 
 console.log(`${wheres.length} where cases pass`);
 
 // What a block's text is made of, which the document pane draws. The first
-// dozen cases are what the pane drew before any of the four new shapes existed,
-// written down from the old renderer so that teaching it the new ones is not
-// allowed to move the old ones; the rest are the new ones.
+// eighteen cases, as far as the blank line below them, are what the pane drew
+// before any of the four new shapes existed, written down from the old renderer
+// so that teaching it the new ones is not allowed to move the old ones; the
+// rest are the new ones.
 const shapes = [
   { name: 'a paragraph', in: 'One.', want: [{ kind: 'p', text: 'One.' }] },
   { name: 'a first level heading', in: '# Title', want: [{ kind: 'h1', text: 'Title' }] },
@@ -445,8 +446,9 @@ console.log(`${shapes.length} shape cases pass`);
 // the page for everybody who opened it.
 //
 // The times are a guard against a rule that reads the lines it has not come to
-// yet, which is quadratic and was: the bound is many times the tenth of a
-// second these take, so it fails on a mistake rather than on a busy machine.
+// yet, which is quadratic and was: the bound is forty times the few
+// milliseconds each of these takes, so it fails on a mistake in the module
+// rather than on a busy machine.
 const long = [
   { name: 'five thousand headings', in: '# a\n'.repeat(5000), want: 5000, kind: 'h1' },
   { name: 'five thousand fences', in: '```\n'.repeat(5000), want: 2500, kind: 'code' },
