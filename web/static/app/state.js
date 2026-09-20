@@ -629,9 +629,10 @@ export function localOf(key) {
   return null;
 }
 
-// unmakeLocal takes one off the page: the ack that puts the real block in its
-// place, letting go of an insert the server would not take, and joining one
-// back into the block above before it was ever made.
+// unmakeLocal takes one off the page when no block is ever going to arrive for
+// it: an insert the server would not take, either answered on the block itself
+// or let go from the activity panel, and one joined back into the block above
+// before it was made at all. The real block arriving is settle above.
 export function unmakeLocal(key) {
   const row = localOf(key);
   if (row) {

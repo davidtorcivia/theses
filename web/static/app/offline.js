@@ -208,7 +208,7 @@ function named(store, idem, then) {
 // what it always carried, rather than a second change from where the first one
 // left the block. If the server has already applied it, because it was in the
 // air when the socket went, the replay is answered with what it did and the
-// text typed since goes up as an ordinary save once the ack binds the block.
+// text typed since goes up as an ordinary save once the real block is here.
 export function retext(idem, text) {
   return withStore('outbox', 'readwrite', (store) => {
     const out = { done: false };

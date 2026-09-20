@@ -1733,7 +1733,7 @@ function save(id) {
   // connection through a reload, because the outbox is on disk and an entry is
   // not. When there is no such command to write into, because it is in the air
   // on a live socket, the text stays in the entry and goes up as an ordinary
-  // save the moment the ack binds the block.
+  // save the moment the real block takes this row's place.
   if (id < 0) {
     const row = blockAnywhere(id);
     retext(row.key, sent).then((held) => {
