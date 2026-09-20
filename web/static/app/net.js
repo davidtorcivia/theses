@@ -46,18 +46,23 @@ export function newKey() {
     .map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// caught says this tab has read the stream since its last disconnection, which
-// is more than having a socket: state.connected is set the moment the socket
-// opens, and the read that tells this tab what happened while it was away
-// finishes some time after that.
+// caught says a read of the stream has finished since the last moment this
+// socket could have dropped a frame. Three things are such a moment: the socket
+// opening, the server saying there is a gap, and an ack the server is saying
+// again, which is an answer this tab never heard the first time. Each of them
+// clears this and takes it from what its read answers, so a read that failed
+// leaves it false until the next one rather than for the life of the socket.
 //
 // caughtUp asks for that read and for a connection it could send on this
 // instant, because only both together mean this tab has heard everything there
-// is to hear. A socket the browser has not noticed is dead is the case that
-// needs the second half: the network goes, nothing closes, and this tab would
-// otherwise still believe it was listening. Anything that concludes something
-// from what it has NOT heard has to ask this, because a tab that is merely
-// behind has heard nothing either.
+// is to hear. Anything that concludes something from what it has NOT heard has
+// to ask this, because a tab that is merely behind has heard nothing either.
+//
+// A network that goes while the socket notices nothing is the case none of the
+// three can see: no close, no gap, and the read that would be made runs over
+// HTTP and answers, which says nothing about what the socket is carrying. So
+// the browser's own offline is taken as the socket going, at the foot of this
+// file, and the reconnection reads the stream over one known to be alive.
 let caught = false;
 
 export const caughtUp = () => caught && !down();
@@ -76,6 +81,10 @@ export class Conflict extends Error {
 }
 
 export function connect() {
+  // One socket at a time. A close schedules a reconnection and a browser saying
+  // the network is back asks for one now, and either can arrive while the other
+  // is already in the air.
+  if (socket && socket.readyState !== WebSocket.CLOSED) return;
   // A workspace with nothing in it still opens a socket, because creating the
   // first proposition goes through it.
   const url = new URL('/ws', location.href);
@@ -157,7 +166,12 @@ function receive(m) {
           // taking the caret out of what somebody is typing into. A catchUp
           // that cannot reach the server leaves the block missing until the
           // next one, which is the same place a dropped event leaves it.
-          catchUp().finally(() => { if (task) task.resolve(m.event); });
+          //
+          // An answer said twice is an answer this tab never heard, so what it
+          // has heard is behind until this read comes back.
+          caught = false;
+          catchUp().then((ok) => { caught = ok; })
+            .finally(() => { if (task) task.resolve(m.event); });
           break;
         } else {
           // The row is one this tab already holds, so nothing will be applied
@@ -195,7 +209,10 @@ function receive(m) {
       break;
     }
     case 'gap':
-      catchUp();
+      // The server saying frames were dropped, so this tab is behind until the
+      // read comes back and is behind still if it does not.
+      caught = false;
+      catchUp().then((ok) => { caught = ok; });
       break;
     case 'ping':
       // The server's heartbeat, answered from here rather than on a timer of
@@ -473,8 +490,25 @@ function answered(promise, wait) {
 // A browser noticing a network is the other way a replay starts. A socket that
 // was never actually broken, which is what a machine coming back from sleep
 // often has, fires no close and therefore no open.
+//
+// A socket that went with the network is waiting out a backoff that has been
+// doubling all through the outage and may be fifteen seconds long. There is a
+// network now, so it is worth trying at once; connect above refuses a second
+// socket, so the attempt this cuts in front of does nothing when it comes.
 addEventListener('online', () => {
-  if (socket && socket.readyState === WebSocket.OPEN) replay();
+  if (socket && socket.readyState === WebSocket.OPEN) { replay(); return; }
+  backoff = 500;
+  connect();
+});
+
+// A browser losing its network takes the socket with it. Nothing else closes a
+// socket whose network has gone: the frames stop arriving and the tab goes on
+// believing it is listening, so a read that finished before the outage would
+// still answer for everything since. Closing is what marks the moment: it puts
+// what was in flight back in the outbox, forgets the read, and leaves the
+// reconnection to read the stream again over a socket that carries.
+addEventListener('offline', () => {
+  if (socket) socket.close();
 });
 
 // post is a queued command that is a request rather than a socket frame: adding
