@@ -646,14 +646,13 @@ export function onSettled(fn) {
   settled = fn;
 }
 
-// strandLocal is a block this tab drew whose command has been answered and has
-// left the outbox without this tab hearing which block it made. The row stays
-// on the page with what was written in it; the mark is what stops the rest of
-// the page counting it as work still to be done, because nothing here is going
-// anywhere.
-export function strandLocal(key) {
-  const row = localOf(key);
-  if (row) apply(local('block', { ...row, stranded: true }));
+// rekeyLocal gives a block this tab drew a new name. The command that was to
+// make it under the old one has been answered and gone, so a second attempt has
+// to be a command of its own: sent under a name the server has already answered
+// it would be told what that answer was rather than making anything.
+export function rekeyLocal(row, key) {
+  apply(local('block', { ...row, key }));
+  return localOf(key);
 }
 
 // localOf is the block a key names: what a refusal, a block joined back into

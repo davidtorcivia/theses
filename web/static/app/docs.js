@@ -8,8 +8,8 @@
 // between is merged on the server or comes back as a choice.
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, strandLocal, onSettled, order } from './state.js';
-import { send, newKey, where, onCarets, Conflict, Offline } from './net.js';
+import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order } from './state.js';
+import { send, newKey, where, onCarets, caughtUp, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { retext, unqueue } from './offline.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
@@ -218,6 +218,19 @@ function refusedInsert(row, err) {
     if (join >= 0) startEditing(above.id, join);
     return;
   }
+  refusedHere(row, why, text);
+}
+
+// refusedHere leaves the words where they were written, with the reason above
+// them and the two answers a refusal has. It is where a refusal comes to when
+// there is nowhere to put the words back: the + in an empty document, and a
+// command that has been answered and gone without this tab hearing which block
+// it made.
+//
+// ponytail: a refusal held in this tab goes with a reload, as every refusal
+// held here does. The branch that files unanswered conflicts and refusals in
+// the outbox is where that is answered, for these as for the rest.
+function refusedHere(row, why, text) {
   const kept = entryOf(row.id);
   if (!kept) return;
   kept.text = text;
@@ -619,7 +632,7 @@ const busy = (w) => w.status !== 'ok' || w.flight || w.text !== w.sent;
 // work outstanding on its document whatever its entry says, because the insert
 // still has to land, and the entry of a block nobody is typing in is dropped as
 // soon as its text has reached the outbox.
-const making = (doc) => (doc ? doc.blocks || [] : []).some((b) => b.id < 0 && !b.stranded);
+const making = (doc) => (doc ? doc.blocks || [] : []).some((b) => b.id < 0);
 
 // A block on its way into a document is outstanding on that document too, so
 // its tab carries the dot until it is made.
@@ -643,8 +656,10 @@ function saveState() {
   }
   // A block this document is waiting on is text this tab is answerable for
   // whether or not it has an entry to be counted in. A block on its way into
-  // another document is that document's line to say, not this one's.
-  if (making(doc)) return 'Saving…';
+  // another document is that document's line to say, not this one's. With no
+  // socket it is not being saved and saying so would be a story: it is waiting
+  // for one, which is what the bar at the foot of the page says as well.
+  if (making(doc)) return state.connected ? 'Saving…' : 'Waiting to save';
   if (here.some((w) => w.status === 'ok' && (w.flight || w.timer || w.text !== w.sent))) return 'Saving…';
   return 'Saved';
 }
@@ -1825,18 +1840,27 @@ function save(id) {
       }
       const entry = work.get(id);
       if (entry) entry.flight = false;
-      // No command to write into, none in the air under this name, and none
-      // waiting: it has been answered and has left, so this block stands for
-      // one the server made and this tab never heard about. It cannot say which
-      // block that is, so the words stay where they are, visible, and this tab
-      // stops answering for them rather than saying they are on their way for
-      // ever. The entry goes, which nothing else but finished, the two answers
-      // and prune do; there is no block on the server to move it to.
-      if (entry && held && !held.filed && !flying.has(row.key)) {
-        clearTimeout(entry.timer);
-        work.delete(id);
-        strandLocal(row.key);
-        say('That paragraph was already saved. What you have written in it since is on the page and not on its way.');
+      // No command to write into, none in the air under this name and none
+      // waiting means the command has been answered and left. Only a tab that
+      // has read the stream since its last disconnection may conclude that: one
+      // with no socket, or one whose read has not come back, has heard nothing
+      // either way, and another tab of this person emptying the outbox looks
+      // exactly like this from here. Such a tab keeps the entry and waits, and
+      // the reconnect brings the insert, settles the row and carries the entry
+      // to the real block, where the difference goes up as an ordinary save.
+      //
+      // With the stream read and still no command, nothing is ever coming for
+      // this block. The words stay in the entry, and the block says for itself
+      // that it was not saved: the two answers a refusal already has, try it
+      // again under a name of its own or discard. Neither is this tab's to
+      // choose, because the block the first command made may be on the page
+      // beside this one.
+      if (entry && held && !held.filed && !flying.has(row.key) && caughtUp()) {
+        const fresh = rekeyLocal(row, newKey()) || row;
+        // What the entry holds now rather than what this save carried: the
+        // person may have written more while the read was out, and a refusal
+        // answers for everything in the block.
+        refusedHere(fresh, 'the command that would have made this block is gone', entry.text);
       }
       status();
     });

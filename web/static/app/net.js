@@ -46,6 +46,16 @@ export function newKey() {
     .map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// caught says this tab has read the stream since its last disconnection, which
+// is more than having a socket: state.connected is set the moment the socket
+// opens, and the read that tells this tab what happened while it was away
+// finishes some time after that. Anything concluding something from what it has
+// NOT heard has to wait for this, because a tab that is merely behind has heard
+// nothing either.
+let caught = false;
+
+export const caughtUp = () => caught;
+
 export class Offline extends Error {
   constructor() {
     super('You are offline. That change was not saved.');
@@ -86,12 +96,13 @@ export function connect() {
     // again, so the links and files of the open proposition are marked unread
     // and the next render asks for them without waiting out the retry gap.
     retryMaterial();
-    await catchUp();
+    caught = await catchUp();
     replay();
   });
   socket.addEventListener('message', (e) => receive(JSON.parse(e.data)));
   socket.addEventListener('close', () => {
     state.connected = false;
+    caught = false;
     // A command that was in flight when the socket went is not lost: it goes to
     // the back of the outbox and replays with the rest. The server may have
     // applied it before the socket died, and this tab has no way of knowing,
@@ -559,7 +570,7 @@ function stillSignedIn() {
 // them behind one another was worse: one read that never settled took every
 // later one with it.
 async function catchUp() {
-  if (!state.open) return;
+  if (!state.open) return false;
   try {
     const res = await fetch(`/api/events?proposition=${state.open}&since=${state.seq}&wait=0`, {
       headers: { Accept: 'application/json' },
@@ -567,10 +578,12 @@ async function catchUp() {
       // before, which is the old behavior rather than a broken one.
       signal: AbortSignal.timeout?.(replyWait),
     });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const body = await res.json();
     for (const ev of body.events || []) apply(ev);
+    return true;
   } catch {
     // Offline, or a read nobody answered in time. The next open tries again.
+    return false;
   }
 }
