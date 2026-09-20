@@ -274,24 +274,32 @@ func TestWriteDocumentTool(t *testing.T) {
 		t.Fatalf("the document reads %+v", blocks)
 	}
 
-	// The same call again changes nothing and reports the same conflict, which
-	// is what an agent retrying a call it never saw the answer to does.
+	// The answer names the block each paragraph now stands in, and the same
+	// text under that base is nothing to do: the one block in conflict is
+	// answered at the version somebody else left it at, so a second call
+	// asserts this text over theirs, and a third writes nothing.
+	if len(wrote.Base) != len(docs.Paragraphs(text)) {
+		t.Fatalf("the answer names %d blocks for %d paragraphs", len(wrote.Base), len(docs.Paragraphs(text)))
+	}
 	var twice writeDocumentOut
-	h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: text, Base: base}, &twice)
-	if len(twice.Conflicts) != 1 || twice.Conflicts[0].Block != last.ID {
-		t.Fatalf("the second call reported %+v", twice.Conflicts)
+	h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: text, Base: wrote.Base}, &twice)
+	if len(twice.Conflicts) != 0 {
+		t.Fatalf("the second call reported %+v, want it to go through", twice.Conflicts)
+	}
+	var thrice writeDocumentOut
+	h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: text, Base: twice.Base}, &thrice)
+	if len(thrice.Conflicts) != 0 {
+		t.Fatalf("the third call reported %+v", thrice.Conflicts)
 	}
 	after, err := docs.Blocks(ctx, h.db, made.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(after) != len(blocks) {
-		t.Fatalf("the document has %d blocks after the second call, want %d", len(after), len(blocks))
+		t.Fatalf("the document has %d blocks after three calls, want %d", len(after), len(blocks))
 	}
-	for i, b := range after {
-		if b.ID != blocks[i].ID || b.Version != blocks[i].Version {
-			t.Fatalf("block %d is %d v%d, want %d v%d", i, b.ID, b.Version, blocks[i].ID, blocks[i].Version)
-		}
+	if after[len(after)-2].Text != "The sea is a flywheel." {
+		t.Fatalf("the block that was in conflict reads %q", after[len(after)-2].Text)
 	}
 
 	// A base naming a version the database cannot produce the text of is

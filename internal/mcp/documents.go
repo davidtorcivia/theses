@@ -45,7 +45,7 @@ func (s *Server) addDocumentTools() {
 	}, s.insertAfterHeading)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "write_document",
-		Description: "Replaces a whole document with markdown, keeping the blocks whose paragraphs did not change and merging in whatever somebody else wrote meanwhile.",
+		Description: "Replaces a document, or the part of it the base names, with markdown, keeping the blocks whose paragraphs did not change and answering with the block each paragraph now stands in.",
 		Annotations: overwrites("Write a document"),
 	}, s.writeDocument)
 	sdk.AddTool(s.srv, &sdk.Tool{
@@ -348,7 +348,15 @@ type conflictOut struct {
 }
 
 type writeDocumentOut struct {
+	// Base is the block each paragraph of the text just written now stands in,
+	// in the order of the text, and is what the next write of this text sends
+	// back as its own base. It is empty on a replayed call.
+	Base      []sourceBlock `json:"base"`
 	Conflicts []conflictOut `json:"conflicts"`
+	// Replayed is a call answered out of the key it was sent under, having
+	// written nothing because the first one did. Read the document again before
+	// writing more: nothing remembers what the first answer said.
+	Replayed bool `json:"replayed,omitempty"`
 }
 
 func (s *Server) writeDocument(ctx context.Context, req *sdk.CallToolRequest, in writeDocumentArgs) (*sdk.CallToolResult, writeDocumentOut, error) {
@@ -370,12 +378,15 @@ func (s *Server) writeDocument(ctx context.Context, req *sdk.CallToolRequest, in
 			base = append(base, docs.BlockRef{ID: b.ID, Version: b.Version})
 		}
 	}
-	conflicts, err := service.WriteSource(ctx, who, in.Document, base, in.Text)
+	save, err := service.WriteSource(ctx, who, in.Document, base, in.Text)
 	if err != nil {
 		return nil, writeDocumentOut{}, s.refusal("write the document", err)
 	}
-	out := writeDocumentOut{Conflicts: []conflictOut{}}
-	for _, c := range conflicts {
+	out := writeDocumentOut{Base: []sourceBlock{}, Conflicts: []conflictOut{}, Replayed: save.Replayed}
+	for _, b := range save.Base {
+		out.Base = append(out.Base, sourceBlock{ID: b.ID, Version: b.Version})
+	}
+	for _, c := range save.Conflicts {
 		out.Conflicts = append(out.Conflicts, conflictOut{Block: c.Block, Version: c.Version, Current: c.Current})
 	}
 	return nil, out, nil

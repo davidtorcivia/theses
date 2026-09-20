@@ -353,7 +353,7 @@ func (s *Service) Import(ctx context.Context, path string) error {
 	// file comes back with a marker on it. Deleting it again against the fresh
 	// file goes through.
 	fresh := file.Revision == document.Revision
-	conflicted, _, err := s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
+	conflicted, _, _, err := s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
 		if fresh {
 			return dropMissing
 		}
@@ -404,8 +404,14 @@ const (
 // wrote says whether any command ran, which is how a source save tells a list
 // that changed nothing from one that changed something: a set whose text the
 // block already holds is not a command, and neither is a conflict.
+//
+// refs is one entry per item, in item order: the block that item's text now
+// stands in and the version it stands at, which is what a source save answers
+// with so that the next one need guess nothing. An item whose text holds more
+// than one paragraph, which only an import has, is answered by the first block
+// of them; an import ignores the whole list.
 func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, items []item,
-	blocks []Block, gone func(Block) missing) (conflicted map[int64]bool, wrote bool, err error) {
+	blocks []Block, gone func(Block) missing) (conflicted map[int64]bool, wrote bool, refs []BlockRef, err error) {
 	live := map[int64]Block{}
 	for _, b := range blocks {
 		live[b.ID] = b
@@ -416,6 +422,9 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 	for _, item := range items {
 		current, known := live[item.ID]
 		if !known {
+			// A paragraph with no block is one block, whatever happens to it,
+			// so the answer for it is settled in this branch.
+			refs = append(refs, BlockRef{})
 			// A paragraph somebody added, or one whose block the browser
 			// deleted while the file was open. Either way the words are in the
 			// file and not in the database, so they go in as a new block: a
@@ -428,10 +437,13 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 			// InsertBlock answers with the first block when the text it is
 			// given holds more than one paragraph, and following that one
 			// would put the next chunk of the file in among them.
-			for _, part := range Paragraphs(item.Text) {
+			for n, part := range Paragraphs(item.Text) {
 				e, err := s.InsertBlock(ctx, a, document, after, part, false)
 				if err != nil {
-					return nil, false, err
+					return nil, false, nil, err
+				}
+				if n == 0 {
+					refs[len(refs)-1] = rowOf(e, item.ID)
 				}
 				wrote = true
 				after = e.EntityID
@@ -440,6 +452,15 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		}
 		seen[item.ID] = true
 		after = item.ID
+		// The block as it stands is the answer unless something below writes
+		// to it: a conflict leaves it exactly here.
+		refs = append(refs, BlockRef{ID: current.ID, Version: current.Version})
+		// A block carried as it already reads is nothing to do, and cutting it
+		// into paragraphs first would take a block somebody is in the middle of
+		// typing, which holds whatever they typed, and split it under them.
+		if item.Text == current.Text {
+			continue
+		}
 		// The paragraphs are cut here for the same reason they are on the
 		// branch above: a set whose text holds more than one paragraph writes
 		// the first to the named block and puts the rest in after it, and
@@ -453,13 +474,14 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 			// The version the item carries is the version whoever wrote it
 			// started from, so this is the same stale set the browser sends and
 			// it goes through the same merge.
-			if _, err := s.SetBlock(ctx, a, item.ID, item.Version, parts[0], false); err != nil {
+			if e, err := s.SetBlock(ctx, a, item.ID, item.Version, parts[0], false); err != nil {
 				var clash *core.ConflictError
 				if !errors.As(err, &clash) {
-					return nil, false, err
+					return nil, false, nil, err
 				}
 				conflicted[item.ID] = true
 			} else {
+				refs[len(refs)-1] = rowOf(e, item.ID)
 				wrote = true
 			}
 		}
@@ -469,7 +491,7 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		for _, part := range parts[1:] {
 			e, err := s.InsertBlock(ctx, a, document, after, part, false)
 			if err != nil {
-				return nil, false, err
+				return nil, false, nil, err
 			}
 			wrote = true
 			after = e.EntityID
@@ -483,14 +505,30 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		switch gone(b) {
 		case dropMissing:
 			if _, err := s.DeleteBlock(ctx, a, b.ID); err != nil {
-				return nil, false, err
+				return nil, false, nil, err
 			}
 			wrote = true
 		case markMissing:
 			conflicted[b.ID] = true
 		}
 	}
-	return conflicted, wrote, nil
+	return conflicted, wrote, refs, nil
+}
+
+// rowOf is the block an applied command wrote, read out of the row the event
+// carries rather than asked for again, since the transaction it was written in
+// has not committed and no other connection can see it yet. An event without a
+// readable row answers with the id it was about at no version, which is a base
+// the next save cannot line up against and refuses on rather than guesses.
+func rowOf(e core.Event, fallback int64) BlockRef {
+	var b Block
+	if err := json.Unmarshal(e.After, &b); err == nil && b.ID != 0 {
+		return BlockRef{ID: b.ID, Version: b.Version}
+	}
+	if e.EntityID != 0 {
+		return BlockRef{ID: e.EntityID}
+	}
+	return BlockRef{ID: fallback}
 }
 
 // markedIn is the blocks the file already carries a conflict marker on, which

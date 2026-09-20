@@ -3,6 +3,7 @@ package docs
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -167,12 +168,12 @@ func TestWriteSource(t *testing.T) {
 			was := f.blocks(t)
 			revisions := f.revisions(t)
 
-			conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, tc.text)
+			save, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, tc.text)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(conflicts) != 0 {
-				t.Fatalf("the save reported %+v, want nothing in conflict", conflicts)
+			if len(save.Conflicts) != 0 {
+				t.Fatalf("the save reported %+v, want nothing in conflict", save.Conflicts)
 			}
 			if got := f.texts(t); !same(got, tc.want) {
 				t.Fatalf("the document reads %q, want %q", got, tc.want)
@@ -222,12 +223,12 @@ func TestWriteSourceLeavesAnotherBlockAlone(t *testing.T) {
 	if _, err := f.SetBlock(ctx, f.who["owner"], was[2].ID, was[2].Version, "Two, theirs.", false); err != nil {
 		t.Fatal(err)
 	}
-	conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, "# Tide\n\nOne, mine.\n\nTwo.")
+	save, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, "# Tide\n\nOne, mine.\n\nTwo.")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(conflicts) != 0 {
-		t.Fatalf("the save reported %+v, want nothing in conflict", conflicts)
+	if len(save.Conflicts) != 0 {
+		t.Fatalf("the save reported %+v, want nothing in conflict", save.Conflicts)
 	}
 	// The third paragraph reads as theirs: this save did not touch it, because
 	// it did not change it.
@@ -267,18 +268,18 @@ func TestWriteSourceMergesAndReportsOneBlock(t *testing.T) {
 			if _, err := f.SetBlock(ctx, f.who["owner"], was[1].ID, was[1].Version, tc.theirs, false); err != nil {
 				t.Fatal(err)
 			}
-			conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc, base,
+			save, err := f.WriteSource(ctx, f.who["editor"], f.doc, base,
 				"# Tide\n\n"+tc.mine+"\n\nTwo.\n\nThree.")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.clash != (len(conflicts) == 1) {
-				t.Fatalf("the save reported %+v, want a conflict: %v", conflicts, tc.clash)
+			if tc.clash != (len(save.Conflicts) == 1) {
+				t.Fatalf("the save reported %+v, want a conflict: %v", save.Conflicts, tc.clash)
 			}
 			if tc.clash {
-				if conflicts[0].Block != was[1].ID || conflicts[0].Current != tc.theirs {
+				if save.Conflicts[0].Block != was[1].ID || save.Conflicts[0].Current != tc.theirs {
 					t.Fatalf("the conflict is %+v, want block %d holding %q",
-						conflicts[0], was[1].ID, tc.theirs)
+						save.Conflicts[0], was[1].ID, tc.theirs)
 				}
 			}
 			// Either way the rest of the save went in: the paragraph added at
@@ -313,13 +314,13 @@ func TestWriteSourceAgainstADeletedBlock(t *testing.T) {
 			if _, err := f.DeleteBlock(ctx, f.who["owner"], was[1].ID); err != nil {
 				t.Fatal(err)
 			}
-			conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc, base,
+			save, err := f.WriteSource(ctx, f.who["editor"], f.doc, base,
 				"# Tide\n\n"+tc.middle+"\n\nTwo, mine.")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(conflicts) != 0 {
-				t.Fatalf("the save reported %+v, want nothing in conflict", conflicts)
+			if len(save.Conflicts) != 0 {
+				t.Fatalf("the save reported %+v, want nothing in conflict", save.Conflicts)
 			}
 			if got := f.texts(t); !same(got, tc.want) {
 				t.Fatalf("the document reads %q, want %q", got, tc.want)
@@ -343,12 +344,12 @@ func TestWriteSourceLeavesANewBlockInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, "# Tide\n\nOne, mine.")
+	save, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, "# Tide\n\nOne, mine.")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(conflicts) != 0 {
-		t.Fatalf("the save reported %+v, want nothing in conflict", conflicts)
+	if len(save.Conflicts) != 0 {
+		t.Fatalf("the save reported %+v, want nothing in conflict", save.Conflicts)
 	}
 	if got := f.texts(t); !same(got, []string{"# Tide", "One, mine.", "Theirs."}) {
 		t.Fatalf("the document reads %q", got)
@@ -370,12 +371,12 @@ func TestWriteSourceWillNotDeleteAChangedBlock(t *testing.T) {
 	if _, err := f.SetBlock(ctx, f.who["owner"], was[1].ID, was[1].Version, "One, theirs.", false); err != nil {
 		t.Fatal(err)
 	}
-	conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, "# Tide\n\nTwo.")
+	save, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, "# Tide\n\nTwo.")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(conflicts) != 1 || conflicts[0].Block != was[1].ID {
-		t.Fatalf("the save reported %+v, want block %d in conflict", conflicts, was[1].ID)
+	if len(save.Conflicts) != 1 || save.Conflicts[0].Block != was[1].ID {
+		t.Fatalf("the save reported %+v, want block %d in conflict", save.Conflicts, was[1].ID)
 	}
 	if got := f.texts(t); !same(got, []string{"# Tide", "One, theirs.", "Two."}) {
 		t.Fatalf("the document reads %q", got)
@@ -508,12 +509,12 @@ func TestWriteSourceReplaysAConflictedSaveWithoutApplyingTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conflicts, err := f.WriteSource(first, f.who["editor"], f.doc, base, text)
+	save, err := f.WriteSource(first, f.who["editor"], f.doc, base, text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(conflicts) != 1 {
-		t.Fatalf("the save reported %+v, want one conflict", conflicts)
+	if len(save.Conflicts) != 1 {
+		t.Fatalf("the save reported %+v, want one conflict", save.Conflicts)
 	}
 	want := f.texts(t)
 
@@ -548,128 +549,274 @@ func TestWriteSourceWithNoBaseUsesTheDocument(t *testing.T) {
 	}
 }
 
-// Sending the same markdown twice must change nothing the second time, whoever
-// else wrote in between. It is a request rather than a queued command, so
-// pressing Save again, a request whose answer never arrived, and an agent
-// retrying all land here.
-func TestWriteSourceIsIdempotent(t *testing.T) {
+// press is one Save: the text sent against the base the last answer gave, and
+// the answer the next press goes from. It is the whole of the protocol a client
+// follows, and every idempotence test below is written in it.
+func (f *fixture) press(t *testing.T, base []BlockRef, text string) SourceSave {
+	t.Helper()
+	save, err := f.WriteSource(context.Background(), f.who["editor"], f.doc, base, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(save.Base) != len(Paragraphs(text)) {
+		t.Fatalf("the answer names %d blocks for %d paragraphs", len(save.Base), len(Paragraphs(text)))
+	}
+	return save
+}
+
+// still asserts the document has not moved at all, block for block and version
+// for version, and has kept no further revision.
+func (f *fixture) still(t *testing.T, what string, was []Block, revisions int) {
+	t.Helper()
+	now := f.blocks(t)
+	if len(now) != len(was) {
+		t.Fatalf("%s: the document has %d blocks, want %d", what, len(now), len(was))
+	}
+	for i, b := range now {
+		if b.ID != was[i].ID || b.Version != was[i].Version || b.Text != was[i].Text {
+			t.Fatalf("%s: block %d is %d v%d %q, want %d v%d %q", what, i,
+				b.ID, b.Version, b.Text, was[i].ID, was[i].Version, was[i].Text)
+		}
+	}
+	if got := f.revisions(t); got != revisions {
+		t.Fatalf("%s: the document has %d revisions, want %d", what, got, revisions)
+	}
+}
+
+// theirs is somebody else at the same document, as each of the seven things
+// they can do to it while somebody is writing its markdown.
+func (f *fixture) set(t *testing.T, block, version int64, text string) {
+	t.Helper()
+	if _, err := f.SetBlock(context.Background(), f.who["owner"], block, version, text, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *fixture) insert(t *testing.T, after int64, text string) {
+	t.Helper()
+	if _, err := f.InsertBlock(context.Background(), f.who["owner"], f.doc, after, text, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *fixture) remove(t *testing.T, block int64) {
+	t.Helper()
+	if _, err := f.DeleteBlock(context.Background(), f.who["owner"], block); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *fixture) move(t *testing.T, block, after int64) {
+	t.Helper()
+	if _, err := f.MoveBlock(context.Background(), f.who["owner"], block, after); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A second press of the same markdown, against the base the first press
+// answered with, writes nothing and keeps no revision, whatever somebody else
+// did in between. The one thing not here is somebody writing in a block this
+// text also changes, which is keep mine and has its own test below.
+func TestWriteSourceSecondPressWritesNothing(t *testing.T) {
+	start := []string{"# Tide", "One.", "Two.", "Three."}
+	text := "# Tide\n\nOne, mine.\n\nTwo.\n\nThree.\n\nFour new."
+	mine := map[string]bool{"# Tide": true, "One.": true, "Two.": true, "Three.": true}
 	for _, tc := range []struct {
 		name  string
-		start []string
-		text  string
-		// theirs, when it names a block by its place in start, is the text
-		// somebody else writes into it before the first save.
-		at     int
-		theirs string
+		while func(t *testing.T, f *fixture, was []Block)
 	}{
-		{name: "an edit and an addition", start: []string{"# Tide", "One.", "Two."},
-			text: "# Tide\n\nOne, mine.\n\nTwo.\n\nThree new.", at: -1},
-		{name: "a paragraph added at the head", start: []string{"# Tide", "One."},
-			text: "Before.\n\n# Tide\n\nOne.", at: -1},
-		{name: "two paragraphs that read alike", start: []string{"# Tide"},
-			text: "# Tide\n\nSame.\n\nSame.", at: -1},
-		{name: "everything replaced", start: []string{"# Tide", "One.", "Two."},
-			text: "# Other\n\nA.\n\nB.\n\nC.", at: -1},
-		{name: "a paragraph taken out", start: []string{"# Tide", "One.", "Two."},
-			text: "# Tide\n\nTwo.", at: -1},
-		{name: "with a block somebody else changed that this one changes too",
-			start: []string{"# Tide", "One.", "Two."},
-			text:  "# Tide\n\nOne, mine entirely.\n\nTwo.\n\nThree new.",
-			at:    1, theirs: "One, theirs entirely."},
-		{name: "with a block somebody else changed that this one leaves alone",
-			start: []string{"# Tide", "One.", "Two."},
-			text:  "# Tide\n\nOne.\n\nTwo, mine.\n\nThree new.",
-			at:    1, theirs: "One, theirs."},
-		{name: "with a block somebody else deleted",
-			start: []string{"# Tide", "One.", "Two."},
-			text:  "# Tide\n\nOne, mine.\n\nTwo.\n\nThree new.",
-			at:    -2},
+		{name: "with nobody else in the way"},
+		{name: "somebody writes in a block this text leaves alone",
+			while: func(t *testing.T, f *fixture, was []Block) { f.set(t, was[3].ID, was[3].Version, "Three, theirs.") }},
+		{name: "somebody adds a block before the first",
+			while: func(t *testing.T, f *fixture, was []Block) { f.insert(t, 0, "Theirs, at the head.") }},
+		{name: "somebody adds a block in the middle",
+			while: func(t *testing.T, f *fixture, was []Block) { f.insert(t, was[1].ID, "Theirs, in the middle.") }},
+		{name: "somebody adds a block after the last",
+			while: func(t *testing.T, f *fixture, was []Block) { f.insert(t, was[3].ID, "Theirs, at the end.") }},
+		{name: "somebody deletes a block this text leaves alone",
+			while: func(t *testing.T, f *fixture, was []Block) { f.remove(t, was[2].ID) }},
+		{name: "somebody deletes a block this text changes",
+			while: func(t *testing.T, f *fixture, was []Block) { f.remove(t, was[1].ID) }},
+		{name: "somebody moves a block",
+			while: func(t *testing.T, f *fixture, was []Block) { f.move(t, was[3].ID, 0) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
 			f := setup(t, "")
-			base := f.seed(t, tc.start...)
+			base := f.seed(t, start...)
 			was := f.blocks(t)
-			switch {
-			case tc.theirs != "":
-				if _, err := f.SetBlock(ctx, f.who["owner"], was[tc.at].ID, was[tc.at].Version,
-					tc.theirs, false); err != nil {
-					t.Fatal(err)
-				}
-			case tc.at == -2:
-				if _, err := f.DeleteBlock(ctx, f.who["owner"], was[1].ID); err != nil {
-					t.Fatal(err)
-				}
+			if tc.while != nil {
+				tc.while(t, f, was)
 			}
+			before := f.texts(t)
 
-			first, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, tc.text)
-			if err != nil {
-				t.Fatal(err)
+			first := f.press(t, base, text)
+			if len(first.Conflicts) != 0 {
+				t.Fatalf("the first press reported %+v, want nothing in conflict", first.Conflicts)
+			}
+			if tc.while == nil && !same(f.texts(t), Paragraphs(text)) {
+				t.Fatalf("the document reads %q, want %q", f.texts(t), Paragraphs(text))
+			}
+			// Nothing of theirs went missing without being reported: every
+			// paragraph they wrote is still in the document.
+			for _, their := range before {
+				if mine[their] {
+					continue
+				}
+				if !slices.Contains(f.texts(t), their) {
+					t.Fatalf("%q went missing and nothing was reported", their)
+				}
 			}
 			after := f.blocks(t)
 			revisions := f.revisions(t)
-			// With nobody else in the way the document is exactly the
-			// paragraphs that were sent.
-			if tc.at == -1 {
-				if got := f.texts(t); !same(got, Paragraphs(tc.text)) {
-					t.Fatalf("the document reads %q, want %q", got, Paragraphs(tc.text))
-				}
-			}
 
-			second, err := f.WriteSource(ctx, f.who["editor"], f.doc, base, tc.text)
-			if err != nil {
-				t.Fatal(err)
+			second := f.press(t, first.Base, text)
+			if len(second.Conflicts) != 0 {
+				t.Fatalf("the second press reported %+v", second.Conflicts)
 			}
-			if len(second) != len(first) {
-				t.Fatalf("the second save reported %+v, want the same as the first, %+v", second, first)
-			}
-			now := f.blocks(t)
-			if len(now) != len(after) {
-				t.Fatalf("the document has %d blocks after the second save, want %d", len(now), len(after))
-			}
-			for i, b := range now {
-				if b.ID != after[i].ID || b.Version != after[i].Version || b.Text != after[i].Text {
-					t.Fatalf("block %d is %d v%d %q after the second save, want %d v%d %q",
-						i, b.ID, b.Version, b.Text, after[i].ID, after[i].Version, after[i].Text)
-				}
-			}
-			if got := f.revisions(t); got != revisions {
-				t.Fatalf("the document has %d revisions after the second save, want %d", got, revisions)
-			}
+			f.still(t, "after the second press", after, revisions)
+			f.press(t, second.Base, text)
+			f.still(t, "after the third press", after, revisions)
 		})
 	}
 }
 
-// A base that names only some of the document's blocks says nothing about the
-// rest, and the paragraphs standing for them take the blocks they already have
-// rather than being written in a second time.
-func TestWriteSourceWithAPartialBase(t *testing.T) {
-	ctx := context.Background()
+// Somebody writing in a block this text also changes is keep mine: the first
+// press merges what can be merged and reports what cannot, and a press after
+// that puts this person's paragraph over theirs, because the base they were
+// answered with names the version theirs is at. A press after that writes
+// nothing.
+func TestWriteSourcePressingAgainKeepsMine(t *testing.T) {
+	for _, tc := range []struct {
+		name, theirs, mine, merged string
+		clash                      bool
+	}{
+		{name: "a merge", theirs: "The tide comes in twice a night.",
+			mine: "The sea comes in twice a day.", merged: "The sea comes in twice a night."},
+		{name: "a conflict", theirs: "The tide comes in twice a night.",
+			mine: "The tide comes in twice a week.", merged: "The tide comes in twice a night.", clash: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			base := f.seed(t, "# Tide", "The tide comes in twice a day.", "Two.")
+			was := f.blocks(t)
+			f.set(t, was[1].ID, was[1].Version, tc.theirs)
+
+			text := "# Tide\n\n" + tc.mine + "\n\nTwo."
+			first := f.press(t, base, text)
+			if tc.clash != (len(first.Conflicts) == 1) {
+				t.Fatalf("the first press reported %+v, want a conflict: %v", first.Conflicts, tc.clash)
+			}
+			if got := f.texts(t)[1]; got != tc.merged {
+				t.Fatalf("the paragraph reads %q, want %q", got, tc.merged)
+			}
+			if first.Base[1].ID != was[1].ID {
+				t.Fatalf("the answer names block %d, want %d", first.Base[1].ID, was[1].ID)
+			}
+
+			second := f.press(t, first.Base, text)
+			if len(second.Conflicts) != 0 {
+				t.Fatalf("the second press reported %+v, want it to go through", second.Conflicts)
+			}
+			if got := f.texts(t)[1]; got != tc.mine {
+				t.Fatalf("the paragraph reads %q after pressing again, want %q", got, tc.mine)
+			}
+			after := f.blocks(t)
+			revisions := f.revisions(t)
+			f.press(t, second.Base, text)
+			f.still(t, "after the third press", after, revisions)
+		})
+	}
+}
+
+// Somebody moving a block and somebody writing in one, together: three presses
+// of the same markdown put the paragraph it adds in once.
+func TestWriteSourceAfterAMoveAndAConflict(t *testing.T) {
 	f := setup(t, "")
-	f.seed(t, "# Tide", "One.", "Two.")
+	base := f.seed(t, "# Tide", "One.", "Two.")
+	was := f.blocks(t)
+	f.move(t, was[2].ID, 0)
+	f.set(t, was[1].ID, was[1].Version, "One, theirs entirely.")
+
+	text := "# Tide\n\nOne, mine entirely.\n\nTwo.\n\nTail new."
+	first := f.press(t, base, text)
+	if len(first.Conflicts) != 1 || first.Conflicts[0].Block != was[1].ID {
+		t.Fatalf("the first press reported %+v", first.Conflicts)
+	}
+	if n := count(f.texts(t), "Tail new."); n != 1 {
+		t.Fatalf("the document holds %d copies of the added paragraph: %q", n, f.texts(t))
+	}
+	blocks := len(f.blocks(t))
+
+	second := f.press(t, first.Base, text)
+	third := f.press(t, second.Base, text)
+	if len(third.Conflicts) != 0 {
+		t.Fatalf("the third press reported %+v", third.Conflicts)
+	}
+	if n := count(f.texts(t), "Tail new."); n != 1 {
+		t.Fatalf("three presses left %d copies of the added paragraph: %q", n, f.texts(t))
+	}
+	if got := len(f.blocks(t)); got != blocks {
+		t.Fatalf("the document has %d blocks after three presses, want %d", got, blocks)
+	}
+}
+
+func count(texts []string, want string) int {
+	n := 0
+	for _, x := range texts {
+		if x == want {
+			n++
+		}
+	}
+	return n
+}
+
+// A paragraph is placed where the markdown puts it, never on a block somewhere
+// else that happens to read the same.
+func TestWriteSourcePlacesAParagraphWhereItIsWritten(t *testing.T) {
+	f := setup(t, "")
+	base := f.seed(t, "# Tide", "One.")
+	was := f.blocks(t)
+	f.insert(t, was[1].ID, "## Notes")
+
+	save := f.press(t, base, "## Notes\n\n# Tide\n\nOne.")
+	if len(save.Conflicts) != 0 {
+		t.Fatalf("the save reported %+v", save.Conflicts)
+	}
+	if got := f.texts(t); !same(got, []string{"## Notes", "# Tide", "One.", "## Notes"}) {
+		t.Fatalf("the document reads %q, want mine at the head and theirs still at the end", got)
+	}
+}
+
+// A base naming some of the blocks is the scope of the text: those blocks are
+// what it stands for, and every other block is left exactly where it is.
+func TestWriteSourceWithAPartialBase(t *testing.T) {
+	f := setup(t, "")
+	f.seed(t, "# Tide", "Two.", "Three.")
 	was := f.blocks(t)
 	revisions := f.revisions(t)
 
-	conflicts, err := f.WriteSource(ctx, f.who["editor"], f.doc,
-		[]BlockRef{{ID: was[1].ID, Version: was[1].Version}}, "# Tide\n\nOne.\n\nTwo.")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(conflicts) != 0 {
-		t.Fatalf("the save reported %+v, want nothing in conflict", conflicts)
+	save := f.press(t, []BlockRef{{ID: was[1].ID, Version: was[1].Version}},
+		"Two, mine.\n\nTwo and a half.")
+	if len(save.Conflicts) != 0 {
+		t.Fatalf("the save reported %+v", save.Conflicts)
 	}
 	now := f.blocks(t)
-	if len(now) != len(was) {
-		t.Fatalf("the document has %d blocks, want %d", len(now), len(was))
+	if !same(f.texts(t), []string{"# Tide", "Two, mine.", "Two and a half.", "Three."}) {
+		t.Fatalf("the document reads %q", f.texts(t))
 	}
-	for i, b := range now {
-		if b.ID != was[i].ID || b.Version != was[i].Version {
-			t.Fatalf("block %d is %d v%d, want %d v%d", i, b.ID, b.Version, was[i].ID, was[i].Version)
-		}
+	if now[0].ID != was[0].ID || now[0].Version != was[0].Version {
+		t.Fatal("the block before the scope was written to")
 	}
-	if got := f.revisions(t); got != revisions {
-		t.Fatalf("the document has %d revisions, want %d", got, revisions)
+	if now[3].ID != was[2].ID || now[3].Version != was[2].Version {
+		t.Fatal("the block after the scope was written to")
 	}
+	if got := f.revisions(t); got != revisions+1 {
+		t.Fatalf("the document has %d revisions, want %d", got, revisions+1)
+	}
+	after := f.blocks(t)
+	f.press(t, save.Base, "Two, mine.\n\nTwo and a half.")
+	f.still(t, "after the second press", after, revisions+1)
 }
 
 // One paragraph added to a long document is one insert wherever it goes. The
@@ -753,5 +900,94 @@ func TestWriteSourceWithNoStoredBaseText(t *testing.T) {
 	}
 	if got := f.texts(t); !same(got, []string{"# Tide", "One, mine."}) {
 		t.Fatalf("the document reads %q", got)
+	}
+}
+
+// A block somebody is in the middle of typing holds whatever they typed, blank
+// line and all. A save whose markdown leaves that paragraph alone must not cut
+// it into two blocks under them.
+func TestWriteSourceWillNotCutABlockSomebodyIsTypingIn(t *testing.T) {
+	f := setup(t, "")
+	base := f.seed(t, "# Tide", "One.", "Two.")
+	was := f.blocks(t)
+	// The save the editor makes while somebody types stores the text exactly.
+	if _, err := f.SetBlock(context.Background(), f.who["owner"], was[1].ID, was[1].Version,
+		"One, theirs.\n\nstill typing", true); err != nil {
+		t.Fatal(err)
+	}
+	after := f.blocks(t)
+	revisions := f.revisions(t)
+
+	save := f.press(t, base, "# Tide\n\nOne.\n\nTwo.")
+	if len(save.Conflicts) != 0 {
+		t.Fatalf("the save reported %+v", save.Conflicts)
+	}
+	f.still(t, "after a save that says nothing about their block", after, revisions)
+	// And the answer names it at the version the markdown was written from, so
+	// that editing that paragraph later merges against what they wrote rather
+	// than writing over it.
+	if save.Base[1] != (BlockRef{ID: was[1].ID, Version: was[1].Version}) {
+		t.Fatalf("the answer names %+v, want %d v%d", save.Base[1], was[1].ID, was[1].Version)
+	}
+}
+
+// A save answered out of the key it was sent under says so and carries no base,
+// because nothing remembers what the first answer said.
+func TestWriteSourceReplayAnswersWithNoBase(t *testing.T) {
+	f := setup(t, "")
+	base := f.seed(t, "# Tide", "One.")
+	text := "# Tide\n\nOne, mine."
+
+	first, err := core.WithKey(context.Background(), "a-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := f.WriteSource(first, f.who["editor"], f.doc, base, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Replayed || len(one.Base) != 2 {
+		t.Fatalf("the first answer is %+v", one)
+	}
+	again, err := core.WithKey(context.Background(), "a-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := f.WriteSource(again, f.who["editor"], f.doc, base, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !two.Replayed || len(two.Base) != 0 || len(two.Conflicts) != 0 {
+		t.Fatalf("the replayed answer is %+v, want replayed with nothing in it", two)
+	}
+}
+
+// A clean merge pressed four times in a row, each press going from the base the
+// last one answered with. The first merges, the second asserts this person's
+// paragraph over the merge because that is what keep mine means, and the third
+// and fourth write nothing at all: it settles rather than climbing a version a
+// press.
+func TestWriteSourceAMergePressedFourTimes(t *testing.T) {
+	f := setup(t, "")
+	base := f.seed(t, "# Tide", "The tide comes in twice a day.")
+	was := f.blocks(t)
+	f.set(t, was[1].ID, was[1].Version, "The tide comes in twice a night.")
+
+	text := "# Tide\n\nThe sea comes in twice a day."
+	first := f.press(t, base, text)
+	if got := f.texts(t)[1]; got != "The sea comes in twice a night." {
+		t.Fatalf("the first press left %q", got)
+	}
+	second := f.press(t, first.Base, text)
+	if got := f.texts(t)[1]; got != "The sea comes in twice a day." {
+		t.Fatalf("the second press left %q", got)
+	}
+	after := f.blocks(t)
+	revisions := f.revisions(t)
+	third := f.press(t, second.Base, text)
+	f.press(t, third.Base, text)
+	f.still(t, "after the fourth press", after, revisions)
+	if after[1].Version != was[1].Version+3 {
+		t.Fatalf("the block is at version %d, want %d", after[1].Version, was[1].Version+3)
 	}
 }

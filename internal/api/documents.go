@@ -202,7 +202,8 @@ func (a *API) deleteBlock(w http.ResponseWriter, r *http.Request, p Principal) {
 // from. A base left out altogether means the document as it stands, which is
 // what an agent replacing a document it has just read sends; an empty list is a
 // document that had no blocks, so the two are told apart rather than folded
-// together.
+// together. A base naming some of the blocks is that much of the document: the
+// text stands for those blocks and every other one is left where it is.
 type sourceBody struct {
 	Text string          `json:"text"`
 	Base []docs.BlockRef `json:"base"`
@@ -233,15 +234,12 @@ func (a *API) writeSource(w http.ResponseWriter, r *http.Request, who core.Actor
 		a.fail(w, http.StatusNotFound, "no such document")
 		return
 	}
-	conflicts, err := a.Docs.WriteSource(r.Context(), who, id, body.Base, body.Text)
+	save, err := a.Docs.WriteSource(r.Context(), who, id, body.Base, body.Text)
 	if err != nil {
 		a.refuse(w, r, err)
 		return
 	}
-	if conflicts == nil {
-		conflicts = []docs.SourceConflict{}
-	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
+	a.writeJSON(w, http.StatusOK, save)
 }
 
 // actorOf is how a call with this token is recorded: the person who owns it,

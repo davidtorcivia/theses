@@ -1479,3 +1479,58 @@ func TestWaitingOutAFileSomebodyElseHasOpen(t *testing.T) {
 		t.Fatalf("it waited %s, want about %s", waited, inUseWait)
 	}
 }
+
+// A block whose stored text is exactly what a chunk of the file reads is now
+// left alone rather than cut into paragraphs first. Two shapes of block hold
+// text Paragraphs would cut, both of them written by a save made while somebody
+// was typing, and only one of them survives the round trip to the file as one
+// chunk.
+func TestImportLeavesABlockThatReadsAsItIsStored(t *testing.T) {
+	for _, tc := range []struct {
+		name, stored string
+		want         []string
+	}{
+		{
+			// The file writes the two lines under one comment and the read back
+			// cuts only at blank lines and at comments, so the chunk is the
+			// stored text and nothing is done to it.
+			name:   "a heading under a line keeps its block",
+			stored: "Intro.\n# Heading",
+			want:   []string{"Intro.\n# Heading"},
+		},
+		{
+			// A blank line is where the file itself cuts, so this block comes
+			// back as two chunks, the first of which is not the stored text,
+			// and the import normalizes it as it always has.
+			name:   "a blank line inside a block is still cut",
+			stored: "Above.\n\nBelow.",
+			want:   []string{"Above.", "Below."},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f, path := mirrorFixture(t)
+			for _, b := range f.blocks(t) {
+				if _, err := f.DeleteBlock(ctx, f.who["editor"], b.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.stored, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Mirror(ctx, f.doc, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			// A trailing newline is a file somebody touched and nothing else,
+			// which is what makes the import read it back rather than take it
+			// for its own write.
+			save(t, path, read(t, path)+"\n")
+			if err := f.Import(ctx, path); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.texts(t); !same(got, tc.want) {
+				t.Fatalf("the document reads %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

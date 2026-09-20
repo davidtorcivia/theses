@@ -45,6 +45,27 @@ type SourceConflict struct {
 	Current string `json:"current"`
 }
 
+// A SourceSave is what writing a document from its markdown did.
+//
+// Base is the answer to the question the next save asks: which block each
+// paragraph of the text it just sent now stands in, and at which version. One
+// per paragraph, in the order of the text, whatever happened to it: a block
+// nothing was written to at the version it holds, a block written to at its new
+// version, a block made for it at the version it was made with, and a block in
+// conflict at the version somebody else left it at. Sending the same text again
+// under it writes nothing; sending it again with a paragraph changed writes that
+// paragraph, over somebody else's words where they are in the way, because the
+// version named is theirs. Blocks the text does not stand for are not in it.
+//
+// Replayed is a save answered out of the client key it was sent under, having
+// applied nothing because the first one did. It carries no base, because
+// nothing remembers what the first answer said: read the document again.
+type SourceSave struct {
+	Base      []BlockRef       `json:"base"`
+	Conflicts []SourceConflict `json:"conflicts"`
+	Replayed  bool             `json:"replayed,omitempty"`
+}
+
 // maxPairs is how large a table lining the paragraphs up may build, counted in
 // changed base blocks times changed paragraphs. A million is a few
 // milliseconds and about eight megabytes, which is the same allowance one three
@@ -76,9 +97,9 @@ const maxPairs = 1 << 20
 // comes back is the blocks the save could not take, which are still in the
 // document holding somebody else's words.
 func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
-	base []BlockRef, text string) ([]SourceConflict, error) {
+	base []BlockRef, text string) (SourceSave, error) {
 	paragraphs := Paragraphs(text)
-	var out []SourceConflict
+	out := SourceSave{Base: []BlockRef{}, Conflicts: []SourceConflict{}}
 	err := s.Together(ctx, func(ctx context.Context) error {
 		// The revision is taken first for two reasons. It is the restore point,
 		// and it is the one command of this save that a replay under the same
@@ -103,6 +124,7 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 			return err
 		}
 		if rev.Replayed {
+			out.Replayed = true
 			return nil
 		}
 
@@ -119,16 +141,22 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 				base = append(base, BlockRef{ID: b.ID, Version: b.Version})
 			}
 		}
-		items, err := s.plan(ctx, document, base, paragraphs, blocks)
+		placed, err := s.plan(ctx, document, base, paragraphs, blocks)
 		if err != nil {
 			return err
+		}
+		items := make([]item, 0, len(placed))
+		for _, p := range placed {
+			if !p.skip {
+				items = append(items, p.item)
+			}
 		}
 
 		was := map[int64]int64{}
 		for _, ref := range base {
 			was[ref.ID] = ref.Version
 		}
-		conflicted, wrote, err := s.applyItems(ctx, a, document, items, blocks, func(b Block) missing {
+		conflicted, wrote, refs, err := s.applyItems(ctx, a, document, items, blocks, func(b Block) missing {
 			version, named := was[b.ID]
 			switch {
 			case !named:
@@ -149,11 +177,28 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 		if err != nil {
 			return err
 		}
+		// Every paragraph has exactly one item unless the save had nothing to
+		// do for it, and every item of a source save is one paragraph, so the
+		// refs come back in the same order the paragraphs went out.
+		at := 0
+		for _, p := range placed {
+			switch {
+			case p.skip:
+				out.Base = append(out.Base, p.answer)
+			case p.answer.ID != 0:
+				out.Base = append(out.Base, p.answer)
+				at++
+			default:
+				out.Base = append(out.Base, refs[at])
+				at++
+			}
+		}
 		for _, b := range blocks {
 			// The text reported is the one read above: a block in conflict is
 			// by definition one this save did not write.
 			if conflicted[b.ID] {
-				out = append(out, SourceConflict{Block: b.ID, Version: b.Version, Current: b.Text})
+				out.Conflicts = append(out.Conflicts,
+					SourceConflict{Block: b.ID, Version: b.Version, Current: b.Text})
 			}
 		}
 		if !wrote {
@@ -169,27 +214,50 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 		return nil
 	})
 	if err != nil && !errors.Is(err, errNothing) {
-		return nil, err
+		return SourceSave{}, err
 	}
 	return out, nil
 }
 
+// A placed is one paragraph of the saved text and what the save does for it.
+//
+// item is what applyItems is given, unless skip is set, in which case there is
+// nothing to send at all.
+//
+// answer, when it names a block, is what the save tells the caller this
+// paragraph stands on, in place of whatever was applied. It is the version the
+// markdown was written from, and it is the answer for a paragraph the save has
+// nothing to say about: naming the version somebody else has since moved the
+// block to would turn "I did not touch this" into "mine wins" the next time the
+// same text was sent, and the whole point of answering with a base is that the
+// next save asserts exactly what this one did.
+type placed struct {
+	item   item
+	skip   bool
+	answer BlockRef
+}
+
 // plan lines the paragraphs up against the blocks the markdown was written from
-// and answers with the list applyItems writes. The pairing is by equality of
-// whole paragraphs through the same longest common subsequence the line level
-// merge uses: what both sides still have stays where it is, and a run neither
-// side kept is paired off in order, the leftover paragraphs becoming new blocks
-// and the leftover blocks falling out of the list to be deleted.
+// and answers with what to do for each of them, in the order of the text. The
+// pairing is by equality of whole paragraphs through the same longest common
+// subsequence the line level merge uses: what both sides still have stays where
+// it is, and a run neither side kept is paired off in order, the leftover
+// paragraphs becoming new blocks and the leftover blocks falling out of the
+// list to be deleted.
+//
+// base is the scope as well as the starting point. A block it does not name is
+// left exactly where it is, whatever the text says, so a caller who means to
+// rewrite one section names that section's blocks and sends that section. The
+// cost of that is the plain one: a paragraph of the text that belongs to a
+// block outside the base is a paragraph with no block, and it is added.
 func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
-	paragraphs []string, blocks []Block) ([]item, error) {
+	paragraphs []string, blocks []Block) ([]placed, error) {
 	live := map[int64]Block{}
 	for _, b := range blocks {
 		live[b.ID] = b
 	}
-	named := map[int64]bool{}
 	texts := make([]string, 0, len(base))
 	for _, ref := range base {
-		named[ref.ID] = true
 		b, there := live[ref.ID]
 		switch {
 		case there && b.Version == ref.Version:
@@ -228,11 +296,11 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 		return nil, err
 	}
 
-	items := []item{}
+	out := make([]placed, 0, len(paragraphs))
 	i, j := 0, 0
 	for i < len(texts) || j < len(paragraphs) {
 		if i < len(texts) && keep[i] == j {
-			items = kept(items, base[i], texts[i], paragraphs[j], live)
+			out = append(out, kept(base[i], texts[i], paragraphs[j], live))
 			i, j = i+1, j+1
 			continue
 		}
@@ -246,11 +314,11 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 			}
 		}
 		for i < i2 && j < j2 {
-			items = kept(items, base[i], texts[i], paragraphs[j], live)
+			out = append(out, kept(base[i], texts[i], paragraphs[j], live))
 			i, j = i+1, j+1
 		}
 		for j < j2 {
-			items = append(items, item{Text: paragraphs[j]})
+			out = append(out, placed{item: item{Text: paragraphs[j]}})
 			j++
 		}
 		// Whatever is left of the run on the base side has no paragraph to go
@@ -258,40 +326,7 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 		i = i2
 	}
 
-	// Every item whose block the document does not have is about to become a
-	// new block: a paragraph no base block accounts for, and one whose base
-	// block somebody else deleted. Either is a second copy if the document
-	// already holds exactly it in a block the base never named, which is what
-	// an earlier run of this very save leaves behind. Taking that block rather
-	// than making another is what makes sending the same markdown twice change
-	// nothing, which a Save pressed again, a request whose answer never
-	// arrived, and an agent retrying all do. They are matched by text, each at
-	// most once, and only forwards through the document, so two paragraphs that
-	// read alike take the two blocks that read alike in order.
-	//
-	// What it costs: a paragraph somebody else added in the same place, that
-	// the person had also written, goes in once rather than twice.
-	spare := []Block{}
-	for _, b := range blocks {
-		if !named[b.ID] {
-			spare = append(spare, b)
-		}
-	}
-	at := 0
-	for n, it := range items {
-		if _, there := live[it.ID]; there {
-			continue
-		}
-		for k := at; k < len(spare); k++ {
-			if spare[k].Text != it.Text {
-				continue
-			}
-			items[n] = item{ID: spare[k].ID, Version: spare[k].Version, Text: it.Text}
-			at = k + 1
-			break
-		}
-	}
-	return items, nil
+	return out, nil
 }
 
 // pairs is the longest common subsequence of the base texts and the paragraphs,
@@ -332,12 +367,15 @@ func pairs(texts, paragraphs []string) ([]int, error) {
 	return keep, nil
 }
 
-// kept adds the paragraph one base block became. Two cases turn on whether this
-// person changed that paragraph at all, which is what was and now say.
+// kept is what the save has to do for the paragraph one base block became. Two
+// cases turn on whether this person changed that paragraph at all, which is
+// what was and now say.
 //
 // A block somebody else deleted while the markdown was being edited: an
-// unchanged paragraph is left out, so that saving an edit made somewhere else
-// in the document does not put a paragraph somebody deleted back again, and a
+// unchanged paragraph is nothing to do, so that saving an edit made somewhere
+// else in the document does not put a paragraph somebody deleted back again,
+// and the answer names the block as it stands, tombstoned at the version it
+// was left at, so that the same text sent again is nothing to do again. A
 // changed one goes in with the id it had, which no longer names anything, so it
 // lands as a new block where it stood. This person's words are not the
 // deletion's to take away.
@@ -349,13 +387,13 @@ func pairs(texts, paragraphs []string) ([]int, error) {
 // wrote, which is already there, at the cost of a version, a row in the log,
 // their paragraph recorded as this person's, and a save that is not the same
 // the second time it is sent.
-func kept(items []item, ref BlockRef, was, now string, live map[int64]Block) []item {
+func kept(ref BlockRef, was, now string, live map[int64]Block) placed {
 	b, there := live[ref.ID]
 	switch {
 	case !there && was == now:
-		return items
+		return placed{item: item{ID: ref.ID, Version: ref.Version, Text: now}, skip: true, answer: ref}
 	case there && was == now && b.Text != was:
-		return append(items, item{ID: ref.ID, Version: b.Version, Text: b.Text})
+		return placed{item: item{ID: ref.ID, Version: b.Version, Text: b.Text}, answer: ref}
 	}
-	return append(items, item{ID: ref.ID, Version: ref.Version, Text: now})
+	return placed{item: item{ID: ref.ID, Version: ref.Version, Text: now}}
 }

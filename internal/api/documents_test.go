@@ -277,8 +277,21 @@ func TestWriteDocumentSource(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("the save answered %d: %s", w.Code, w.Body)
 	}
-	if conflicts := decode(t, w)["conflicts"].([]any); len(conflicts) != 0 {
-		t.Fatalf("the save reported %v", conflicts)
+	var save struct {
+		Base      []docs.BlockRef `json:"base"`
+		Conflicts []any           `json:"conflicts"`
+		Replayed  bool            `json:"replayed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &save); err != nil {
+		t.Fatal(err)
+	}
+	if len(save.Conflicts) != 0 || save.Replayed {
+		t.Fatalf("the save answered %s", w.Body)
+	}
+	// The answer names the block each paragraph of the text now stands in, one
+	// per paragraph, which is what the next save sends as its base.
+	if len(save.Base) != len(blocks)+1 {
+		t.Fatalf("the answer names %d blocks for %d paragraphs", len(save.Base), len(blocks)+1)
 	}
 	after, err := docs.Blocks(ctx, h.db, document.EntityID)
 	if err != nil {
@@ -291,10 +304,16 @@ func TestWriteDocumentSource(t *testing.T) {
 		t.Fatalf("the last paragraph is %q", after[len(after)-1].Text)
 	}
 
-	// The same request again changes nothing: every paragraph it sends already
-	// has its block, so nothing is written and no revision is kept. A request
-	// whose answer never arrived goes again exactly like this.
-	if w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, body); w.Code != http.StatusOK {
+	// The same text under the base the answer gave changes nothing: every
+	// paragraph is already on the block the answer named, at the version it
+	// named, so nothing is written and no revision is kept.
+	fresh, err := json.Marshal(save.Base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := fmt.Sprintf(`{"base":%s,"text":%q}`, fresh,
+		"The sea is a battery.\n\n"+strings.Join(textsAfter(blocks[1:]), "\n\n")+"\n\nAnd a flywheel.")
+	if w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, next); w.Code != http.StatusOK {
 		t.Fatalf("the second save answered %d: %s", w.Code, w.Body)
 	}
 	again, err := docs.Blocks(ctx, h.db, document.EntityID)

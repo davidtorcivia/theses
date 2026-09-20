@@ -91,6 +91,10 @@ response body:
   `"replayed": true` on it;
 - the attachment routes answer `{"card": …, "action": "attach"}` as they always
   do, read off that event;
+- `PUT /api/v1/documents/{id}/source` answers `{"base": [], "conflicts": [],
+  "replayed": true}`. It is many commands in one transaction and nothing
+  remembers what the first answer said, so a caller that means to write more
+  reads the document again first;
 - `POST /api/v1/files` makes no second file row and no second upload. For a
   file small enough for one `PUT` it signs the same object key again; for a
   multipart upload it answers the resume, which is the same `upload_id`, the
@@ -330,17 +334,12 @@ watcher, so naming either here is `422`.
 
 ## `PUT /api/v1/documents/{id}/source`
 
-Scope `write`. Replaces a whole document with markdown, keeping the blocks
-whose paragraphs did not change. The body is the markdown and the blocks it was
-written from:
+Scope `write`. Writes a document, or the part of it `base` names, from
+markdown. The body is the markdown and the blocks it stands for:
 
 ```json
 {"base": [{"id": 31, "version": 4}, {"id": 32, "version": 1}],
- "text": "## Cold open
-
-Tape first.
-
-Then the claim."}
+ "text": "## Cold open\n\nTape first.\n\nThen the claim."}
 ```
 
 The text is cut into paragraphs the way everything else is: at blank lines and
@@ -350,56 +349,65 @@ is written. A paragraph nobody touched keeps its block and is not written at
 all, so its version does not move. A paragraph that changed is a set on the
 block it came from, with the base version, so somebody else's change to that
 block in the meantime is merged exactly as `PUT /api/v1/blocks/{id}` merges
-one. A paragraph left over is a new block where it stands. A block left over is
-deleted.
+one. A paragraph left over is a new block where it stands, in the order the
+text has it. A block left over is deleted.
 
-`base` is the blocks as the caller read them, in the order they were in. It is
-optional: left out altogether it is the document as it stands when the request
-runs, which is what an agent replacing a document it has just read wants, and
-an empty list is a document that had no blocks, so the two are not the same
-thing. A list naming only some of the document's blocks says nothing about the
-rest; their paragraphs keep the blocks they already have.
+`base` is the blocks this text stands for, in the order the text has them, as
+the caller last read them: from `GET /api/v1/documents/{id}`, or from the
+answer to the last write of this same text. Left out altogether it is the
+document as it stands when the request runs, which is what replacing a document
+just read means; an empty list is a document with no blocks, so the two are not
+the same thing.
 
-The answer is the paragraphs that did not go in, which is empty when all of
-them did:
+A `base` naming only some of the document's blocks is the scope of the write:
+those blocks are what the text stands for, and every other block is left
+exactly where it is. That is how to rewrite one section without sending the
+rest. The plain cost of it is that a paragraph of the text belonging to a block
+outside the scope has no block to be matched to, so it is added.
+
+The answer names the block each paragraph of the text now stands in, in the
+order of the text, and lists the paragraphs that did not go in:
 
 ```json
-{"conflicts": [{"block": 32, "version": 7, "current": "Then the counterclaim."}]}
+{"base": [{"id": 31, "version": 5}, {"id": 32, "version": 7}, {"id": 44, "version": 1}],
+ "conflicts": [{"block": 32, "version": 7, "current": "Then the counterclaim."}]}
 ```
 
-A block is in there when somebody else changed it while the markdown was being
-written and the two changes cannot be put together, or when the markdown takes
-a paragraph out of a block somebody else has written in since. Either way that
-block is left exactly as this server holds it and `current` is what it holds,
-while the rest of the save goes in. Sending the same markdown again reports the
-same blocks and writes nothing: it is the same paragraphs against the same
-base. The way to take what the other person wrote is to read the document
-again, work their paragraph into yours, and send that against the base you have
-just read. Nothing is half applied: the whole thing is one transaction, and a
-revision with reason `pre-import` is kept first, so a save that went wrong is
-one restore away. A save that writes nothing keeps no revision.
+Send that `base` back with the same text and nothing is written: every
+paragraph is already on the block it names, at the version it names. That is
+what makes this safe to press twice, and it is how a client should follow one
+write with another rather than reading the document again for every keystroke.
+
+A block is in `conflicts` when somebody else changed it while the markdown was
+being written and the two changes cannot be put together, or when the markdown
+takes a paragraph out of a block somebody else has written in since. Either way
+that block is left exactly as this server holds it and `current` is what it
+holds, while the rest of the write goes in. The answer names it at the version
+they left it at, so **writing the same text again under that base puts this
+text's paragraph over theirs**: keeping yours is pressing again, and taking
+theirs is reading the document again and working their paragraph into yours. A
+paragraph this text leaves alone is different: the answer names it at the
+version the text was written from, so a later write of it merges against what
+they wrote rather than replacing it.
+
+Nothing is half applied: the whole thing is one transaction, and a revision
+with reason `pre-import` is kept first, so a write that went wrong is one
+restore away. A write that writes nothing keeps no revision.
 
 A block somebody else added while the markdown was being written is not in
-`base`, so the save says nothing about it and it stays where it is. A block
-somebody else deleted keeps an unchanged paragraph out, so that saving an edit
+`base`, so the write says nothing about it and it stays where it is. A block
+somebody else deleted keeps an unchanged paragraph out, so that writing an edit
 made elsewhere does not put their deletion back, and puts a changed one in as a
 new block where it stood.
-
-The same request sent twice changes nothing the second time. A paragraph that
-no block in `base` accounts for is matched first, by its text and in the order
-the document reads, against the blocks `base` does not name; only a paragraph
-that matches none of them becomes a new block. What that costs is that a
-paragraph somebody else added in the same place, which this markdown also had,
-goes in once rather than twice.
 
 `409` with no `conflict` object is a `base` naming a version whose text this
 server no longer holds. The last twenty versions of every block are kept, and a
 block still at the version `base` names needs none of them; past that there is
 nothing to line the paragraphs up against, and lining them up wrongly would
-move paragraphs between blocks, so the whole save is refused and nothing
-changes. Read the document again and edit that.
+move paragraphs between blocks, so the whole write is refused and nothing
+changes. Read the document again and write that.
 
-`422` is a save with more changed at once than the paragraphs can be placed
+`422` is a write with more changed at once than the paragraphs can be placed
 against. What is the same at the top and at the bottom of the document costs
 nothing to line up, so this is a stretch of changed text long enough that
 placing it would be a table of a million cells: roughly a thousand paragraphs
@@ -409,10 +417,16 @@ The body may be a megabyte, rather than the sixty four kilobytes every other
 body here is held to, because this one is a whole document. Past that it is
 `413`.
 
-`Idempotency-Key` is honored: a request sent twice because the answer never
-arrived is answered rather than applied again. The answer to the second is the
-same status with an empty `conflicts` list, because the list the first one
-built is not kept anywhere.
+`Idempotency-Key` is honored. A request sent again because its answer never
+arrived is answered without applying anything a second time, and that answer
+says so and carries no base:
+
+```json
+{"base": [], "conflicts": [], "replayed": true}
+```
+
+Nothing remembers what the first answer said, so read the document again before
+writing any more of it.
 
 ## `POST /api/v1/documents/{id}/blocks`
 
@@ -1127,7 +1141,7 @@ one endpoint serves every tool.
 | `append_block` | `write` | Adds a paragraph at the end of a document, unlike `POST /api/v1/documents/{id}/blocks` with no `after`, which puts one at the head. |
 | `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
 | `replace_block` | `write` | Replaces the text of one block. |
-| `write_document` | `write` | Replaces a whole document with markdown, keeping the blocks whose paragraphs did not change: `PUT /api/v1/documents/{id}/source` with `base` optional in the same way. |
+| `write_document` | `write` | Replaces a document, or the part of it `base` names, with markdown, and answers with the block each paragraph now stands in: `PUT /api/v1/documents/{id}/source` with `base` and `key` optional in the same way. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
 | `annotate_link` | `write` | Changes a saved link's note, kind and question. |
