@@ -90,11 +90,12 @@ function grouped(rows) {
   return out;
 }
 
-// sitting is how far apart two saves may be and still be the same run. A
-// document saves itself every few hundred milliseconds while somebody types, so
-// a gap of minutes is them coming back to the block rather than still being in
-// it, and folding the two together would put one line on the panel for an
-// afternoon and offer to take the whole afternoon back.
+// sitting is how long a run may span, measured from its newest row, because
+// that is the row each next one is asked about. A document saves itself every
+// few hundred milliseconds while somebody types, so minutes between two saves
+// is them coming back to the block rather than still being in it; without this
+// one line on the panel would stand for an afternoon and offer to take the
+// whole afternoon back in one press.
 const sitting = 120;
 
 const follows = (a, b) => a.entity === 'block' && a.action === 'set'
@@ -149,6 +150,15 @@ function takeRowBack(row) {
 // already been undone on its own: the block then holds the text from before
 // that row, and a set based on the version after it is a revert against a
 // revert, which is the overlap no merge can make honestly.
+//
+// ponytail: this reads the run's own two ends and never the block, which
+// leaves two rough edges. A run taken back within the sitting it was typed in
+// folds the set this sends back into itself, and that line is then offered
+// nothing at all, so the redo is only there for a run older than one sitting.
+// And pressing the control again on a run already taken back sends a set that
+// merges to the text the block already holds, which changes nothing and leaves
+// one more row in the log. The upgrade for both is to ask the open document
+// what the block reads now rather than what the run left it reading.
 function takeRunBack(group) {
   const last = group[0];
   const first = group[group.length - 1];
