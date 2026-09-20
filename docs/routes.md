@@ -90,7 +90,16 @@ a command that was in the air when the socket went and goes up again is the
 same command rather than a second one; the server remembers a name for 24 hours
 and answers a repeat with what it did the first time. Two edits to one field
 that fold into one outbox row take a new name, because what goes up is then a
-different change. The server's three-way merge is what
+different change.
+
+A block made with no connection, by Enter in the middle of a paragraph, by the
++ after the last block or by pasting several paragraphs, is drawn at once and
+its `block.insert` waits in the outbox like any other command. Until the server
+has made it the block is on this device only: nobody else sees it, what is
+typed into it is written into the command that is waiting, and a block made
+under it names it by that command's name rather than by an id nobody has yet.
+It is kept in the cached proposition, so a reload with no connection still
+draws it. The server's three-way merge is what
 settles a set that went stale meanwhile; a replay it refuses appears in the
 activity panel with keep mine and take theirs, the same choice a live conflict
 offers. A replay the server refuses for a reason of its own, being busy or
