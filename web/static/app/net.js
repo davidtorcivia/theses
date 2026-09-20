@@ -497,6 +497,9 @@ function answered(promise, wait) {
 // socket, so the attempt this cuts in front of does nothing when it comes.
 addEventListener('online', () => {
   if (socket && socket.readyState === WebSocket.OPEN) { replay(); return; }
+  // Never the first socket: start says which proposition it is for, and a page
+  // that has not reached it yet is about to open one of its own.
+  if (!socket) return;
   backoff = 500;
   connect();
 });
