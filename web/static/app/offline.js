@@ -151,8 +151,14 @@ export async function queue(row, key) {
   return filed ? filed.n : 0;
 }
 
-export async function queued() {
-  return (await withStore('outbox', 'readonly', (store) => store.getAll())) || [];
+// queued is every row the outbox holds, or null when it could not be read: a
+// database another connection has taken to a later version, one a tab that has
+// not closed is blocking, a transaction that was aborted. A read that did not
+// happen is not an empty outbox, and the difference decides whether a command
+// nobody has answered still exists, so it is the caller's to make rather than
+// this one's to flatten.
+export function queued() {
+  return withStore('outbox', 'readonly', (store) => store.getAll());
 }
 
 export const drop = (n) => withStore('outbox', 'readwrite', (store) => store.delete(n));

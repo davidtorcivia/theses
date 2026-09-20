@@ -419,7 +419,13 @@ async function drain() {
   let pause = patience;
   const tries = new Map();
   for (;;) {
-    const pass = (await offline.queued()).filter((row) => !row.refused);
+    const held = await offline.queued();
+    // A read that did not happen is not an empty queue. Giving up is right
+    // either way, because there is nothing to send from a store nobody can
+    // read; the difference is that this one is not evidence the device has
+    // nothing left, and the next socket asks again.
+    if (!held) return;
+    const pass = held.filter((row) => !row.refused);
     if (!pass.length) return;
     for (const stale of pass) {
       // The row is read again here rather than trusted from the pass: the
@@ -533,7 +539,14 @@ async function post(row) {
 // device, because that is what it promises to keep; the panel and the tab
 // beside it are one proposition's, because that is what they are about.
 export async function count() {
-  const rows = (await offline.queued()).filter((r) => !r.me || !state.me || r.me === state.me);
+  const all = await offline.queued();
+  // A read that did not happen says nothing about what this device holds.
+  // Counted as an empty outbox it would say the queue had drained and every
+  // question the server refused had been answered, and the page believes both:
+  // the bar stops promising what it is keeping and the panel stops offering the
+  // answers. So the numbers stay where they were until a read comes back.
+  if (!all) return;
+  const rows = all.filter((r) => !r.me || !state.me || r.me === state.me);
   const mine = rows.filter((r) => r.proposition === state.open);
   state.waiting = rows.filter((r) => !r.refused).length;
   state.waitingHere = mine.filter((r) => !r.refused).length;
@@ -541,10 +554,51 @@ export async function count() {
   emit();
 }
 
+// A refused row is one question asked in two places: the activity panel, which
+// is this device's list, and the block itself, which is one tab's drawing of
+// the same row. Answering it in either has to settle the other, and the only
+// honest way is to say so: a row that has stopped being in a list is not an
+// answer, because a list is also empty when it could not be read.
+//
+// answers is how the editor hears one, handed here rather than imported for the
+// reason onCarets is: docs.js imports this module. done says the row has gone
+// and the block stands as the document holds it; queued says it is waiting to
+// go again and the block keeps its command.
+let answers = null;
+
+export function onAnswer(fn) {
+  answers = fn;
+}
+
+// The other tabs of this browser share the outbox and draw the same questions,
+// so they hear the same sentence. A tab that misses it, because the channel is
+// not there or it was asleep, goes on offering its copy; answering it a second
+// time is honest work rather than a mistake, since take theirs takes what the
+// block holds now and keep mine sends the text again from the version it was
+// written against, which the server merges or refuses like any other save.
+const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('theses-outbox') : null;
+
+if (channel) {
+  channel.addEventListener('message', (e) => {
+    const said = e.data;
+    if (said && said.answered && answers) answers(said.answered, said.answer);
+  });
+}
+
+// settled says a row has been answered, here and in the tabs beside this one.
+// The number is all either needs: a tab drawing the question is drawing it from
+// that row, and one that is not has nothing to settle.
+function settled(n, answer, here = true) {
+  if (here && answers) answers(n, answer);
+  if (channel) channel.postMessage({ answered: n, answer });
+}
+
 // retry puts a refused row back in the queue, which is what the panel offers on
-// a refusal that was nobody's decision.
-export async function again(n) {
-  await offline.retry(n);
+// a refusal that was nobody's decision. The row is the same command still, so
+// the block drawn for it stays where it is and stops saying it was refused.
+export async function again(row) {
+  await offline.retry(row.n);
+  settled(row.n, 'queued');
   await count();
   replay();
 }
@@ -561,6 +615,7 @@ export async function letGo(row) {
   await offline.drop(row.n);
   undraw(row.n, row.detail);
   if (row.cmd === 'block.insert') unmakeLocal(row.idem);
+  settled(row.n, 'done');
   await count();
 }
 

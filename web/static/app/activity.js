@@ -249,7 +249,7 @@ function refusedRow(row) {
     // A refusal with nothing to compare is the server saying no rather than
     // somebody else saying something different, and some of those are worth one
     // more go: a moment when it was busy, a fault it has since recovered from.
-    li.append(el('button', { class: 'lnk', type: 'button', text: 'Try it again', onclick: () => again(row.n) }), ' ');
+    li.append(el('button', { class: 'lnk', type: 'button', text: 'Try it again', onclick: () => again(row) }), ' ');
   }
   li.append(el('button', {
     class: 'lnk plain', type: 'button', text: detail ? 'Take theirs' : 'Let it go',

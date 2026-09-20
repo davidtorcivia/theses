@@ -9,7 +9,7 @@
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
-import { send, newKey, where, onCarets, caughtUp, count, chosen, Conflict, Offline } from './net.js';
+import { send, newKey, where, onCarets, onAnswer, caughtUp, count, chosen, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { retext, unqueue, file } from './offline.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
@@ -2095,15 +2095,24 @@ function keepClash(id) {
     : { proposition: state.open, me: state.me, cmd: 'block.set', idem: newKey(),
       args: { block: id, text: w.text, base: w.base, whole: true },
       base: w.base, base_text: w.sent };
-  file(row, keyOf(b), clash ? clashMessage : w.reason,
-    clash ? { entity: 'block', entity_id: id, field: 'text', version: w.version, current: w.theirs } : null)
-    .then((n) => {
-      if (!n) return;
-      // Answered while the write was in the air: typing over a conflict is an
-      // answer, and so is somebody else's change arriving that says what this
-      // tab says. Either leaves a row nobody is going to be asked about.
-      if (work.get(id) === w && w.status !== 'ok') { w.filed = n; count(); } else chosen(n);
-    });
+  const why = clash ? clashMessage : w.reason;
+  const detail = clash
+    ? { entity: 'block', entity_id: id, field: 'text', version: w.version, current: w.theirs }
+    : null;
+  file(row, keyOf(b), why, detail).then((n) => {
+    if (!n) return;
+    // Answered while the write was in the air: typing over a conflict is an
+    // answer, and so is somebody else's change arriving that says what this
+    // tab says. Either leaves a row nobody is going to be asked about.
+    if (work.get(id) !== w || w.status === 'ok') { chosen(n); return; }
+    w.filed = n;
+    // Put in the list this tab reads before the read that would find it, the
+    // way chosen takes one out before its own read: the panel is the other
+    // place this question is asked, and it should not have to wait a round of
+    // the database to start asking it.
+    state.refused = state.refused.filter((r) => r.n !== n).concat({ ...row, n, refused: why, detail });
+    count();
+  });
 }
 
 // forgetClash drops the row because the question has been answered here.
@@ -2113,52 +2122,72 @@ function forgetClash(w) {
   w.filed = 0;
 }
 
-// unanswered is the two ways a filed question and this tab's entry are kept
-// saying the same thing, walked on every render because that is when both have
-// just been read: the rows by count() and the blocks by the stream.
+// unanswered draws the block of every filed question this tab is not already
+// answering for. It is walked on every render because that is when both halves
+// have just been read: the rows by count() and the blocks by the stream. It is
+// how a conflict comes back after a reload, how one refused during a drain
+// reaches the block it is about at all, and how the tab beside this one comes
+// to show the same question.
 //
-// A row nothing here is answering draws its block, which is how a conflict
-// comes back after a reload, how one refused during a drain reaches the block
-// it is about at all, and how the other tab of this browser hears about it.
-// An entry whose row has gone was answered somewhere else, in the panel or in
-// that other tab, and it is put right here so that nothing is ever asked twice
-// and no block goes on asking a question that has been settled.
-//
-// It is a deleter of an entry, which only finished, the two answers, prune and
-// a refusal for a block that is gone otherwise are: it is those same two
-// answers, arriving from somewhere other than this block.
+// It only ever adds an entry. A row that is not in the list is not an answer:
+// the list is empty when the store could not be read as surely as when there is
+// nothing in it, and in the moment between filing a row and reading it back it
+// is not there either. Concluding an answer from something missing is what gave
+// a person's words away; an answer is said out loud now, and answered below is
+// the one thing that settles an entry this tab did not settle itself.
 function unanswered() {
   for (const row of state.refused) {
     const b = blockFor(row);
     if (!b) continue;
     const w = work.get(b.id);
     // A block this tab is already answering for, or one somebody is typing in
-    // with nothing outstanding: the entry is what this tab is going by, and the
-    // row is the same question written down. The entry of a block being typed
-    // in stops the question being drawn over the caret; it is drawn the moment
-    // that entry is finished with.
+    // with nothing outstanding: the entry is what this tab goes by, and the row
+    // is the same question written down, so nothing here touches it beyond
+    // noting which row it is. The entry of a block being typed in stops the
+    // question being drawn over the caret; it is drawn the moment that entry is
+    // finished with.
     if (w) { if (w.status !== 'ok') w.filed = row.n; continue; }
     work.set(b.id, entryFrom(b, row));
     notice(b.id);
   }
+}
+
+// answered is a filed question answered somewhere other than on this block: in
+// the activity panel, or in a tab beside this one that shares the outbox.
+// net.js says it once, at the moment the answer is final, and says it to both.
+//
+// done is the row gone with nothing more coming for it, which is let it go and
+// a keep mine the server took: the block then stands as the document holds it,
+// which is what take theirs does here, and the words that were kept have either
+// been given up or been saved. queued is try it again, which put the same
+// command back in the queue: the block keeps it, stops saying it was refused,
+// and the drain owns the row from there.
+//
+// A tab that never hears this goes on offering its copy of the question, and
+// answering it a second time is honest rather than wrong: take theirs takes
+// what the block holds now, and keep mine sends the words again from the
+// version they were written against, which the server merges or refuses like
+// any other save.
+// Nothing is armed for a row that has gone back in the queue: it carries these
+// words already, because filing it is what wrote them there, and a save from
+// here would send the same change a second time. The entry stands until the
+// drain's command lands, which arrived takes as this tab's own text coming back
+// and finishes with.
+function answered(n, answer) {
   for (const [id, w] of work) {
-    if (w.status === 'ok' || !w.filed) continue;
-    if (state.refused.some((r) => r.n === w.filed)) continue;
-    if (id < 0) {
-      // A block this tab drew, whose insert was let go, has already left the
-      // page: letGo unmakes it, prune takes the entry, and this never sees it.
-      // So what is left here is the panel's try it again, which puts the same
-      // insert back in the queue. The block stands and stops asking.
-      w.filed = 0;
-      w.status = 'ok';
-      delete w.reason;
-      notice(id);
-      arm(id, w);
-      continue;
-    }
-    takeTheirs(id);
+    if (w.filed !== n) continue;
+    w.filed = 0;
+    if (answer !== 'queued') { takeTheirs(id); return; }
+    w.status = 'ok';
+    delete w.reason;
+    notice(id);
+    emit();
+    status();
+    return;
   }
 }
+
+onAnswer(answered);
 
 // blockFor is the block a refused row is about: the one a save names, or the
 // one this tab drew for an insert, which the key on the command names.
