@@ -335,6 +335,14 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .blk:has(> .who:not(.me)):not(.editing){border-left-color:var(--uc)}
 .blk.h1 textarea{font-weight:800;font-size:clamp(30px,3.8vw,50px);line-height:.98;letter-spacing:-.03em;margin:.4rem 0 1.2rem}
 .blk.h2 textarea{font-weight:800;text-transform:uppercase;font-stretch:85%;font-size:15px;letter-spacing:.06em;margin:2rem 0 .5rem}
+/* The + under the last block, quiet until it is wanted. Offline it is disabled
+   and stays visible, because a control nobody can see cannot explain itself. */
+#doc .addblk{display:block;width:100%;text-align:left;margin-left:-.8rem;padding:.15rem 0 .15rem .8rem;border-left:3px solid transparent;font-size:18px;font-weight:700;color:var(--k);opacity:0}
+#doc .addblk:hover,#doc .addblk:focus-visible{opacity:1;border-left-color:var(--hairp)}
+/* On a document with nothing in it the + is the only thing on the pane and the
+   way to start, so it is not quiet there. */
+#doc .addblk:only-child{opacity:1}
+#doc .addblk:disabled{opacity:.35;cursor:not-allowed}
 mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #doc .mention{color:var(--uc)}
 #docsrc{max-width:680px;font-family:var(--monof);font-size:13px;line-height:1.6;background:transparent;border-left:3px solid var(--k);padding:0 0 0 .8rem;margin-left:-.8rem}

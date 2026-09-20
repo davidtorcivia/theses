@@ -150,7 +150,7 @@ func publishable(t *testing.T) (*harness, *transistorFake, int64) {
 		`SELECT id FROM documents WHERE proposition_id = ? AND name = 'Show notes'`, id).Scan(&doc); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.srv.docs.InsertBlock(ctx, actor, doc, 0, "The tide comes in."); err != nil {
+	if _, err := h.srv.docs.InsertBlock(ctx, actor, doc, 0, "The tide comes in.", false); err != nil {
 		t.Fatal(err)
 	}
 	const audio = "twelve bytes"

@@ -273,7 +273,7 @@ func TestImportKeepsABlockTheStaleFileIsMissing(t *testing.T) {
 	stale := read(t, path)
 
 	// Meanwhile a block is added in the browser.
-	inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[2].ID, "Added in the browser.")
+	inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, blocks[2].ID, "Added in the browser.", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +569,7 @@ func TestMirrorKeepsTwoLongNamesApart(t *testing.T) {
 			t.Fatal(err)
 		}
 		ids = append(ids, e.EntityID)
-		if _, err := f.InsertBlock(ctx, f.who["editor"], e.EntityID, 0, "In "+name+"."); err != nil {
+		if _, err := f.InsertBlock(ctx, f.who["editor"], e.EntityID, 0, "In "+name+".", false); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.Mirror(ctx, e.EntityID, nil, false); err != nil {

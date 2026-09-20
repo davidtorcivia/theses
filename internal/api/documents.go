@@ -156,7 +156,7 @@ func (a *API) insertBlock(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	a.applied(w, r, p, func() (core.Event, error) {
-		return a.Docs.InsertBlock(r.Context(), actorOf(p), id, body.After, body.Text)
+		return a.Docs.InsertBlock(r.Context(), actorOf(p), id, body.After, body.Text, body.Whole)
 	})
 }
 

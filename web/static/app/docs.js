@@ -9,8 +9,8 @@
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit } from './state.js';
-import { send, where, Conflict } from './net.js';
-import { rebase } from './blocktext.js';
+import { send, live, where, Conflict, Offline } from './net.js';
+import { rebase, enter, chunks } from './blocktext.js';
 
 // The block this tab has open: its node and its textarea, and nothing else. The
 // editor is a way of typing into an entry below, not a place anything is kept,
@@ -42,6 +42,49 @@ let rendering = false;
 // offline already takes: keep the row in the outbox with its base text and the
 // server's detail, and let the activity panel offer the same two answers.
 const work = new Map();
+
+// pending is the block a split is waiting on: the editor drawn where the new
+// block will be, holding the text that went under the caret, before the server
+// has given it an id. It is the one place text lives outside an entry, because
+// there is no block to have an entry for yet, and it lasts exactly as long as
+// the insert is in the air. The ack turns it into that block's editor and the
+// text into that block's entry; a refusal puts the text back on the end of the
+// block it was split from. One at a time: while one is in the air an Enter that
+// would split is a plain newline. Which document it belongs to is held in the
+// count below, where every insert in the air is.
+let pending = null;
+
+// inserting counts the block.insert commands this tab has in the air, by the
+// document each is being made in. A block being made is work outstanding on
+// that document that has no row to be counted on yet, and it is one document's
+// work: the save line speaks for the open document and the tab dots each speak
+// for their own.
+const inserting = new Map();
+
+// insert sends one and counts it while it is gone. Every block this editor
+// makes goes through here, so there is one place that knows a document has a
+// block on the way.
+function insert(document, args) {
+  inserting.set(document, (inserting.get(document) || 0) + 1);
+  status();
+  emit();
+  return live('block.insert', { document, ...args }).finally(() => {
+    const left = inserting.get(document) - 1;
+    if (left > 0) inserting.set(document, left);
+    else inserting.delete(document);
+    status();
+    emit();
+  });
+}
+
+// Online is a socket and a network, and every key below that adds or removes a
+// block asks for both. block.insert and block.delete are not drawn until the
+// server answers, so a split made with nothing to answer it would take what was
+// typed off the page and leave it nowhere anybody could see it. With no
+// connection those keys do what a plain textarea does: an Enter that would
+// split is a newline, a paste is one block, Backspace at nought does nothing.
+// Enter inside a list is typing into a block that exists, so it works either way.
+const online = () => state.connected && navigator.onLine;
 
 // drawn is the node each block was last rendered as. The whole page is made
 // again from the state on every applied event, and with somebody saving every
@@ -128,11 +171,19 @@ export function renderDocument() {
     for (const b of doc.blocks || []) {
       ids.add(b.id);
       rendered.append(blockNode(b));
+      // The provisional editor is put back directly under the block it came
+      // out of, on every render, so the page reads as it will once the server
+      // has answered. It has no block id, so nothing else here sees it.
+      if (pending && pending.anchor === b.id) rendered.append(pending.ed.node);
     }
     for (const id of drawn.keys()) if (!ids.has(id)) drawn.delete(id);
-    if (!(doc.blocks || []).length) {
+    if (!(doc.blocks || []).length && !canEdit()) {
       rendered.append(el('p', { class: 'empty', text: 'Nothing in this document yet.' }));
     }
+    // The + is the way to start an empty document as well as the way to add to
+    // a full one, so it stands in for the line above rather than sitting under
+    // it.
+    if (canEdit()) rendered.append(addBlock(doc));
   }
   return [head, body];
 }
@@ -187,6 +238,10 @@ export function afterRender() {
   const { selectionStart, selectionEnd } = editing.area;
   editing.area.focus();
   editing.area.setSelectionRange(selectionStart, selectionEnd);
+  // A textarea measured while it was out of the page has no height to measure,
+  // which is what an editor opened on a block this render is the first to draw
+  // has. This is the first moment it can be sized.
+  editing.fit();
 }
 
 function tabs(doc) {
@@ -309,7 +364,9 @@ function entries(doc) {
 // so the two agree.
 const busy = (w) => w.status !== 'ok' || w.flight || w.text !== w.sent;
 
-const held = (doc) => entries(doc).some(busy);
+// A block on its way into a document is outstanding on that document too, so
+// its tab carries the dot while the insert is in the air.
+const held = (doc) => Boolean(doc && inserting.has(doc.id)) || entries(doc).some(busy);
 
 // Saving is what is in the air, on a timer, or waiting for one of those. Text
 // the server refused, or a block waiting on a choice, is not being saved and
@@ -320,12 +377,17 @@ const held = (doc) => entries(doc).some(busy);
 // same rows are a queue draining, which is the bar's "Catching up" and this
 // line's "Saving…", and the two must not disagree at the foot of one page.
 function saveState() {
-  const here = entries(current());
+  const doc = current();
+  const here = entries(doc);
   if (here.some((w) => w.status !== 'ok')) return 'Not saved';
   if (state.waitingHere > 0) {
     if (!navigator.onLine) return `Offline · ${state.waitingHere} kept on this device`;
     return 'Saving…';
   }
+  // A block this document is waiting on is text this tab is answerable for
+  // that has no entry to be counted in yet. A block on its way into another
+  // document is that document's line to say, not this one's.
+  if (doc && inserting.has(doc.id)) return 'Saving…';
   if (here.some((w) => w.status === 'ok' && (w.flight || w.timer || w.text !== w.sent))) return 'Saving…';
   return 'Saved';
 }
@@ -433,7 +495,10 @@ function heading(text) {
   return '';
 }
 
-function startEditing(id) {
+// startEditing opens a block. caret is where to stand in it, the end of the
+// text when it is left out, which is what a click asks for and what the arrows
+// and the joins name for themselves.
+function startEditing(id, caret) {
   if (editing && editing.id === id) return;
   // Leaving the block this tab was in is the same whether a blur raised it or a
   // click somewhere else did. Nothing is held in a textarea, so nothing is lost
@@ -450,37 +515,311 @@ function startEditing(id) {
   const node = editor(id, w.text);
   const was = $(`#doc .blk[data-b="${id}"]`);
   if (was) was.replaceWith(node);
+  // A block this page has not drawn yet has nothing to replace: it is a block
+  // the server made a moment ago, and the render its own event causes puts this
+  // node where the row is. The caret and the height survive that, because
+  // afterRender carries both.
+  const at = Math.min(caret ?? w.text.length, w.text.length);
   editing.area.focus();
-  editing.area.setSelectionRange(w.text.length, w.text.length);
+  editing.area.setSelectionRange(at, at);
 }
 
 // editor builds the block as a textarea and makes it the one this tab is in.
 // It holds nothing: the text lives in the entry, and this is a way of typing
 // into it.
+//
+// id is nought for the provisional editor a split draws, which stands for a
+// block the server has not made yet. It has no block id on the node and no
+// entry behind it, and the keys below that would name a block are off in it
+// until the ack gives it one.
 function editor(id, text) {
   const area = el('textarea', { spellcheck: 'false', 'aria-label': 'This block as markdown' });
   area.value = text;
   const me = user(state.me);
-  const node = el('div', { class: 'blk editing' + heading(text), 'data-b': id });
+  const node = el('div', { class: 'blk editing' + heading(text), 'data-b': id || null });
   node.append(area, el('span', { class: 'who me ' + me.colour, text: 'you' }));
 
   const fit = () => { area.style.height = 'auto'; area.style.height = area.scrollHeight + 'px'; };
-  area.addEventListener('input', () => { typed(id); fit(); });
-  area.addEventListener('keydown', (e) => {
-    // Escape leaves the block. It stops here so that it does not also close
-    // the drawer or the palette on its way up.
-    if (e.key === 'Escape') { e.stopPropagation(); area.blur(); }
-  });
+  // The listeners read the block off this rather than closing over the argument
+  // above, because a provisional editor becomes the editor of a real block the
+  // moment its insert is acked and all of them have to follow it there.
+  const ed = { id, node, area, fit };
+  area.addEventListener('input', () => { typed(ed.id); fit(); });
+  area.addEventListener('keydown', (e) => key(e, ed));
+  area.addEventListener('paste', (e) => pasted(e, ed));
   // A blur raised by the rebuild is not somebody leaving the block. The node is
   // put back by the same render and afterRender takes the caret with it.
-  area.addEventListener('blur', () => { if (!rendering) leave(id); });
-  editing = { id, node, area, fit };
-  where('block:' + id);
+  area.addEventListener('blur', () => { if (!rendering) leave(ed.id); });
+  editing = ed;
+  where(id ? 'block:' + id : docWhere());
   // The height is set after the node is in the page, because a detached
   // textarea has no scroll height to measure.
   queueMicrotask(fit);
   notice(id);
   return node;
+}
+
+// The keys that do something to the block rather than to the text in it. Each
+// one falls through to what a textarea does on its own the moment its
+// conditions are not met, so nothing here takes a key away from somebody
+// without giving them what it promised instead.
+function key(e, ed) {
+  // Escape leaves the block. It stops here so that it does not also close the
+  // drawer or the palette on its way up.
+  if (e.key === 'Escape') { e.stopPropagation(); ed.area.blur(); return; }
+  // A provisional editor has no block to name, and a key pressed mid
+  // composition belongs to the input method.
+  if (!ed.id || e.isComposing) return;
+  if (e.key === 'Enter' && !e.shiftKey) { pressedEnter(e, ed); return; }
+  if (e.key === 'Backspace') { pressedBackspace(e, ed); return; }
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') pressedArrow(e, ed);
+}
+
+// Enter writes the next item of a list into this block, or cuts the block in
+// two at the caret. The next item is text in a block that already exists, so it
+// is typing and works with no connection like any other typing. Cutting one in
+// two is not: it needs the server to make the block below, and it is a plain
+// newline without one, while a split is already in the air, or in a block
+// waiting on an answer, because a block cut in two under a refusal would leave
+// the half below with nothing to go back into when the refusal is discarded.
+// Shift+Enter is always a plain newline.
+function pressedEnter(e, ed) {
+  const what = enter(ed.area.value, ed.area.selectionStart, ed.area.selectionEnd);
+  if (what.kind === 'list') {
+    e.preventDefault();
+    ed.area.value = what.text;
+    ed.area.setSelectionRange(what.caret, what.caret);
+    typed(ed.id);
+    ed.fit();
+    return;
+  }
+  const w = work.get(ed.id);
+  if (!online() || pending || (w && w.status !== 'ok')) return;
+  e.preventDefault();
+  split(ed, what.before, what.after);
+}
+
+// split is Enter in the middle of a block: this one keeps what was in front of
+// the caret, and what was behind it becomes the block below. That block does
+// not exist yet, so an editor holding the text is drawn where it will be and
+// the caret goes straight into it. Nothing typed during the round trip is lost
+// or lands in the wrong block: the ack takes the text out of that editor as it
+// stands then, wherever the person has got to.
+function split(ed, before, after) {
+  const id = ed.id;
+  const doc = current();
+  ed.area.value = before;
+  ed.fit();
+  typed(id);
+  // The half that stays goes up the ordinary way. leave sends what the entry
+  // holds and gives the editor up, which is what has to happen anyway now the
+  // caret is moving out of it.
+  leave(id);
+
+  const node = editor(0, after);
+  pending = { anchor: id, ed: editing };
+  const was = $(`#doc .blk[data-b="${id}"]`);
+  if (was) was.after(node);
+  editing.area.focus();
+  editing.area.setSelectionRange(0, 0);
+  insert(doc.id, { after: id, text: after, whole: true })
+    .then(inserted)
+    // Offline here is the network going between the check above and the send,
+    // the socket going while this was in the air, or one that is open and
+    // answering nothing. The text goes back into the block it came from either
+    // way; saying so twice, once on the bar and once as a line of its own,
+    // would be saying it about a block nobody can see.
+    //
+    // ponytail: a socket that died after the server had applied the insert, or
+    // one that answered too late to be waited for, leaves that paragraph both
+    // on the end of the block it was split from and in a block of its own.
+    // Nothing is lost and both are on the page. The upgrade is the one net.js
+    // names for its own replays: a key this tab picks and the server remembers,
+    // so a second one of these is the same insert rather than another.
+    .catch((err) => unsplit(err instanceof Offline ? '' : err.message));
+}
+
+// inserted is the split's ack. The row exists holding exactly what was sent, so
+// the entry starts from it and takes whatever else has been typed into the
+// provisional editor since. If the person is still in that editor it becomes
+// the ordinary editor of the block; if they have moved on, the entry still has
+// their text and sends it.
+function inserted(ev) {
+  if (!pending) return;
+  const ed = pending.ed;
+  const id = ev.after.id;
+  const w = {
+    text: ed.area.value, base: ev.after.version, sent: ev.after.text,
+    first: 0, timer: 0, flight: false, status: 'ok',
+  };
+  work.set(id, w);
+  const mine = editing === ed;
+  pending = null;
+  ed.id = id;
+  ed.node.dataset.b = id;
+  if (mine) {
+    where('block:' + id);
+    notice(id);
+    arm(id, w);
+  } else {
+    ed.node.remove();
+    save(id);
+  }
+  emit();
+}
+
+// unsplit is the split coming back refused, or with no socket for it to have
+// gone down at all. The block was cut in two on the page and only one half is
+// on the server, so the halves go back together: what the provisional editor
+// holds goes on the end of the block it was split from and the caret goes back
+// to the join. If that block has gone as well there is nowhere to put the
+// words and the line below says so, which is the one case here that loses
+// anything: a block deleted by somebody else while the server was refusing the
+// half that came out of it.
+function unsplit(why) {
+  if (!pending) return;
+  const { anchor, ed } = pending;
+  const text = ed.area.value;
+  pending = null;
+  // The editor is given up and its node taken out before the block below is
+  // opened, so the blur that raises is still a provisional editor leaving and
+  // still means nothing.
+  if (editing === ed) editing = null;
+  ed.node.remove();
+  if (why) say(why);
+  const join = putBack(anchor, '\n' + text);
+  if (join >= 0) startEditing(anchor, join);
+}
+
+// putBack is text this editor drew that the server would not take. It goes on
+// the end of the block it came from, through that block's entry and the
+// ordinary save, so the words are on the page and on their way up rather than
+// nowhere. It answers where the join is, or minus one when the block it came
+// from has gone as well.
+//
+// The entry is read rather than the text the split was made from: the block may
+// have been merged or saved and let go since, and what is in the entry now is
+// where those words actually are.
+function putBack(id, text) {
+  const w = entryOf(id);
+  if (!w) {
+    say('The block that text came out of is gone, and what was under it went with it.');
+    return -1;
+  }
+  const join = w.text.length;
+  w.text = w.text + text;
+  if (openOn(id)) {
+    editing.area.value = w.text;
+    editing.area.setSelectionRange(join, join);
+    editing.fit();
+  }
+  arm(id, w);
+  return join;
+}
+
+// Backspace at the start of a block joins it to the one above, which is how an
+// empty block goes and how two paragraphs become one. The text goes on the end
+// of the block above and this one is deleted; a refusal leaves the text in both
+// of them, which is visible and loses nothing.
+function pressedBackspace(e, ed) {
+  const { area } = ed;
+  if (area.selectionStart !== 0 || area.selectionEnd !== 0 || !online()) return;
+  const w = work.get(ed.id);
+  if (w && w.status !== 'ok') return;
+  const list = neighbours();
+  const at = list.findIndex((b) => b.id === ed.id);
+  if (at <= 0) return;
+  const above = work.get(list[at - 1].id);
+  if (above && above.status !== 'ok') return;
+  e.preventDefault();
+  const prev = list[at - 1].id;
+  const join = putBack(prev, area.value);
+  if (join < 0) return;
+  // This block's entry goes with the block. A save of it already in the air
+  // comes back to no entry, which acked takes as nothing left to do.
+  if (w) { clearTimeout(w.timer); work.delete(ed.id); }
+  send('block.delete', { block: ed.id }).catch((err) => say(err.message));
+  startEditing(prev, join);
+  save(prev);
+}
+
+// The arrows walk out of a block the way they walk out of a line: up at the
+// start opens the one above at its end, down at the end opens the one below at
+// nought. With Alt they move the block itself, and the editor stays open and
+// rides the render the ack causes.
+function pressedArrow(e, ed) {
+  const up = e.key === 'ArrowUp';
+  const { area } = ed;
+  const list = neighbours();
+  const at = list.findIndex((b) => b.id === ed.id);
+  if (at < 0) return;
+  if (e.altKey) {
+    if (up ? at === 0 : at === list.length - 1) return;
+    e.preventDefault();
+    const after = up ? (at > 1 ? list[at - 2].id : 0) : list[at + 1].id;
+    send('block.move', { block: ed.id, after }).catch((err) => say(err.message));
+    return;
+  }
+  if (area.selectionStart !== area.selectionEnd) return;
+  if (up ? area.selectionStart !== 0 : area.selectionEnd !== area.value.length) return;
+  const next = list[up ? at - 1 : at + 1];
+  if (!next) return;
+  e.preventDefault();
+  startEditing(next.id, up ? null : 0);
+}
+
+// neighbours is the open document's blocks in the order they are drawn, which
+// is what above and below mean to every key here.
+function neighbours() {
+  const doc = current();
+  return doc ? doc.blocks || [] : [];
+}
+
+// A paste of more than one paragraph becomes more than one block, because a
+// block is a paragraph. The first goes in at the caret, where the caret stays,
+// and everything after it goes up as one ordinary insert with what followed the
+// caret carried on the end: the server cuts that into blocks by the same rule
+// it cuts every other paste by, in one transaction, and the whole paste lands
+// in one frame. Sent a block at a time it would instead arrive a round trip at
+// a time, in an order a refusal halfway could break, and a long one would run
+// into the limit on how fast a tab may send.
+//
+// A refusal puts the whole of that remainder back on the end of this block,
+// through the ordinary entry, so nothing pasted is lost.
+function pasted(e, ed) {
+  if (!ed.id || !online() || !e.clipboardData) return;
+  const w = work.get(ed.id);
+  if (w && w.status !== 'ok') return;
+  const parts = chunks(e.clipboardData.getData('text'));
+  if (parts.length < 2) return;
+  e.preventDefault();
+  const { area } = ed;
+  const rest = parts.slice(1).join('\n\n') + area.value.slice(area.selectionEnd);
+  area.value = area.value.slice(0, area.selectionStart) + parts[0];
+  area.setSelectionRange(area.value.length, area.value.length);
+  typed(ed.id);
+  ed.fit();
+  const id = ed.id;
+  insert(current().id, { after: id, text: rest }).catch((err) => {
+    say(err.message);
+    putBack(id, '\n\n' + rest);
+  });
+}
+
+// The + after the last block is how a document grows a paragraph without being
+// in one already, and how an empty document is started. It is quiet until the
+// pointer or the focus is on it, like the other affordances.
+function addBlock(doc) {
+  const off = !online();
+  const last = (doc.blocks || []).at(-1);
+  return el('button', {
+    type: 'button', class: 'addblk', id: 'blocknew', text: '+', 'aria-label': 'Add a block',
+    disabled: off,
+    title: off ? 'A new block needs the server, and this device has no connection.' : 'Add a block',
+    onclick: () => insert(doc.id, { after: last ? last.id : 0, text: '', whole: true })
+      .then((ev) => startEditing(ev.after.id))
+      .catch((err) => say(err.message)),
+  });
 }
 
 // clashed is a block whose last save was refused. It shows what was written,
@@ -529,7 +868,8 @@ function entryOf(id) {
 // with it, and the ack arrives with nowhere to put what it brings back.
 //
 // It is the only thing that drops an entry, apart from the two answers that
-// give the text up and the pruning of a block that is gone.
+// give the text up, the pruning of a block that is gone, and the join above,
+// which deletes the block the entry was about.
 function finished(id) {
   const w = work.get(id);
   if (!w || openOn(id) || w.flight || w.text !== w.sent || w.status !== 'ok') return;
@@ -792,6 +1132,11 @@ function arrived() {
 // the block along with it. A block waiting on a conflict does not go: sending
 // it would write over somebody else's words without anybody being asked, and
 // nobody is there to ask.
+//
+// What cannot go is what was typed into a provisional editor inside the round
+// trip of its split: until the insert is acked there is no block to address a
+// save to. What the server has of it is the paragraph as it stood when Enter
+// was pressed, which is what the insert carried.
 addEventListener('pagehide', () => {
   if (editing) {
     const w = work.get(editing.id);

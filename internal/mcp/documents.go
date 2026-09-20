@@ -291,7 +291,7 @@ func headingText(s string) string {
 
 func (s *Server) inserted(ctx context.Context, service *docs.Service, who core.Actor,
 	document, after int64, text string) (*sdk.CallToolResult, writeOut, error) {
-	e, err := service.InsertBlock(ctx, who, document, after, text)
+	e, err := service.InsertBlock(ctx, who, document, after, text, false)
 	if err != nil {
 		return nil, writeOut{}, s.refusal("add the paragraph", err)
 	}

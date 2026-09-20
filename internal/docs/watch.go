@@ -325,7 +325,7 @@ func (s *Service) Import(ctx context.Context, path string) error {
 			// given holds more than one paragraph, and following that one
 			// would put the next chunk of the file in among them.
 			for _, part := range Paragraphs(item.Text) {
-				e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part)
+				e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part, false)
 				if err != nil {
 					return err
 				}
@@ -360,7 +360,7 @@ func (s *Service) Import(ctx context.Context, path string) error {
 		// not in the database, so it goes in whether or not the block itself
 		// would take its own change, which is the rule the branch above uses.
 		for _, part := range parts[1:] {
-			e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part)
+			e, err := s.InsertBlock(ctx, fileActor, document.ID, after, part, false)
 			if err != nil {
 				return err
 			}
