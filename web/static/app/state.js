@@ -646,12 +646,18 @@ export function onSettled(fn) {
   settled = fn;
 }
 
-// rekeyLocal gives a block this tab drew a new name. The command that was to
-// make it under the old one has been answered and gone, so a second attempt has
-// to be a command of its own: sent under a name the server has already answered
-// it would be told what that answer was rather than making anything.
+// rekeyLocal gives a block this tab drew a new name, which is what Try again
+// sends the second attempt under. The command that was to make it under the old
+// one has been answered and gone, so the attempt has to be a command of its
+// own: sent under a name the server has already answered it would be told what
+// that answer was rather than making anything.
+//
+// The name it was drawn under stays on the row as former. An insert waiting to
+// be made under this block was filed against that one and is left alone, since
+// on the server that name still points at the block the first command made,
+// which is where it belongs; this is what the page reads it back by.
 export function rekeyLocal(row, key) {
-  apply(local('block', { ...row, key }));
+  apply(local('block', { ...row, key, former: row.key }));
   return localOf(key);
 }
 

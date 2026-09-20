@@ -41,6 +41,8 @@ let rendering = false;
 //   flight   true while a save of this block is in the air
 //   status   'ok', or 'conflict' with theirs and version, or 'refused' with
 //            reason: the two states a person has to answer before it saves
+//   rename   on a refused block whose insert was answered and gone, so that
+//            trying again is a command under a name of its own
 //
 // ponytail: they live in this tab and nowhere else, so a reload leaves each
 // block as the server last took it. The upgrade path is the one a refusal made
@@ -157,6 +159,13 @@ function bound(row, now) {
     w.base = now.version;
     w.sent = now.text;
     w.flight = false;
+    // A refusal that said no block was ever coming for this one was wrong: here
+    // it is. The reason goes with it, and what was typed under it goes up as an
+    // ordinary save of the real block, which is what arm below sends. This runs
+    // before notice, which draws the refusal from the entry it has just moved.
+    w.status = 'ok';
+    delete w.reason;
+    delete w.rename;
     work.set(now.id, w);
   }
   // What Ctrl+Z takes back in this paragraph was typed before the server had
@@ -248,10 +257,15 @@ function refusedHere(row, why, text) {
 // named says whether a block that is still this tab's own is what another one
 // is waiting to be made under. That insert carries this block's key and nothing
 // else, so taking this one back would leave it with nowhere to go.
+//
+// A row renamed for a retry answers to the name it was drawn under as well: the
+// insert underneath it was filed against that one, and that name still says on
+// the server which block it belongs under.
 function named(id) {
   const row = blockAnywhere(id);
   if (!row || !row.key) return false;
-  return documents().some((d) => (d.blocks || []).some((b) => b.to && b.to.after_key === row.key));
+  return documents().some((d) => (d.blocks || []).some((b) => b.to && b.to.after_key
+    && (b.to.after_key === row.key || b.to.after_key === row.former)));
 }
 
 // Online is a socket and a network. Joining two blocks and deleting one still
@@ -1841,13 +1855,14 @@ function save(id) {
       const entry = work.get(id);
       if (entry) entry.flight = false;
       // No command to write into, none in the air under this name and none
-      // waiting means the command has been answered and left. Only a tab that
-      // has read the stream since its last disconnection may conclude that: one
-      // with no socket, or one whose read has not come back, has heard nothing
-      // either way, and another tab of this person emptying the outbox looks
-      // exactly like this from here. Such a tab keeps the entry and waits, and
-      // the reconnect brings the insert, settles the row and carries the entry
-      // to the real block, where the difference goes up as an ordinary save.
+      // waiting means the command has been answered and left. Only a tab whose
+      // read of the stream has finished since the last moment its socket could
+      // have dropped a frame may conclude that: one with no socket, or one
+      // whose read has not come back, has heard nothing either way, and another
+      // tab of this person emptying the outbox looks exactly like this from
+      // here. Such a tab keeps the entry and waits, and the reconnect brings
+      // the insert, settles the row and carries the entry to the real block,
+      // where the difference goes up as an ordinary save.
       //
       // With the stream read and still no command, nothing is ever coming for
       // this block. The words stay in the entry, and the block says for itself
@@ -1856,11 +1871,16 @@ function save(id) {
       // choose, because the block the first command made may be on the page
       // beside this one.
       if (entry && held && !held.filed && !flying.has(row.key) && caughtUp()) {
-        const fresh = rekeyLocal(row, newKey()) || row;
+        // The name this block was drawn under is spent, so a second attempt has
+        // to be a command of its own. The renaming waits for the press: until
+        // then the row still answers to the name the event carries, so a
+        // refusal declared in error settles on the insert the stream brings
+        // late and there is nothing to press Try again into.
+        entry.rename = true;
         // What the entry holds now rather than what this save carried: the
         // person may have written more while the read was out, and a refusal
         // answers for everything in the block.
-        refusedHere(fresh, 'the command that would have made this block is gone', entry.text);
+        refusedHere(row, 'the command that would have made this block is gone', entry.text);
       }
       status();
     });
@@ -2176,9 +2196,15 @@ function resume(id, give) {
   w.status = 'ok';
   notice(id);
   // Trying again with a block that was never made is the command that makes it
-  // going again, carrying whatever has been typed into it since.
+  // going again, carrying whatever has been typed into it since. A block whose
+  // first command was answered and gone is renamed here, at the press, because
+  // under the name it was drawn with the server would say what that command did
+  // rather than making anything. A command the server refused keeps its name:
+  // it spent nothing, and the insert waiting underneath this block names it.
   if (id < 0) {
-    insert(b);
+    const fresh = w.rename ? rekeyLocal(b, newKey()) || b : b;
+    delete w.rename;
+    insert(fresh);
     return;
   }
   emit();
