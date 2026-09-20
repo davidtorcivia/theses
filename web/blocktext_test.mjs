@@ -402,6 +402,21 @@ const shapes = [
     want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'p', text: 'After.' }],
   },
   {
+    name: 'the blank line a piece starts with is nothing in front of a fence',
+    in: 'a\n\n\n```\nx\n```',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'code', lang: '', text: 'x' }],
+  },
+  {
+    name: 'and nothing in front of a table',
+    in: 'a\n\n\n| b |\n| - |',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'table', align: [''], head: ['b'], rows: [] }],
+  },
+  {
+    name: 'three blank lines in a row are still two paragraphs',
+    in: 'a\n\n\n\nb',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'p', text: 'b' }],
+  },
+  {
     name: 'a fence holding a blank line is one piece',
     in: 'One.\n\n```\ntwo\n\nthree\n```\n\nFour.',
     want: [{ kind: 'p', text: 'One.' }, { kind: 'code', lang: '', text: 'two\n\nthree' }, { kind: 'p', text: 'Four.' }],

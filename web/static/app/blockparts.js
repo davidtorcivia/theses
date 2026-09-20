@@ -42,6 +42,10 @@ function pieces(text) {
 // are looked for: a fence first, because it holds text that looks like anything
 // else, then the line markers, then the shapes that take more than one line.
 function piece(text) {
+  // Nothing but whitespace is nothing at all. A piece is never only that, but
+  // what is left in front of a fence or a table part way down one can be, and
+  // every list rule below reads true of no lines whatever.
+  if (!text.trim()) return [];
   const lines = text.split('\n');
   const opens = lines.findIndex((line) => step(null, line) !== null);
   // A fence part way down a piece is where the server's markdown ends the
@@ -69,9 +73,9 @@ function piece(text) {
   return [{ kind: 'p', text }];
 }
 
-// more is what is left under a heading, a quote or a table, read as its own
-// piece. A run of nothing but whitespace is nothing at all.
-const more = (lines) => (lines.join('\n').trim() ? piece(lines.join('\n')) : []);
+// more is what is left under a heading, a quote or a fence, read as its own
+// piece.
+const more = (lines) => piece(lines.join('\n'));
 
 // code is a fenced code block: the lines between the fences as they were typed,
 // with the opening fence's own indent taken off each of them the way GitHub
