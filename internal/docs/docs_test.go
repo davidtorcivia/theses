@@ -715,6 +715,54 @@ func TestUndoOfASetPutsTheTextBack(t *testing.T) {
 	}
 }
 
+// A folded run is still one undo. core.Compact keeps the newest row of the
+// run, so undo's check that the block has not moved on since passes, and the
+// before it puts back is the text the person started typing over.
+func TestUndoOfACompactedRunPutsThePreRunTextBack(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	b := f.blocks(t)[0]
+
+	// The saves are dated four days back so the run is old enough to fold; the
+	// compaction itself runs on the real clock.
+	clock := time.Now().Add(-4 * 24 * time.Hour)
+	f.Now = func() time.Time { return clock }
+	version := b.Version
+	var last core.Event
+	for i := 0; i < 5; i++ {
+		clock = clock.Add(30 * time.Second)
+		e, err := f.SetBlock(ctx, f.who["editor"], b.ID, version, "Draft "+strconv.Itoa(i)+".", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = e
+		now, err := GetBlock(ctx, f.db, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		version = now.Version
+	}
+	f.Now = time.Now
+
+	removed, err := f.Compact(ctx, core.CompactAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 4 {
+		t.Fatalf("Compact removed %d rows of the run of five, want 4", removed)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], last.Seq); err != nil {
+		t.Fatal(err)
+	}
+	back, err := GetBlock(ctx, f.db, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Text != b.Text {
+		t.Fatalf("the block holds %q, want the text before the run, %q", back.Text, b.Text)
+	}
+}
+
 func TestMoveBlockReorders(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t, "")
