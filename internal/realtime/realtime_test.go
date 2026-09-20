@@ -760,6 +760,80 @@ func TestPresenceStringIsCapped(t *testing.T) {
 	}
 }
 
+// One person in two tabs is one person, shown wherever the tab that moved last
+// is. A tab that has gone quiet, or one whose drawer was closed, must not take
+// the block their other tab is standing in off the top bar and the margin. The
+// list comes back in one order every time, whatever order the room is held in.
+func TestPresenceShowsTheTabThatMovedLast(t *testing.T) {
+	h := New(nil, nil, nil)
+	person := &store.User{ID: 7, Name: "GRACE", Initials: "GH", Colour: "c1"}
+	one := &client{hub: h, user: person}
+	two := &client{hub: h, user: person}
+	other := &client{hub: h, user: &store.User{ID: 2, Name: "ADA", Initials: "AL", Colour: "c2"}}
+	h.rooms[1] = map[*client]struct{}{one: {}, two: {}, other: {}}
+	other.moveTo("doc:1")
+
+	for _, step := range []struct {
+		name  string
+		tab   *client
+		where string
+		want  string
+	}{
+		{"the first tab to say where it is", one, "doc:3", "doc:3"},
+		{"the other tab moving takes it", two, "block:4:9:2:5", "block:4:9:2:5"},
+		{"the first moving again takes it back", one, "block:8", "block:8"},
+		{"a tab with nothing open leaves the other where it is", two, "", "block:8"},
+		{"and the quiet tab can still move again", two, "card:2", "card:2"},
+	} {
+		step.tab.moveTo(step.where)
+		people := h.Presence(1)
+		if len(people) != 2 {
+			t.Fatalf("%s: three tabs of two people are %d people", step.name, len(people))
+		}
+		if people[0].ID != 2 || people[1].ID != 7 {
+			t.Fatalf("%s: presence came back as %d then %d, want them in order of id",
+				step.name, people[0].ID, people[1].ID)
+		}
+		if people[1].Where != step.want {
+			t.Errorf("%s: presence says %q, want %q", step.name, people[1].Where, step.want)
+		}
+	}
+}
+
+// A caret moves far more often than a person edits, so `where` spends an
+// allowance of its own. Without one a person moving about a block would run
+// the command allowance out and have their next save refused.
+func TestCaretsDoNotSpendTheCommandAllowance(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("grace")
+	read(t, ws, "presence")
+
+	// More carets than a command allowance holds. Each is answered with an
+	// announce rather than an answer of its own, and the frame is read back so
+	// that the socket is not closed for falling behind.
+	for i := 0; i < 320; i++ {
+		send(t, ws, command{Cmd: "where", Args: args{Where: "block:4:9:2:2"}})
+		read(t, ws, "presence")
+	}
+
+	// The command allowance is untouched, so the next command is answered on
+	// its merits.
+	send(t, ws, command{ID: 1, Cmd: "no.such.command"})
+	if answer := read(t, ws, "error"); !strings.Contains(answer.Error, "no such command") {
+		t.Fatalf("a command after a flood of carets got %q", answer.Error)
+	}
+
+	// And the command allowance still bites, on the same socket.
+	limited := false
+	for i := 0; i < 400 && !limited; i++ {
+		send(t, ws, command{ID: int64(i + 2), Cmd: "no.such.command"})
+		limited = strings.Contains(read(t, ws, "error").Error, "too many")
+	}
+	if !limited {
+		t.Error("a tab sending four hundred commands was never held back")
+	}
+}
+
 // The limiter is the cheap check, so a tab sending rubbish as fast as it can
 // does not buy a session lookup per frame. The refusal still carries the
 // command's own number.

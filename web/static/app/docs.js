@@ -9,8 +9,8 @@
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit } from './state.js';
-import { send, live, where, Conflict, Offline } from './net.js';
-import { rebase, enter, chunks } from './blocktext.js';
+import { send, live, where, onCarets, Conflict, Offline } from './net.js';
+import { rebase, enter, chunks, carry, parseWhere, formatWhere } from './blocktext.js';
 
 // The block this tab has open: its node and its textarea, and nothing else. The
 // editor is a way of typing into an entry below, not a place anything is kept,
@@ -130,11 +130,50 @@ function docWhere() {
   return doc ? 'doc:' + doc.id : '';
 }
 
-// inside is who else has a block open, out of the presence the socket keeps.
-// The shape of `where` is one string in two places and about to change, so the
-// comparison lives here and nowhere else.
+// inside is who else has a block open, out of the presence the socket keeps,
+// and where in it each of them is standing. parseWhere reads the shape of the
+// string and this is the one place that asks it about a block.
 function inside(id) {
-  return state.presence.filter((p) => p.where === 'block:' + id && p.id !== state.me);
+  const out = [];
+  for (const p of state.presence) {
+    if (p.id === state.me) continue;
+    const at = parseWhere(p.where);
+    if (at && at.block === id) out.push({ id: p.id, version: at.version, start: at.start, end: at.end });
+  }
+  return out;
+}
+
+// seen is the last caret this tab actually drew for somebody, by block and
+// then by person. An offset only means something against a version, so one
+// naming a version the block is not at cannot be placed: their save or their
+// caret arrived first, and putting them somewhere wrong is worse than leaving
+// them where they were last right. Everything that writes it goes through
+// carets below, which keeps only the people who are in the block now, so
+// somebody leaving takes their entry with them and a block that goes takes its
+// whole map in the prune beside drawn.
+const seen = new Map();
+
+// carets is where the other people in a block are, in the text this tab is
+// about to draw. version is the version that text is at, and move carries one
+// of their offsets into it: a block nobody here is typing in is drawn at the
+// row's own version, where an offset lands as it was sent, and the block this
+// tab is in is drawn at its entry's base with whatever has been typed since
+// carried through.
+function carets(id, here, version, move) {
+  const was = seen.get(id);
+  const now = new Map();
+  const out = [];
+  for (const p of here) {
+    let at = was ? was.get(p.id) : null;
+    if (p.version && p.version === version) at = { start: move(p.start), end: move(p.end) };
+    if (!at) continue;
+    now.set(p.id, at);
+    const person = user(p.id);
+    out.push({ ...at, colour: person.colour, initials: person.initials });
+  }
+  if (now.size) seen.set(id, now);
+  else seen.delete(id);
+  return out;
 }
 
 // renderDocument returns the whole document area, head and all, for the board
@@ -177,6 +216,11 @@ export function renderDocument() {
       if (pending && pending.anchor === b.id) rendered.append(pending.ed.node);
     }
     for (const id of drawn.keys()) if (!ids.has(id)) drawn.delete(id);
+    // seen goes the same way, by its own keys rather than drawn's: the block
+    // this tab is typing in is never in drawn, and its mirror writes into seen
+    // like every other block. This is where a deleted block and a document
+    // switched out from under the page both drop what was drawn in them.
+    for (const id of seen.keys()) if (!ids.has(id)) seen.delete(id);
     if (!(doc.blocks || []).length && !canEdit()) {
       rendered.append(el('p', { class: 'empty', text: 'Nothing in this document yet.' }));
     }
@@ -241,7 +285,14 @@ export function afterRender() {
   // A textarea measured while it was out of the page has no height to measure,
   // which is what an editor opened on a block this render is the first to draw
   // has. This is the first moment it can be sized.
+  // fit draws the mirror as well, so presence arriving, which arrives as a
+  // render like everything else, is what moves somebody else's caret in the
+  // block this tab is typing in. And this is where the caret this tab is
+  // telling the others about catches up with whatever has just happened to the
+  // block under it, through the throttle, because a render is exactly what the
+  // last caret this tab sent has just caused.
   editing.fit();
+  moveCaret();
 }
 
 function tabs(doc) {
@@ -428,16 +479,24 @@ function blockNode(b) {
   // the server has answered, and the undrawing of a refused one, both move the
   // text while the version stays where it was. So is whether this person may
   // edit, because that decides whether the node listens for a click at all and
-  // it changes under them when a proposition is archived or restored.
-  const key = `${canEdit()}:${b.version}:${here.map((p) => p.id).join(',')}:${b.text}`;
+  // it changes under them when a proposition is archived or restored. So is
+  // each caret, so that somebody moving about a block rebuilds that one block
+  // and nothing else on the page.
+  const key = `${canEdit()}:${b.version}:${here.map((p) => `${p.id}@${p.version}:${p.start}:${p.end}`).join(',')}:${b.text}`;
   const was = drawn.get(b.id);
   if (was && was.key === key) return was.node;
 
+  const at = carets(b.id, here, b.version, (n) => Math.min(n, b.text.length));
   const node = el('div', {
-    class: 'blk' + (here.length ? ' ' + user(here[0].id).colour : ''),
+    class: 'blk' + (here.length ? heading(b.text) + ' ' + user(here[0].id).colour : ''),
     'data-b': b.id, tabindex: '0',
   });
-  add(node, body(b.text));
+  // A block somebody else is standing in is drawn as its source rather than
+  // rendered: their offset is counted in the markdown, and there is no honest
+  // place to stand in a rendering of it. It goes back to rendered markdown the
+  // moment they leave.
+  if (here.length) node.append(add(el('div', { class: 'src' }), raw(b.text, at)));
+  else add(node, body(b.text));
   for (const p of here) {
     const person = user(p.id);
     node.append(el('span', {
@@ -485,6 +544,52 @@ function piece(text) {
     return [add(el('ol'), lines.map((l) => add(el('li'), [inline(l.replace(/^\d+\. /, ''), byHandle)])))];
   }
   return [add(el('p'), [inline(text, byHandle)])];
+}
+
+// raw is a block drawn as the markdown the people in it are looking at, with
+// their carets standing in it. The stylesheet lays it out by the same rule as
+// the editor's textarea, so an offset counted in their text lands on the same
+// character here. Text and spans only, like everything else on this page.
+//
+// The line break on the end is the one a textarea draws and pre-wrap does not:
+// a segment break at the end of a block makes no line box of its own, so
+// without it an empty block would have no height at all and a caret on the
+// line after the last one would have nowhere to stand.
+function raw(text, here) {
+  // A caret kept from an older version of the block can name an offset this
+  // text is too short for. It is drawn at the end rather than dropped: they
+  // are still in the block, and the marker beside it says so either way.
+  const marks = here.map((c) => ({ ...c, start: Math.min(c.start, text.length), end: Math.min(c.end, text.length) }));
+  const cuts = new Set([0, text.length]);
+  for (const c of marks) { cuts.add(c.start); cuts.add(c.end); }
+  const points = [...cuts].sort((a, b) => a - b);
+  const out = [];
+  for (let i = 0; i + 1 < points.length; i++) {
+    const from = points[i];
+    const to = points[i + 1];
+    for (const c of marks) if (c.start === from) out.push(flag(c));
+    // The first of two people whose selections overlap colours the run they
+    // share. One tint over another would read as a third colour nobody is.
+    const over = marks.find((c) => c.end > c.start && c.start <= from && c.end >= to);
+    out.push(over ? el('span', { class: 'tint ' + over.colour, text: text.slice(from, to) }) : text.slice(from, to));
+  }
+  for (const c of marks) if (c.start === text.length) out.push(flag(c));
+  // A block with nothing in it still has a line to stand on, which an empty
+  // textarea draws and a run of no characters does not. The zero width space
+  // goes after the caret at nought, so somebody standing at the start of an
+  // empty block is still drawn at the start of it.
+  if (!text) out.push('​');
+  out.push('\n');
+  return out;
+}
+
+// flag is one person standing at an offset: a bar in their colour with their
+// initials above it. Both are drawn out of the flow, so the span itself takes
+// up no room and the text is laid out as though it were not there. The block's
+// title is what says out loud who is in it; this is the picture of it.
+function flag(c) {
+  return el('span', { class: 'caret ' + c.colour, 'aria-hidden': 'true' },
+    el('span', { class: 'flag', text: c.initials }));
 }
 
 // A heading keeps the size it renders at while it is being edited, which is
@@ -535,15 +640,30 @@ function startEditing(id, caret) {
 function editor(id, text) {
   const area = el('textarea', { spellcheck: 'false', 'aria-label': 'This block as markdown' });
   area.value = text;
+  // The mirror is this text again, under the textarea in the same box, so that
+  // somebody else's caret can be drawn in the middle of it: a textarea holds
+  // nothing but text. Its own text is transparent and the textarea over it has
+  // no background of its own, so what shows through is their caret and nothing
+  // else. The two share one grid cell, which is what keeps them the same size
+  // as each other whatever fit makes of the height.
+  const mirror = el('div', { class: 'mirror', 'aria-hidden': 'true' });
   const me = user(state.me);
   const node = el('div', { class: 'blk editing' + heading(text), 'data-b': id || null });
-  node.append(area, el('span', { class: 'who me ' + me.colour, text: 'you' }));
+  node.append(el('div', { class: 'tbox' }, mirror, area),
+    el('span', { class: 'who me ' + me.colour, text: 'you' }));
 
-  const fit = () => { area.style.height = 'auto'; area.style.height = area.scrollHeight + 'px'; };
+  // The mirror is drawn here rather than at each of the places the text
+  // changes, because fit is already called at every one of them: a height that
+  // is out of step with the text and a caret that is are the same mistake.
+  const fit = () => {
+    area.style.height = 'auto';
+    area.style.height = area.scrollHeight + 'px';
+    reflect(ed);
+  };
   // The listeners read the block off this rather than closing over the argument
   // above, because a provisional editor becomes the editor of a real block the
   // moment its insert is acked and all of them have to follow it there.
-  const ed = { id, node, area, fit };
+  const ed = { id, node, area, mirror, fit };
   area.addEventListener('input', () => { typed(ed.id); fit(); });
   area.addEventListener('keydown', (e) => key(e, ed));
   area.addEventListener('paste', (e) => pasted(e, ed));
@@ -558,6 +678,106 @@ function editor(id, text) {
   notice(id);
   return node;
 }
+
+// reflect keeps the mirror in step with what is in the textarea and with where
+// the others are standing in it. It draws that one node rather than the page,
+// because the editor is carried across every render and a rebuild would take
+// the caret out of it. Everything that changes either of those calls fit, and
+// fit calls this.
+//
+// Their offsets are counted in the text the server holds at the entry's base,
+// which is what the entry last sent. What has been typed since is one span of
+// that text, so each offset is carried through the span the way a merge
+// carries this person's own caret. A caret stated against any other version
+// cannot be placed at all and keeps the last place it was drawn.
+function reflect(ed = editing) {
+  if (!ed) return;
+  const w = ed.id ? work.get(ed.id) : null;
+  const text = ed.area.value;
+  const here = w ? carets(ed.id, inside(ed.id), w.base, (n) => carry(w.sent, text, n)) : [];
+  clear(ed.mirror);
+  add(ed.mirror, raw(text, here));
+}
+
+// caretsMoved is the light redraw, for a presence frame that says nothing but
+// that somebody's caret has moved inside the block they were already in. A
+// render remakes the rail, the top bar and every card in the board with fresh
+// listeners, and clearing the work area takes with it whatever a reader had
+// selected on the page; at five frames a second per person moving a caret that
+// is not a thing to do. So this touches the open document's blocks and nothing
+// else: each is asked for again, the drawn cache hands back the same node for
+// every block nothing changed in, and only a block that came back as a
+// different node is put on the page.
+function caretsMoved() {
+  // Mid rebuild the page is not the page yet, and the render that is running
+  // draws every one of these blocks itself on the way past.
+  if (rendering) return;
+  const doc = current();
+  for (const b of doc ? doc.blocks || [] : []) {
+    // A block waiting on an answer is built fresh every time it is asked for
+    // and draws no caret at all, so it is left alone: replacing it would throw
+    // away the height of its textarea for nothing.
+    const w = work.get(b.id);
+    if (w && w.status !== 'ok') continue;
+    const was = $(`#doc .blk[data-b="${b.id}"]`);
+    if (!was) continue;
+    // A block somebody has tabbed to keeps its node: taking it out of the page
+    // would drop the focus to the body, and every fifth of a second at that.
+    // It catches up on the next render like everything else.
+    if (was.contains(document.activeElement)) continue;
+    const node = blockNode(b);
+    if (node !== was) was.replaceWith(node);
+  }
+  // The block this tab is in comes back out of the loop above as the editor's
+  // own node, which is already where it belongs. Somebody else's caret in that
+  // one is drawn in the mirror instead.
+  reflect();
+}
+
+// The socket is told about it here rather than importing it there, because
+// this module already imports that one.
+onCarets(caretsMoved);
+
+// tellCaret says where this tab is standing, which is worth saying only when
+// the offsets mean something to the others: a real block, nothing unsaved, and
+// nothing of this tab's waiting in the outbox, so the text they will count in
+// is the text the server holds at the version named. While something is
+// unsaved the next save is at most two seconds away and this says it then;
+// until it does, the marker says who is in the block and their last caret
+// stands where it was.
+function tellCaret() {
+  if (!editing || !editing.id || !online()) return;
+  const w = work.get(editing.id);
+  if (!w || w.status !== 'ok' || w.text !== w.sent || state.waitingHere) return;
+  where(formatWhere(editing.id, w.base, editing.area.selectionStart, editing.area.selectionEnd));
+}
+
+// caretRate is how often a moving caret is worth a frame, and moveCaret is the
+// one way a caret is ever sent: everything that might have moved it, or made
+// it mean something again, arms this timer and the timer does the sending.
+// Sending from where it happened would be a frame per happening, and one of
+// those happenings is the echo of this tab's own `where` coming back as a
+// presence frame and a render: a held arrow key would then be forty frames a
+// second rather than five, and the allowance is what a save depends on.
+//
+// The timer holds nothing of its own: whatever it finds when it fires is what
+// goes, so there is nothing in it to be stale when the block, the editor or
+// this person's place has changed in the meantime. Sending the same string
+// twice is net.js's to drop.
+const caretRate = 200;
+let caretTimer = 0;
+
+function moveCaret() {
+  if (caretTimer) return;
+  caretTimer = setTimeout(() => { caretTimer = 0; tellCaret(); }, caretRate);
+}
+
+// One listener for every editor there will ever be, because selectionchange is
+// the only event that fires for all the ways a caret moves and the editor is
+// given up and made again all the time.
+document.addEventListener('selectionchange', () => {
+  if (editing && document.activeElement === editing.area) moveCaret();
+});
 
 // The keys that do something to the block rather than to the text in it. Each
 // one falls through to what a textarea does on its own the moment its
@@ -962,6 +1182,10 @@ function acked(id, sent, base, ev) {
   if (w.text !== w.sent) { save(id); return; }
   finished(id);
   status();
+  // The entry is clean at a new version, which is the moment an offset in it
+  // means something to anybody again. This writes nothing down: it asks for
+  // the caret to be sent, and nothing else.
+  moveCaret();
 }
 
 // absorb folds what the server made of a block into the text this tab has, and

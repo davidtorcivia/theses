@@ -9,6 +9,7 @@
 // command that was queued, leaves a row in the activity panel to choose from.
 
 import { state, apply, emit, predict, baseText, target, retryMaterial } from './state.js';
+import { parseWhere } from './blocktext.js';
 import * as offline from './offline.js';
 import * as api from './api.js';
 
@@ -62,6 +63,10 @@ export function connect() {
       location.reload();
       return;
     }
+    // This tab is where it was, and the server it is now talking to has never
+    // been told: presence is a socket's own field, so without this the others
+    // stop seeing this person until they move.
+    tell();
     // A socket coming back is the moment a read that failed is worth making
     // again, so the links and files of the open proposition are marked unread
     // and the next render asks for them without waiting out the retry gap.
@@ -110,15 +115,45 @@ function receive(m) {
     case 'event':
       apply(m.event);
       break;
-    case 'presence':
-      state.presence = m.people || [];
-      emit();
+    case 'presence': {
+      // Presence now arrives as often as anybody's caret moves, and a render
+      // remakes the whole page. So the two are told apart: somebody arriving,
+      // leaving or moving to another block changes what the top bar, the rail
+      // and the margin say and is a render like any other, while a caret
+      // moving inside the block it was already in is a redraw of that one
+      // block.
+      const people = m.people || [];
+      const moved = places(people) !== places(state.presence);
+      state.presence = people;
+      if (moved || !carets) emit();
+      else carets();
       break;
+    }
     case 'gap':
       catchUp();
       break;
   }
 }
+
+// carets is the light redraw a moving caret asks for, handed here by docs.js
+// rather than imported from it: docs.js imports this module, and a module
+// importing it back would work only for as long as neither top level happened
+// to touch the other's exports, which is not something a page load tells you
+// about twice. A page without it draws presence the way it always did.
+let carets = null;
+
+export function onCarets(fn) {
+  carets = fn;
+}
+
+// places is who is where, with a caret inside a block reduced to the block:
+// everything the page draws from presence other than the carets themselves is
+// drawn from exactly this much. The list arrives in one order, by id, so two
+// of these compare as strings.
+const places = (people) => people.map((p) => {
+  const at = parseWhere(p.where);
+  return p.id + '@' + (at ? 'block:' + at.block : p.where || '');
+}).join(',');
 
 // down is every reason a command cannot go now. The browser's own flag is in it
 // as well as the socket's state, because a socket that has not noticed the
@@ -196,11 +231,29 @@ export function live(cmd, args) {
   return answered(ship(cmd, args, null, null), replyWait);
 }
 
-// where tells the others what this tab has open. It is never worth an answer.
-export function where(what) {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ cmd: 'where', args: { where: what } }));
+// where tells the others what this tab has open. It is never worth an answer,
+// and the same string twice is nothing to tell: a caret moving inside a block
+// says one of these every fifth of a second and most of them say what the last
+// one said. What was meant is remembered whether or not it got away, because a
+// socket that has just opened has been told nothing and tell() below says it
+// again the moment there is somewhere to say it.
+//
+// A frame the server drops for going too fast is therefore never said again,
+// which a tab keeping to the throttle in docs.js cannot provoke: three hundred
+// a minute against an allowance of six hundred. A tab that has been tampered
+// with to send faster is one whose own caret stops moving for the others.
+let told = null;
+
+function tell() {
+  if (told !== null && socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ cmd: 'where', args: { where: told } }));
   }
+}
+
+export function where(what) {
+  if (what === told) return;
+  told = what;
+  tell();
 }
 
 // replay empties the outbox in the order it was filled, one at a time, through

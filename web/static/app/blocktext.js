@@ -55,6 +55,57 @@ export function rebase(sent, acked, now, caret) {
 
 const clamp = (at, length) => Math.max(0, Math.min(at, length));
 
+// carry moves somebody else's caret through what this tab has typed since the
+// text they counted it in went up. sent is that text, now is what is in the
+// textarea, and offset is where they said they were standing in sent.
+//
+// It is the rule rebase uses for somebody else's span against this person's
+// caret, with the two the other way round: an edit ending at or before the
+// caret moves it by what the edit added or took away, an edit that spans it
+// puts it at the end of what was written in its place, and an edit after it
+// leaves it where it was. So typing exactly where they are standing puts them
+// after what was typed, which is what rebase does with the roles swapped.
+export function carry(sent, now, offset) {
+  if (sent === now) return clamp(offset, now.length);
+  const mine = span(sent, now);
+  if (mine.end <= offset) return clamp(offset - (mine.end - mine.start) + mine.ins.length, now.length);
+  if (mine.start >= offset) return clamp(offset, now.length);
+  return clamp(mine.start + mine.ins.length, now.length);
+}
+
+// What a tab tells the others about where it is standing: the block, the
+// version the offsets are counted in, and the two ends of the selection. An
+// offset only means something against a version, because the text a block
+// holds changes under it.
+//
+// `block:<id>` on its own is the older form and still what an editor says the
+// moment it opens: in this block, caret unknown. parseWhere answers that as a
+// version of nought, which no block is ever at, so a caller comparing versions
+// needs no second question. Anything else, including a card or a document, is
+// not about a block and answers null.
+export function parseWhere(where) {
+  const parts = String(where ?? '').split(':');
+  if (parts[0] !== 'block' || (parts.length !== 2 && parts.length !== 5)) return null;
+  const block = whole(parts[1]);
+  if (!block) return null;
+  const here = { block, version: 0, start: 0, end: 0 };
+  if (parts.length === 2) return here;
+  const [version, start, end] = parts.slice(2).map(whole);
+  // A field that is not a number, or a range that reads backwards, is a caret
+  // this tab cannot place. The block is still theirs, so it keeps the marker
+  // and loses only the caret.
+  if (version === null || start === null || end === null || end < start) return here;
+  return { block, version, start, end };
+}
+
+export function formatWhere(block, version, start, end) {
+  return `block:${block}:${version}:${start}:${end}`;
+}
+
+// whole is one field of the above: a decimal count and nothing else. Nothing
+// here may be negative, and Number('') is nought rather than nothing.
+const whole = (s) => (/^\d+$/.test(s) ? Number(s) : null);
+
 const bullet = /^- /;
 const numbered = /^(\d+)\. /;
 
