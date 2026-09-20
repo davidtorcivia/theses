@@ -20,7 +20,15 @@ export function parts(text) {
   const out = [];
   for (const each of pieces(text)) {
     const lines = each.split('\n');
-    for (let at = 0; at < lines.length;) at = piece(lines, at, out);
+    for (let at = 0; at < lines.length;) {
+      const next = piece(lines, at, out);
+      // Every rule below leaves the line it was given behind. One that ever
+      // answered with the line it started on would turn this loop for as long
+      // as the tab lived, so it says so instead: body() in docs.js catches it
+      // and draws the block as the text it holds.
+      if (next <= at) throw new Error(`nothing was read at line ${at} of a block`);
+      at = next;
+    }
   }
   return out;
 }
@@ -64,19 +72,21 @@ function piece(lines, at, out) {
     return at + 1;
   }
   if (/^ {0,3}>/.test(lines[at])) return quote(lines, at, out);
-  // A table runs to the end of its piece, because a blank line is where the
-  // server's markdown ends one and a piece is what a blank line separates.
+  // A table runs to the end of its piece or to a fence, whichever comes first:
+  // a blank line is where the server's markdown ends a table and a piece is
+  // what a blank line separates, and a fence ends one as it ends a paragraph.
   const grid = table(lines, at);
   if (grid) {
     out.push(grid);
-    return lines.length;
+    return fenceAt(lines, at + 2);
   }
 
   // Everything else is one list or one paragraph, as far as the fence or the
   // table that ends it: both of those are where the server's markdown ends a
   // paragraph too.
+  const fence = fenceAt(lines, at + 1);
   let stop = at + 1;
-  while (stop < lines.length && step(null, lines[stop]) === null && !table(lines, stop)) stop++;
+  while (stop < fence && !table(lines, stop)) stop++;
   const kept = [];
   for (let i = at; i < stop; i++) if (lines[i].trim()) kept.push(lines[i]);
   // Nothing but whitespace is nothing at all. A piece never begins with it, but
@@ -87,6 +97,15 @@ function piece(lines, at, out) {
   else if (kept.every((line) => /^\d+\. /.test(line))) out.push({ kind: 'ol', items: kept.map((line) => line.replace(/^\d+\. /, '')) });
   else out.push({ kind: 'p', text: lines.slice(at, stop).join('\n') });
   return stop;
+}
+
+// fenceAt is the first line from here on that opens a fenced code block, or the
+// end of the piece. A fence ends whatever stands above it, so a paragraph, a
+// list and a table's rows all stop at the same line, and the caller reads the
+// code from there.
+function fenceAt(lines, from) {
+  for (let i = from; i < lines.length; i++) if (step(null, lines[i]) !== null) return i;
+  return lines.length;
 }
 
 // code is a fenced code block: the lines between the fences as they were typed,
@@ -152,7 +171,9 @@ function quote(lines, at, out) {
 // last column rather than swallowed.
 //
 // It is asked at every line of a paragraph, so it answers before it copies
-// anything: a line with no pipe under it cannot start one.
+// anything: a line with no pipe under it cannot start one. A fence line never
+// passes for a row of dashes, its first cell holding the backticks or the
+// tildes it opens with, so the rows below always begin under the header.
 function table(lines, at) {
   const rule = lines[at + 1];
   if (rule === undefined || !rule.includes('|') || !lines[at].trim()) return null;
@@ -161,7 +182,8 @@ function table(lines, at) {
   if (!head.length || marks.length !== head.length || !marks.every((c) => /^:?-+:?$/.test(c))) return null;
   const align = marks.map((c) => (c.endsWith(':') ? (c.startsWith(':') ? 'c' : 'r') : (c.startsWith(':') ? 'l' : '')));
   const rows = [];
-  for (let i = at + 2; i < lines.length; i++) {
+  const end = fenceAt(lines, at + 2);
+  for (let i = at + 2; i < end; i++) {
     if (!lines[i].trim()) continue;
     const row = cells(lines[i]);
     while (row.length < head.length) row.push('');

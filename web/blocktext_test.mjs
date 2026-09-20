@@ -413,6 +413,21 @@ const shapes = [
     want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'p', text: 'After.' }],
   },
   {
+    name: 'a fence under the rows ends the table',
+    in: '| a |\n| - |\n| 1 |\n```\nx | y\n```',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'code', text: 'x | y' }],
+  },
+  {
+    name: 'a fence straight under the dashes is a table with no rows',
+    in: '| a |\n| - |\n```\nx\n```',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [] }, { kind: 'code', text: 'x' }],
+  },
+  {
+    name: 'a fence a blank line below the rows reads as it did',
+    in: '| a |\n| - |\n| 1 |\n\n```\nx\n```',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1']] }, { kind: 'code', text: 'x' }],
+  },
+  {
     name: 'the blank line a piece starts with is nothing in front of a fence',
     in: 'a\n\n\n```\nx\n```',
     want: [{ kind: 'p', text: 'a' }, { kind: 'code', text: 'x' }],
@@ -456,6 +471,9 @@ const long = [
   { name: 'ten thousand table rows', in: '| a |\n| - |\n' + '| 1 |\n'.repeat(10000), want: 1, kind: 'table' },
   { name: 'ten thousand quoted lines', in: '> a\n'.repeat(10000), want: 1, kind: 'quote' },
   { name: 'ten thousand lines of code', in: '```\n' + 'a\n'.repeat(10000) + '```', want: 1, kind: 'code' },
+  // A table and a fence in turn, which is what asks fenceAt for a line under
+  // every table and every paragraph in the block.
+  { name: 'three thousand tables under fences', in: '| a |\n| - |\n| 1 |\n```\nx\n```\n'.repeat(3333), want: 6666, kind: 'table' },
 ];
 
 for (const c of long) {

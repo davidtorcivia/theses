@@ -546,6 +546,11 @@ function body(text) {
     // over one block would take the whole proposition off the page for as long
     // as the block said what it said. The words are drawn as one paragraph
     // instead, which is what the block would read as with no markdown at all.
+    //
+    // The console is the one place this can go, and the only call to it in the
+    // app: a fault in the renderer is nothing the reader can answer, so it is
+    // not a line under say(), and it must not go nowhere either, or all that
+    // would be left of it is a block that reads oddly.
     console.error('this block could not be read as markdown', e);
     return [add(el('p'), [inline(text, byHandle)])];
   }
