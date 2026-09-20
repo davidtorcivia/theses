@@ -710,13 +710,10 @@ async function writeSource(doc) {
   // about.
   const one = left === 1;
   const merged = (answer.merged || []).length;
-  const lead = [
-    'Everything else you wrote went in.',
-    merged
-      ? `${merged} other ${merged === 1 ? 'paragraph' : 'paragraphs'} took in words somebody else wrote, and saving again writes your wording over ${merged === 1 ? 'it' : 'those'} too.`
-      : '',
-    `Saving again writes ${one ? 'your paragraph' : 'your paragraphs'} over theirs. To take what they wrote instead, read the markdown again, which throws away what is in front of you.`,
-  ].filter(Boolean).join(' ');
+  const take = 'To take what they wrote instead, read the markdown again, which throws away what is in front of you.';
+  const lead = merged
+    ? `Everything else you wrote went in, and ${merged} other ${merged === 1 ? 'paragraph' : 'paragraphs'} took in words somebody else wrote. Saving again writes your wording over theirs, in ${merged === 1 ? 'that one' : 'those'} as well. ${take}`
+    : `Everything else you wrote went in. Saving again writes ${one ? 'your paragraph' : 'your paragraphs'} over theirs. ${take}`;
   const yes = await ask(
     `${left} ${one ? 'paragraph was' : 'paragraphs were'} left as ${one ? 'it is' : 'they are'}, because somebody else changed ${one ? 'it' : 'them'} while you were writing.`,
     lead, 'Read it again');
