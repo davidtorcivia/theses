@@ -42,12 +42,25 @@ const maxFrame = 64 << 10
 // variable so a test does not have to wait a minute for it.
 var sessionCheck = time.Minute
 
+// ping is the heartbeat, and the server is what originates it. A protocol ping
+// cannot be the heartbeat, because this library answers one and discards a pong
+// inside Receive rather than returning either, so a pong can never push out a
+// read deadline set around that call. A browser timer cannot be it either: a
+// hidden tab's timers are throttled to one a minute. This frame is answered
+// from the tab's message handler, which runs when the frame arrives.
+const ping = `{"type":"ping"}`
+
 type Hub struct {
 	board *board.Service
 	auth  *auth.Auth
 	log   *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
+
+	// pingEvery is how often the heartbeat goes out, and pongWait how long a
+	// socket may then go without a frame of any kind before it is dropped.
+	// Fields so that a test does not wait a minute for them.
+	pingEvery, pongWait time.Duration
 
 	// moves numbers the `where` frames of every tab on this server in the order
 	// they arrive, so Presence can tell which of a person's tabs moved last
@@ -60,7 +73,8 @@ type Hub struct {
 }
 
 func New(b *board.Service, a *auth.Auth, log *slog.Logger) *Hub {
-	return &Hub{board: b, auth: a, log: log, rooms: map[int64]map[*client]struct{}{}}
+	return &Hub{board: b, auth: a, log: log, rooms: map[int64]map[*client]struct{}{},
+		pingEvery: 25 * time.Second, pongWait: time.Minute}
 }
 
 // Person is one tab's occupant as the other tabs see them.
@@ -237,6 +251,11 @@ func (h *Hub) serve(ws *websocket.Conn) {
 
 	for {
 		var raw string
+		// Every frame a tab sends, its answer to the heartbeat included, pushes
+		// the deadline out. A tab that has stopped answering, which is a closed
+		// laptop or a phone off the network, ends the loop here instead of
+		// holding its place in the room until TCP gives up on it.
+		ws.SetReadDeadline(time.Now().Add(h.pongWait))
 		if err := websocket.Message.Receive(ws, &raw); err != nil {
 			return
 		}
@@ -248,6 +267,13 @@ func (h *Hub) serve(ws *websocket.Conn) {
 		// query, which is the expensive check.
 		var cmd command
 		bad := json.Unmarshal([]byte(raw), &cmd) != nil
+		if !bad && cmd.Cmd == "pong" {
+			// The answer to the heartbeat did its work by arriving: the
+			// deadline above is already pushed out. It spends no allowance,
+			// because the server is what asked for it, and it is answered with
+			// nothing.
+			continue
+		}
 		bucket := auth.BucketSocket
 		keys := []string{c.tab, strconv.FormatInt(c.user.ID, 10)}
 		if !bad && cmd.Cmd == "where" {
@@ -379,10 +405,21 @@ func (h *Hub) stillSignedIn(c *client, r *http.Request) bool {
 }
 
 func (c *client) write() {
+	beat := time.NewTicker(c.hub.pingEvery)
+	defer beat.Stop()
 	for {
 		select {
 		case b := <-c.out:
 			if err := websocket.Message.Send(c.ws, string(b)); err != nil {
+				c.close()
+				return
+			}
+		case <-beat.C:
+			// The heartbeat goes out from here rather than through send,
+			// because this goroutine is the socket's only writer and because a
+			// frame the server owes itself must not be what pushes a tab that
+			// is already behind over the buffer and closes it.
+			if err := websocket.Message.Send(c.ws, ping); err != nil {
 				c.close()
 				return
 			}

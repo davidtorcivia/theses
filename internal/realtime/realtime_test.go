@@ -36,7 +36,10 @@ type rig struct {
 	cols   []board.Column
 }
 
-func newRig(t *testing.T) *rig {
+// newRig builds a hub and a server in front of it. A tune function runs on the
+// hub before anything can reach it, which is where a test shortens a timer: a
+// write after the server is listening races the goroutines it spawns.
+func newRig(t *testing.T, tune ...func(*Hub)) *rig {
 	t.Helper()
 	ctx := context.Background()
 	db := store.OpenTemp(t)
@@ -47,6 +50,9 @@ func newRig(t *testing.T) *rig {
 	hub := New(boards, a, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	hub.Docs = docs.New(boards.Service, "", func() string { return "" },
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, f := range tune {
+		f(hub)
+	}
 
 	r := &rig{T: t, hub: hub, boards: boards, db: db,
 		users: map[string]*store.User{}, cookie: map[string]string{}}
@@ -831,6 +837,140 @@ func TestCaretsDoNotSpendTheCommandAllowance(t *testing.T) {
 	}
 	if !limited {
 		t.Error("a tab sending four hundred commands was never held back")
+	}
+}
+
+// quick shortens the heartbeat so a test does not wait a minute for it. The
+// wait stays twenty intervals wide, because a runner that stalls for a moment
+// under the race detector must not look like a tab that has gone.
+func quick(h *Hub) {
+	h.pingEvery, h.pongWait = 50*time.Millisecond, time.Second
+}
+
+// answering reads frames until one of the type wanted arrives, answering the
+// heartbeat on the way. A test that waits out an interval has to keep its own
+// socket answering or the server drops that one as well.
+func answering(t *testing.T, ws *websocket.Conn, want string, within time.Duration) message {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		ws.SetReadDeadline(deadline)
+		var raw string
+		if err := websocket.Message.Receive(ws, &raw); err != nil {
+			t.Fatalf("waiting for a %s frame: %v", want, err)
+		}
+		var m message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Type == "ping" {
+			send(t, ws, command{Cmd: "pong"})
+		}
+		if m.Type == want {
+			return m
+		}
+	}
+}
+
+// A tab that answers the heartbeat keeps its socket however long it sits there
+// with nothing else to say. Nothing but the answers holds it open: the read
+// deadline is shorter than the run below.
+func TestAnsweredHeartbeatsHoldASocketOpen(t *testing.T) {
+	r := newRig(t, quick)
+	ws := r.mustDial("ada")
+
+	// Forty intervals is two seconds, which is two read deadlines, and the
+	// outer bound leaves room for a stall on a busy runner.
+	const want = 40
+	deadline := time.Now().Add(15 * time.Second)
+	beats := 0
+	for beats < want {
+		ws.SetReadDeadline(deadline)
+		var raw string
+		if err := websocket.Message.Receive(ws, &raw); err != nil {
+			t.Fatalf("the socket went after %d of %d heartbeats: %v", beats, want, err)
+		}
+		var m message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m.Type != "ping" {
+			continue
+		}
+		beats++
+		send(t, ws, command{Cmd: "pong"})
+	}
+
+	if people := r.hub.Presence(r.prop); len(people) != 1 || people[0].ID != r.users["ada"].ID {
+		t.Fatalf("a tab answering the heartbeat is present as %+v", people)
+	}
+	send(t, ws, command{ID: 1, Cmd: "no.such.command"})
+	if answer := read(t, ws, "error"); answer.ID != 1 {
+		t.Errorf("the socket answered a command with %+v", answer)
+	}
+}
+
+// A tab that has stopped answering is dropped rather than left standing in the
+// room, and the others are told on the way out.
+func TestSocketDropsATabThatStopsAnsweringTheHeartbeat(t *testing.T) {
+	r := newRig(t, quick)
+	watcher := r.mustDial("ada")
+	answering(t, watcher, "presence", 5*time.Second)
+
+	// This one reads nothing and answers nothing from here on, which is what a
+	// closed laptop looks like from the server: the socket is still open and
+	// the frames pile up in it.
+	quiet := r.mustDial("grace")
+	for {
+		p := answering(t, watcher, "presence", 5*time.Second)
+		if len(p.People) == 1 && p.People[0].ID == r.users["ada"].ID {
+			break
+		}
+	}
+	if people := r.hub.Presence(r.prop); len(people) != 1 || people[0].ID != r.users["ada"].ID {
+		t.Fatalf("presence still shows %+v", people)
+	}
+
+	// The socket was closed, not merely left to go quiet: the frames already in
+	// it are read out first, and then the read ends on the close.
+	for {
+		quiet.SetReadDeadline(time.Now().Add(5 * time.Second))
+		var raw string
+		err := websocket.Message.Receive(quiet, &raw)
+		if err == nil {
+			continue
+		}
+		if timedOut(err) {
+			t.Fatal("a tab that stopped answering the heartbeat was left connected")
+		}
+		break
+	}
+}
+
+// The answer to the heartbeat is not a command: a tab sitting quietly for hours
+// would otherwise have spent its allowance on them and have its next save
+// refused.
+func TestPongsDoNotSpendTheCommandAllowance(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("grace")
+	read(t, ws, "presence")
+
+	// More answers than a command allowance holds.
+	for i := 0; i < 400; i++ {
+		send(t, ws, command{Cmd: "pong"})
+	}
+	// Not one of them is answered, with a refusal for going too fast or with
+	// anything else. Without this the flood would come back as four hundred
+	// unknown commands and the test below would read the first of those.
+	if m, err := awaitFrame(t, ws, 600*time.Millisecond); err == nil {
+		t.Fatalf("an answer to the heartbeat was answered with %+v", m)
+	} else if !timedOut(err) {
+		t.Fatalf("the socket went during the pongs: %v", err)
+	}
+
+	send(t, ws, command{ID: 1, Cmd: "no.such.command"})
+	if answer := read(t, ws, "error"); !strings.Contains(answer.Error, "no such command") {
+		t.Fatalf("a command after four hundred pongs got %q", answer.Error)
 	}
 }
 
