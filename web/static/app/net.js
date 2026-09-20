@@ -215,13 +215,26 @@ function down() {
 // send applies the command here, then either sends it or keeps it. It resolves
 // with the applied event, with null for a command that was queued, and rejects
 // with a Conflict or a refusal the caller can offer a choice about.
-export function send(cmd, args = {}, proposition = state.open) {
+//
+// opts is what a caller says about the sending rather than about the command,
+// so that each thing one of them wants is a name rather than a position.
+//
+// opts.fold is the name two queued commands are folded together under, which
+// by default is the row and field the command sets: a second edit to one title
+// replaces the first rather than queueing behind it, because the newer text is
+// the whole of what the person means. A caller whose command is not the newest
+// word on that field passes an empty name and queues behind instead. The
+// activity panel's undo of a run of saves is the one: it carries older text
+// against an older base, and folding it over a save already waiting for the
+// same block would throw that save away unsent.
+export function send(cmd, args = {}, proposition = state.open, opts = {}) {
+  const fold = opts.fold ?? target(cmd, args);
   const baseWas = baseText(cmd, args);
   const revert = predict(cmd, args);
   const row = { proposition, me: state.me, cmd, args, idem: newKey(),
     base: args.base ?? null, base_text: baseWas };
-  if (down() || replaying) return keep(row, target(cmd, args), revert);
-  return ship(cmd, args, revert, row, row.idem);
+  if (down() || replaying) return keep(row, fold, revert);
+  return ship(cmd, args, revert, row, row.idem, fold);
 }
 
 // keep puts a command in the outbox and answers as though it had gone. It has
@@ -243,7 +256,7 @@ async function keep(row, key, revert) {
   return null;
 }
 
-function ship(cmd, args, revert, row, key) {
+function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
   return new Promise((resolve, reject) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       if (revert) revert();
@@ -256,7 +269,10 @@ function ship(cmd, args, revert, row, key) {
       reject,
       row,
       revert: revert || (() => {}),
-      queue: () => { if (row) offline.queue(row, target(cmd, args)).then(count); },
+      // The socket going while this is in the air files it under the same name
+      // it would have been queued under, so a command that must not fold over
+      // what is already waiting does not fold on this road either.
+      queue: () => { if (row) offline.queue(row, fold).then(count); },
     });
     socket.send(JSON.stringify({ id, cmd, key, args }));
   });

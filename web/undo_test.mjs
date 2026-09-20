@@ -1,0 +1,199 @@
+// node web/undo_test.mjs
+//
+// undo.js decides what one Ctrl+Z takes back, which is arithmetic on a list and
+// a clock and nothing else. Getting it wrong either loses a paragraph somebody
+// wanted or hands back a whole afternoon, and neither shows up in a page that
+// still renders. This sits beside the two embedded trees, like the blocktext
+// test, so it is not served to browsers or kept by the service worker.
+
+import assert from 'node:assert/strict';
+import { history, of, reset, keep, together, cap } from './static/app/undo.js';
+
+// A snapshot with the caret at the end, which is where typing leaves it.
+const end = (text) => ({ text, start: text.length, end: text.length });
+
+// typing is a run of keystrokes, each one a millisecond after the last, with
+// the caret where the one before it left it. It is what the editor's input
+// handler does, written once here. The first of a call carries no selection
+// from before it, which is what an editor opened a moment ago has.
+function typing(h, texts, kind = 'type', from = 0) {
+  let when = from;
+  let was = null;
+  for (const text of texts) {
+    when += 1;
+    h.record(end(text), kind, when, was);
+    was = { start: text.length, end: text.length };
+  }
+  return when;
+}
+
+{
+  const h = history('');
+  typing(h, ['T', 'Th', 'The']);
+  assert.equal(h.steps(), 2, 'a run of typing is one step over the text it started from');
+  assert.deepEqual(h.undo(), { text: '', start: 0, end: 0 }, 'undo takes the whole run back');
+  assert.equal(h.undo(), null, 'there is nothing before the text it started from');
+  assert.deepEqual(h.redo(), end('The'), 'redo puts the run back');
+  assert.equal(h.redo(), null, 'and there is nothing ahead of it');
+}
+
+{
+  // A pause longer than together starts a new step, which is what makes "type a
+  // sentence, pause, type another, Ctrl+Z twice" give the two sentences back
+  // one at a time.
+  const h = history('');
+  const was = typing(h, ['O', 'On', 'One']);
+  typing(h, ['One t', 'One tw', 'One two'], 'type', was + together + 1);
+  assert.equal(h.steps(), 3, 'a pause ends the run');
+  assert.deepEqual(h.undo(), end('One'), 'the first undo takes back the second sentence');
+  assert.deepEqual(h.undo(), { text: '', start: 0, end: 0 }, 'the second takes back the first');
+}
+
+{
+  // The clock on its own, with everything else about the two keystrokes the
+  // same: the second carries the selection the first left and the same kind,
+  // so only the gap can end the run. The case above cannot say this, because
+  // its second run starts with no selection from before it.
+  const h = history('ab');
+  h.record(end('abc'), 'type', 1000, { start: 2, end: 2 });
+  h.record(end('abcd'), 'type', 1000 + together + 1, { start: 3, end: 3 });
+  assert.equal(h.steps(), 3, 'a gap longer than together ends the run on its own');
+  assert.deepEqual(h.undo(), end('abc'), 'so the second keystroke comes back by itself');
+  // And the same pair inside the gap is one step.
+  const g = history('ab');
+  g.record(end('abc'), 'type', 1000, { start: 2, end: 2 });
+  g.record(end('abcd'), 'type', 1000 + together, { start: 3, end: 3 });
+  assert.equal(g.steps(), 2, 'and a gap of exactly together does not');
+}
+
+{
+  // Inserting and deleting are different runs even with no pause between them.
+  const h = history('ab');
+  const when = typing(h, ['abc', 'abcd']);
+  typing(h, ['abc', 'ab'], 'cut', when);
+  assert.equal(h.steps(), 3, 'deleting does not join a run of typing');
+  assert.deepEqual(h.undo(), end('abcd'), 'undo takes back the deleting alone');
+}
+
+{
+  // An input that did not say where the selection was before it cannot be
+  // joined to the run in front of it: there is no way to tell whether the
+  // caret jumped, and assuming it did not is how a run swallows a step
+  // somebody meant to keep. Every browser raises beforeinput before input, but
+  // it is cancelable and not every way of writing into a field takes it.
+  const h = history('ab');
+  h.record(end('abc'), 'type', 1000, { start: 2, end: 2 });
+  h.record(end('abcd'), 'type', 1001, null);
+  assert.equal(h.steps(), 3, 'an input with no selection from before it starts a step of its own');
+  assert.deepEqual(h.undo(), end('abc'), 'so it comes back by itself');
+}
+
+{
+  // The caret jumping means the person went somewhere else in the block, so
+  // what they write there is a change of its own.
+  const h = history('one two');
+  h.record(end('one two!'), 'type', 1, { start: 7, end: 7 });
+  h.record({ text: '!one two!', start: 1, end: 1 }, 'type', 2, { start: 0, end: 0 });
+  assert.equal(h.steps(), 3, 'a caret that jumped ends the run');
+  assert.deepEqual(h.undo(), end('one two!'), 'and the undo takes back only what was written there');
+}
+
+{
+  // A script write is the state before it and the state after it, so one undo
+  // takes back exactly that write, and the typing that follows does not join
+  // it however fast it comes.
+  const h = history('- one');
+  h.record(end('- one'), 'step', 10);
+  h.record(end('- one\n- '), 'step', 10);
+  h.record(end('- one\n- t'), 'type', 11, { start: 8, end: 8 });
+  assert.equal(h.steps(), 3, 'a script write stands alone and nothing joins it');
+  assert.deepEqual(h.undo(), end('- one\n- '), 'the typing goes first');
+  assert.deepEqual(h.undo(), end('- one'), 'and then the write itself, whole');
+}
+
+{
+  // Two script writes running together are still two steps, with everything a
+  // run would need: the same kind, the same instant, and the selection the one
+  // before it left. Two pastes into one block are this, and one Ctrl+Z after
+  // them must take back the second paste rather than both.
+  const h = history('one');
+  h.record({ text: 'one two', start: 7, end: 7 }, 'step', 500, { start: 3, end: 3 });
+  h.record({ text: 'one two three', start: 13, end: 13 }, 'step', 500, { start: 7, end: 7 });
+  assert.equal(h.steps(), 3, 'a step never joins the step before it');
+  assert.deepEqual(h.undo(), end('one two'), 'so one undo takes back the second of them');
+}
+
+{
+  // Recording after an undo is a new branch: the redo it would have gone back
+  // to is no longer something that happened.
+  const h = history('');
+  typing(h, ['a']);
+  typing(h, ['ab'], 'type', together + 100);
+  assert.deepEqual(h.undo(), end('a'), 'undo steps back off the newest');
+  assert.equal(h.steps(), 3, 'which leaves the redo in the list');
+  h.record(end('aZ'), 'type', together + 200, { start: 1, end: 1 });
+  assert.equal(h.steps(), 3, 'writing again over an undo replaces the redo rather than growing past it');
+  assert.equal(h.redo(), null, 'and there is nothing ahead to go back to');
+  assert.deepEqual(h.undo(), end('a'), 'the new branch undoes to where it left the old one');
+}
+
+{
+  // The same text at another caret moves where an undo puts the person back and
+  // nothing else. It is what reopening a block records, and a step there would
+  // be an undo that appears to do nothing.
+  const h = history('one');
+  typing(h, ['one two'], 'type', 1);
+  h.record({ text: 'one two', start: 0, end: 0 }, 'step', 2);
+  assert.equal(h.steps(), 2, 'the same text is not a step');
+  assert.equal(h.now(), 'one two', 'and it is still the text the block holds');
+  h.undo();
+  assert.deepEqual(h.redo(), { text: 'one two', start: 0, end: 0 }, 'the caret it carries is the newer one');
+}
+
+{
+  // now is what the editor asks before it keeps a history: the text this list
+  // believes the block holds, which is where in the list it is standing.
+  const h = history('one');
+  typing(h, ['one two'], 'type', 1);
+  assert.equal(h.now(), 'one two', 'after writing, the newest text');
+  h.undo();
+  assert.equal(h.now(), 'one', 'after an undo, the text that was put back');
+}
+
+{
+  // The oldest steps go when the cap is reached, so a block somebody has been
+  // in all afternoon does not hold the afternoon.
+  const over = 50;
+  const h = history('0');
+  for (let i = 1; i <= cap + over; i++) h.record(end(String(i)), 'step', i);
+  assert.equal(h.steps(), cap, 'the list is capped');
+  let back = null;
+  for (let step = h.undo(); step; step = h.undo()) back = step;
+  assert.equal(back.text, String(over + 1), 'the oldest step left is the oldest that fits under the cap');
+}
+
+{
+  // reset is somebody else's words arriving. Nothing from before them can be
+  // undone to, because every one of those texts is missing what they wrote.
+  reset(7, 'ours and theirs');
+  const h = of(7, end('ours and theirs'));
+  assert.equal(h.undo(), null, 'a reset history has nothing behind it');
+  typing(h, ['ours and theirs!']);
+  assert.deepEqual(h.undo(), end('ours and theirs'), 'and starts again from the text it was reset to');
+  reset(7, 'theirs alone');
+  assert.equal(of(7, end('theirs alone')).now(), 'theirs alone', 'resetting again begins from the new text');
+  assert.equal(of(7, end('theirs alone')).undo(), null, 'resetting again drops what was there');
+}
+
+{
+  // keep drops the blocks that are not on the page any more.
+  const alive = of(4, end('alive'));
+  typing(alive, ['alive!']);
+  const gone = of(5, end('gone'));
+  typing(gone, ['gone!']);
+  keep(new Set([4]));
+  assert.equal(of(4, end('alive!')), alive, 'a block still drawn keeps its history');
+  assert.equal(of(5, end('gone')).undo(), null, 'a block that is gone does not');
+}
+
+console.log('undo history cases pass');
