@@ -73,8 +73,10 @@ export const del = (path) => call('DELETE', path);
 
 // replace is the one document command that comes this way rather than over the
 // socket: writing a whole document back from its markdown answers with the
-// paragraphs that did not go in, which is not an event.
-export const replace = (path, body) => call('PUT', path, body);
+// blocks its paragraphs now stand on, which is not an event. It takes extra
+// headers the way post does, because an attempt that was never answered goes
+// again under the same Idempotency-Key.
+export const replace = (path, body, extra) => call('PUT', path, body, extra);
 
 // put sends bytes straight to the bucket with the headers the server signed
 // into the URL. Host and Content-Length are on that list because they are part

@@ -184,6 +184,7 @@ function carets(id, here, version, move) {
 export function renderDocument() {
   const doc = current();
   if (doc) state.document = doc.id;
+  if (doc && state.docSource) ensureSource(doc);
   const head = el('div', { class: 'ph doc-ph' }, tabs(doc), summary(doc));
   if (doc) {
     // The links sit together at the right. One auto margin each would share
@@ -195,7 +196,7 @@ export function renderDocument() {
       }),
       // Save stands between the two, next to the toggle it belongs to, and is
       // there only while the markdown is open to somebody who may write it.
-      state.docSource && sourceOf(doc) ? saveButton(doc) : null,
+      state.docSource && canEdit() && sourceOf(doc) ? saveButton(doc) : null,
       el('button', {
         class: 'lnk', type: 'button', id: 'docmode',
         text: state.docSource ? 'Rendered' : 'Source',
@@ -272,7 +273,9 @@ export function beforeRender() {
 // prune drops the text a block was holding for somebody once that block has
 // gone. Nothing would ever draw it again and there is nothing left to answer
 // it against, so it would sit in the map keeping the save line at "Not saved"
-// for the rest of the session.
+// for the rest of the session. The markdown somebody was writing goes the same
+// way when its document does, which is the one thing that ever takes a session
+// out of the map besides a save that went through.
 function prune() {
   let lost = false;
   for (const [id, w] of work) {
@@ -285,6 +288,7 @@ function prune() {
     if (busy(w)) lost = true;
   }
   if (lost) say('A block you had unsaved text in was deleted.');
+  for (const id of sources.keys()) if (!documents().some((d) => d.id === id)) sources.delete(id);
 }
 
 export function afterRender() {
@@ -576,9 +580,25 @@ function openSource(doc) {
     return false;
   }
   const now = fresh(doc.id);
-  if (!now) return false;
+  if (!now) {
+    say('That document is no longer there.');
+    return false;
+  }
   reopen(now);
   return true;
+}
+
+// ensureSource is the render's half of openSource, for a document drawn while
+// the markdown is showing that has no session of its own: the toggle is one
+// flag for the pane rather than one per document, so without this a document
+// that came up under it would be markdown nobody could save. Nothing was
+// pressed, so there is no editor to leave and nothing to say; a document with
+// work outstanding keeps the read only view until it settles, which is the same
+// rule openSource states out loud.
+function ensureSource(doc) {
+  if (!canEdit() || sourceOf(doc)) return;
+  if (held(doc) || entries(doc).some((w) => w.status !== 'ok')) return;
+  reopen(doc);
 }
 
 // reopen takes the markdown and the base from the document as it stands now,
@@ -595,6 +615,7 @@ function reopen(doc) {
     at: [0, 0],
     scroll: 0,
     focused: false,
+    key: '',
   };
   sources.set(doc.id, src);
   area.addEventListener('input', () => { src.text = area.value; });
@@ -622,16 +643,54 @@ function saveButton(doc) {
   });
 }
 
+// writeSource is the only thing that sends the markdown, and only a press
+// reaches it: nothing here saves on a timer, on leaving, or on a render.
+//
+// The base the answer comes back with is what the text now stands on, block by
+// block, and it replaces the one the session was opened with. That is what
+// makes a second press write nothing: every paragraph is already on the block
+// the server named, at the version it named. Where they differ, which is a
+// paragraph somebody else changed too, the version named is theirs, so the next
+// press writes this person's paragraph over it. That is what keep mine means
+// here as everywhere else, and the line below says so before they press.
 async function writeSource(doc) {
   const src = sourceOf(doc);
   if (!src) return;
+  // One key per attempt, kept only while no answer has come back at all. A
+  // request that was never answered may or may not have been applied, and
+  // sending it again under the same key is how the server says which; anything
+  // it does answer, refusal included, leaves nothing applied that a fresh key
+  // would apply twice.
+  src.key = src.key || crypto.randomUUID();
   let answer;
   try {
-    answer = await replace(`/documents/${doc.id}/source`, { base: src.base, text: src.text });
+    answer = await replace(`/documents/${doc.id}/source`, { base: src.base, text: src.text },
+      { 'Idempotency-Key': src.key });
   } catch (err) {
+    if (err.status !== 0) src.key = '';
     say(err.message);
     return;
   }
+  src.key = '';
+  if (answer.replayed) {
+    // The attempt that was never answered had in fact gone through. Nothing
+    // remembers what it answered, so the markdown is read again from the
+    // document, which is what it wrote.
+    //
+    // ponytail: what that loses is this person's wording of any paragraph the
+    // first attempt could not take, because the conflict list went with the
+    // answer nobody saw and reading again replaces the text with the
+    // document's, where such a paragraph reads as the other person left it.
+    // The upgrade is remembering the first answer beside the key.
+    say('That save had already gone through. This is the document as it now reads.');
+    const back = fresh(doc.id);
+    if (back) {
+      reopen(back);
+      emit();
+    }
+    return;
+  }
+  src.base = answer.base || src.base;
   const left = (answer.conflicts || []).length;
   if (!left) {
     sources.delete(doc.id);
@@ -641,13 +700,11 @@ async function writeSource(doc) {
   }
   // The rest of it went in. What is left is theirs, and the two answers are
   // take the document as it now reads, which throws this text away, or stay
-  // here and write something that can go in beside it. Saving again is not a
-  // third answer: it is the same markdown against the same base, so it reports
-  // the same paragraphs and writes nothing.
+  // here with what was written.
   const one = left === 1;
   const yes = await ask(
     `${left} ${one ? 'paragraph was' : 'paragraphs were'} left as ${one ? 'it is' : 'they are'}, because somebody else changed ${one ? 'it' : 'them'} while you were writing.`,
-    `Everything else you wrote went in. Saving again reports the same ${one ? 'paragraph' : 'paragraphs'}: to take what they wrote, read the markdown again, which throws away what is in front of you. Or keep yours and edit around theirs.`,
+    `Everything else you wrote went in. Saving again writes ${one ? 'your paragraph' : 'your paragraphs'} over theirs. To take what they wrote instead, read the markdown again, which throws away what is in front of you.`,
     'Read it again');
   const now = yes && fresh(doc.id);
   if (now) {
