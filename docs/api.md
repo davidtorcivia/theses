@@ -1157,6 +1157,7 @@ one endpoint serves every tool.
 | `append_block` | `write` | Adds a paragraph at the end of a document, unlike `POST /api/v1/documents/{id}/blocks` with no `after`, which puts one at the head. |
 | `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
 | `replace_block` | `write` | Replaces the text of one block. |
+| `move_block` | `write` | Moves one block within its document, after another block or to the head of it. |
 | `write_document` | `write` | Replaces a document, or the part of it `base` names, with markdown, and answers with the block each paragraph now stands in, what did not go in and what went in changed: `PUT /api/v1/documents/{id}/source` with `base` and `key` optional in the same way. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
@@ -1180,9 +1181,9 @@ one endpoint serves every tool.
 
 Every tool returns structured output against a schema the tool list carries, and
 is annotated with what calling it does. The read tools are read only.
-`set_setting`, `replace_block`, `set_status`, `move_card`, `complete_card` and
-`annotate_link` are destructive and idempotent, since each replaces what was
-there. `create_document`, `append_block`, `insert_after_heading`, `add_link`,
+`set_setting`, `replace_block`, `move_block`, `set_status`, `move_card`,
+`complete_card` and `annotate_link` are destructive and idempotent, since each
+replaces what was there. `create_document`, `append_block`, `insert_after_heading`, `add_link`,
 `create_proposition`, `create_card`, `comment`, `request_upload` and
 `backup_now` are neither, because calling one twice makes two of the thing, and
 `add_link` also reads a page on the open web. `attach_to_card` and `assign_card`
