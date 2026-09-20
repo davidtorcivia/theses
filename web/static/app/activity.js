@@ -7,7 +7,7 @@
 
 import { el, initials, say } from './dom.js';
 import { state, user, emit, canEdit } from './state.js';
-import { send, again, letGo, resend } from './net.js';
+import { send, again, letGo, resend, Conflict } from './net.js';
 import * as api from './api.js';
 
 export function openPanel() {
@@ -90,20 +90,21 @@ function grouped(rows) {
   return out;
 }
 
+// sitting is how far apart two saves may be and still be the same run. A
+// document saves itself every few hundred milliseconds while somebody types, so
+// a gap of minutes is them coming back to the block rather than still being in
+// it, and folding the two together would put one line on the panel for an
+// afternoon and offer to take the whole afternoon back.
+const sitting = 120;
+
 const follows = (a, b) => a.entity === 'block' && a.action === 'set'
   && b.entity === 'block' && b.action === 'set' && a.entity_id === b.entity_id
   && Boolean(a.actor) && Boolean(b.actor)
-  && a.actor.kind === b.actor.kind && a.actor.id === b.actor.id;
+  && a.actor.kind === b.actor.kind && a.actor.id === b.actor.id
+  && a.at - b.at <= sitting;
 
 // A group is drawn at the newest of its rows, which is where its time comes
 // from and what its text says.
-//
-// It is offered no undo. Undo puts one row's before back and refuses a row the
-// entity has moved past since, so the only row of a group that could be undone
-// is the newest, which would take back a second of typing rather than the
-// change the line describes. Taking them back one at a time, newest first, is
-// not the same thing either: it is several undo rows in the log for one word
-// somebody wants back, and each one can be refused halfway through.
 function activityRow(group) {
   const row = group[0];
   const who = row.actor && row.actor.id ? user(row.actor.id) : { name: row.actor ? row.actor.name : '', initials: '··', colour: 'c8' };
@@ -112,16 +113,62 @@ function activityRow(group) {
     el('span', { class: 'mono when', text: when(row.at)
       + (group.length > 1 ? ` · ${group.length} saves` : '')
       + (row.undone ? ' · undone' : '') }));
-  if (row.undoable && canEdit() && group.length === 1) {
-    line.append(' ', el('button', {
-      class: 'lnk quiet', type: 'button', text: 'undo',
-      onclick: (e) => {
-        e.currentTarget.disabled = true;
-        send('undo', { activity: row.seq }).catch((err) => say(err.message));
-      },
-    }));
-  }
+  const back = canEdit() ? (group.length > 1 ? takeRunBack(group) : takeRowBack(row)) : null;
+  if (back) line.append(' ', back);
   return el('li', {}, initials(who), line);
+}
+
+// takeRowBack is core's undo of one row: its before put back, and the row
+// marked undone so nobody puts it back twice.
+function takeRowBack(row) {
+  if (!row.undoable) return null;
+  return el('button', {
+    class: 'lnk quiet', type: 'button', text: 'undo',
+    onclick: (e) => {
+      e.currentTarget.disabled = true;
+      send('undo', { activity: row.seq }).catch((err) => say(err.message));
+    },
+  });
+}
+
+// takeRunBack is the same offer over a run of saves, which core's undo cannot
+// make: that one puts one row's before back and refuses a row the entity has
+// moved past since, so the only row of a run it would take is the newest, which
+// is a second of typing rather than the change the line describes.
+//
+// A run is taken back as an ordinary edit instead: the text the block held
+// before the oldest row, sent with the version it reached after the newest. The
+// server merges a set whose base is an older version like any other, so
+// whatever anybody did to another part of the block after the run is kept and
+// only this run's own words go. Nothing here is marked undone, because nothing
+// was undone: this is a new change that happens to restore old text, and the
+// log says exactly that, which is also what makes it undoable in its turn.
+//
+// Nothing is offered when the oldest row has no before to go back to, when the
+// run left the block reading what it read before it, or when any row of it has
+// already been undone on its own: the block then holds the text from before
+// that row, and a set based on the version after it is a revert against a
+// revert, which is the overlap no merge can make honestly.
+function takeRunBack(group) {
+  const last = group[0];
+  const first = group[group.length - 1];
+  const was = first.before && first.before.text;
+  const now = last.after && last.after.text;
+  if (typeof was !== 'string' || !last.after || !last.after.version) return null;
+  if (was === now || group.some((r) => r.undone)) return null;
+  return el('button', {
+    class: 'lnk quiet', type: 'button', text: 'undo',
+    onclick: (e) => {
+      e.currentTarget.disabled = true;
+      // whole, because that text was stored exactly as it was typed once
+      // already, edges and blank lines included, and putting it back is putting
+      // back what was there rather than writing something new.
+      send('block.set', { block: last.entity_id, base: last.after.version, text: was, whole: true })
+        .catch((err) => say(err instanceof Conflict
+          ? 'That block has changed too much since for those saves to be taken back.'
+          : err.message));
+    },
+  });
 }
 
 // describe is one line of English for one applied command. The log holds the

@@ -487,6 +487,14 @@ longer holds, are both `409`:
 the next attempt is that text with yours worked into it and that number as
 `base_version`. Text longer than a block may hold is `422`.
 
+Because the merge is measured from the text at `base_version`, this is also how
+a caller takes a run of its own edits back: send the text the block held before
+the run, with the `base_version` the block reached after it, and whatever
+anybody wrote in another part of the block since is kept. A run that overlaps
+what somebody else wrote, and one whose `base_version` is older than the texts
+this server still holds, come back as the `409` above rather than being guessed
+at.
+
 `whole` is optional and false by default. Without it the text is trimmed and
 cut into blocks at blank lines and headings, except inside a fenced code block,
 where neither cuts, which is what a finished edit wants. With it the block
