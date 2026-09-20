@@ -237,9 +237,11 @@ export function renderDocument() {
     // like every other block. This is where a deleted block and a document
     // switched out from under the page both drop what was drawn in them.
     for (const id of seen.keys()) if (!ids.has(id)) seen.delete(id);
-    // And what Ctrl+Z would take back in each of them, by the same keys and for
-    // the same reason: a block that is gone and a document switched out from
-    // under the page will never have an editor drawn on them again.
+    // And what Ctrl+Z would take back in each of them, by the same keys. A
+    // block that is gone takes its steps with it, and so does every block of a
+    // document the tab has switched away from: that tab can be clicked back,
+    // and the paragraph then starts again from what it says, which is the same
+    // answer a block whose text moved underneath gets in editor below.
     undo.keep(ids);
     if (!(doc.blocks || []).length && !canEdit()) {
       rendered.append(el('p', { class: 'empty', text: 'Nothing in this document yet.' }));
@@ -977,21 +979,33 @@ function editor(id, text) {
   // above, because a provisional editor becomes the editor of a real block the
   // moment its insert is acked and all of them have to follow it there.
   const ed = { id, node, area, mirror, fit, was: null };
-  // What Ctrl+Z in this block will take back. It is made the first time a block
-  // is opened and kept while the document is, so leaving a paragraph and coming
-  // back finds what was written in it still there to take back; a block whose
-  // text moved while the editor was shut records where it has got to as a step
-  // of its own. The caret is put at the end, which is where a click with
-  // nowhere named lands.
+  // What Ctrl+Z in this block will take back, kept while the document is open,
+  // so leaving a paragraph and coming back finds what was written in it still
+  // there to take back.
+  //
+  // The history is only that paragraph's if it still says what the paragraph
+  // says. Between the editor closing and it opening again there is usually no
+  // entry to answer for the block, because finished drops one the moment the
+  // block is clean, so somebody else's save, a join from the block below, or
+  // an import can move the text with nothing here to notice it. Undoing back
+  // into what this person wrote would then be sent from the version the block
+  // has now and stored over them without a word. So a block that reads
+  // something else starts again from what it reads, and only one that reads
+  // what this tab last left keeps its steps. The caret is put at the end,
+  // which is where a click that names nowhere lands.
   if (id) {
     const open = { text, start: text.length, end: text.length };
-    undo.of(id, open).record(open);
+    const h = undo.of(id, open);
+    if (h.now() === text) h.record(open);
+    else undo.reset(id, text);
   }
   area.addEventListener('input', (e) => { stepped(ed, e); typed(ed.id); fit(); });
   area.addEventListener('beforeinput', (e) => {
     // The Edit menu, a phone shaken, three fingers swiped: the same two things
-    // the keys below do, arriving as an input type rather than as a key.
-    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
+    // the keys below do, arriving as an input type rather than as a key. A
+    // provisional editor has no history to walk and keeps the browser's own,
+    // so the id is asked first and the event is left alone without one.
+    if (ed.id && (e.inputType === 'historyUndo' || e.inputType === 'historyRedo')) {
       e.preventDefault();
       stepBack(ed, e.inputType === 'historyRedo');
       return;

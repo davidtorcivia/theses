@@ -78,10 +78,16 @@ export function history(text, start = text.length, end = start) {
         at--;
       }
     },
+    // undo and redo answer the snapshot they moved to, or nothing when there
+    // is nowhere left to go, which is the whole of what the editor asks about
+    // whether either is possible.
     undo: () => moved(-1),
     redo: () => moved(1),
-    canUndo: () => at > 0,
-    canRedo: () => at < list.length - 1,
+    // now is the text this history believes the block holds. A block that
+    // reads something else when it is opened again moved while nobody here was
+    // looking at it, and every step in here was taken against text that is no
+    // longer what anybody would be undoing out of.
+    now: () => list[at].text,
     // steps is what the list holds, for the test to count.
     steps: () => list.length,
   };
@@ -114,7 +120,7 @@ export function reset(id, text, start = text.length, end = start) {
 // move carries a history from one id to another. The editor can draw a block
 // before the server has made one, under an id of its own, and the ack gives it
 // the real one: what was typed into it under the first id was typed into this
-// block.
+// block. That re-keying is where the insert is acknowledged, in docs.js.
 export function move(from, to) {
   const h = kept.get(from);
   if (!h) return;
