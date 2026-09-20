@@ -499,7 +499,12 @@ export function predict(cmd, args) {
   // does better still on the one field it is about: it carries what the server
   // holds and the version it holds it at, which is where the row actually is.
   return (detail) => {
-    const now = rowOf(spec.entity, spec.id(args)) || was;
+    const now = rowOf(spec.entity, spec.id(args));
+    // A revert puts fields back on a row. It never brings a row back: one that
+    // has gone was deleted while this was in flight, and drawing the copy taken
+    // before the guess would put it on this screen and no other, where it would
+    // stay until a reload and be refused every time anybody wrote to it.
+    if (!now) return;
     const back = { ...now };
     for (const field of touched) back[field] = was[field];
     if (detail && detail.field) {

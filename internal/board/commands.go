@@ -59,10 +59,21 @@ const (
 // takes text asks it rather than inventing a limit of its own.
 func Field(value string, most int) (string, error) {
 	value = strings.TrimSpace(value)
-	if utf8.RuneCountInString(value) > most {
-		return "", ErrTooLong
+	if err := Fits(value, most); err != nil {
+		return "", err
 	}
 	return value, nil
+}
+
+// Fits is the half of Field that still applies to a value stored exactly as it
+// was sent. A block being saved as somebody types is not trimmed, because that
+// would take the newline they just typed away from under their caret, but it is
+// still no longer than a block may be.
+func Fits(value string, most int) error {
+	if utf8.RuneCountInString(value) > most {
+		return ErrTooLong
+	}
+	return nil
 }
 
 // archived is the rule core cannot know: a proposition that has been put away

@@ -450,7 +450,22 @@ func (s *Service) block(ctx context.Context, a core.Actor, id int64, need, actio
 // not the three way merge decides, with the text at base as the base. A merge
 // that cannot be made honestly comes back as a conflict carrying the text the
 // block holds now, so the editor offers keep mine and take theirs.
-func (s *Service) SetBlock(ctx context.Context, a core.Actor, id, base int64, text string) (core.Event, error) {
+//
+// whole is a save made while somebody is typing. The text is stored exactly as
+// it was sent: trimming the blank line they are in the middle of writing, or
+// cutting the paragraph above the caret off into a block of its own, is what a
+// save every few hundred milliseconds must not do. Everything else is the same,
+// the merge included. A block saved this way keeps what was typed into it until
+// an ordinary set, the API, MCP or an import from the markdown mirror touches
+// it, and each of those trims and cuts as it always has.
+func (s *Service) SetBlock(ctx context.Context, a core.Actor, id, base int64, text string, whole bool) (core.Event, error) {
+	if whole {
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+		if err := board.Fits(text, board.MaxBody); err != nil {
+			return core.Event{}, err
+		}
+		return s.setOne(ctx, a, id, base, text)
+	}
 	text, err := board.Field(text, board.MaxBody)
 	if err != nil {
 		return core.Event{}, err
@@ -564,8 +579,12 @@ func (s *Service) MoveBlock(ctx context.Context, a core.Actor, id, after int64) 
 
 // DeleteBlock tombstones a block. The row stays, keeping its ordering key and
 // its text, so undo is a column put back rather than a row invented again.
+// Which is why this asks for the standing to edit rather than the standing to
+// delete: taking a paragraph out of a document is writing the document, and a
+// researcher who may write one may take out the empty block they just left.
+// Deleting the document itself is the other thing and still asks for delete.
 func (s *Service) DeleteBlock(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
-	return s.block(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx, _ Block) error {
+	return s.block(ctx, a, id, auth.CanEdit, "delete", func(ctx context.Context, tx *sql.Tx, _ Block) error {
 		_, err := tx.ExecContext(ctx,
 			`UPDATE blocks SET deleted_at = unixepoch() WHERE id = ?`, id)
 		return err
@@ -658,9 +677,41 @@ func (s *Service) tick(document int64) {
 	// rather than running until the process ends.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// Saving as somebody types means an edit can leave the document reading
+	// exactly as the last snapshot does: a word written and taken back again,
+	// or text merged into what was already there. Storing that copy would push
+	// the versions worth restoring to off the end of the history list.
+	same, err := s.matchesNewestRevision(ctx, document)
+	if err != nil {
+		s.log.Warn("periodic revision not kept", "document", document, "err", err)
+		return
+	}
+	if same {
+		return
+	}
 	if _, err := s.CreateRevision(ctx, who, document, ReasonPeriodic); err != nil {
 		s.log.Warn("periodic revision not kept", "document", document, "err", err)
 	}
+}
+
+// matchesNewestRevision reports whether the document reads exactly as its
+// newest revision does. A document with no revisions yet does not match: the
+// first snapshot is always worth keeping.
+func (s *Service) matchesNewestRevision(ctx context.Context, document int64) (bool, error) {
+	var newest string
+	err := s.DB.QueryRowContext(ctx, `SELECT markdown FROM document_revisions
+		WHERE document_id = ? ORDER BY id DESC LIMIT 1`, document).Scan(&newest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	blocks, err := Blocks(ctx, s.DB, document)
+	if err != nil {
+		return false, err
+	}
+	return Markdown(blocks) == newest, nil
 }
 
 // Editing reports how many documents have a periodic revision timer armed,

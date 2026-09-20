@@ -72,16 +72,47 @@ export function renderPanel(drawer) {
       ? 'The log is read from the server. It is here when you are back online.'
       : 'Nothing yet.' }));
   }
-  for (const row of state.activity) list.append(activityRow(row));
+  for (const group of grouped(state.activity)) list.append(activityRow(group));
   drawer.append(list);
 }
 
-function activityRow(row) {
+// grouped folds a run of saves by one person on one block into a single line.
+// A document saves itself as it is typed, so every block someone writes leaves
+// a row a second, and listing all of them would make the panel a typing log
+// with the rest of the work scrolled off the bottom of it.
+function grouped(rows) {
+  const out = [];
+  for (const row of rows) {
+    const last = out[out.length - 1];
+    if (last && follows(last[0], row)) last.push(row);
+    else out.push([row]);
+  }
+  return out;
+}
+
+const follows = (a, b) => a.entity === 'block' && a.action === 'set'
+  && b.entity === 'block' && b.action === 'set' && a.entity_id === b.entity_id
+  && Boolean(a.actor) && Boolean(b.actor)
+  && a.actor.kind === b.actor.kind && a.actor.id === b.actor.id;
+
+// A group is drawn at the newest of its rows, which is where its time comes
+// from and what its text says.
+//
+// It is offered no undo. Undo puts one row's before back and refuses a row the
+// entity has moved past since, so the only row of a group that could be undone
+// is the newest, which would take back a second of typing rather than the
+// change the line describes. Taking them back one at a time, newest first, is
+// not the same thing either: it is several undo rows in the log for one word
+// somebody wants back, and each one can be refused halfway through.
+function activityRow(group) {
+  const row = group[0];
   const who = row.actor && row.actor.id ? user(row.actor.id) : { name: row.actor ? row.actor.name : '', initials: '··', colour: 'c8' };
   const line = el('div', {},
     el('p', { class: row.undone ? 'dim' : '', text: describe(row) }),
-    el('span', { class: 'mono when', text: when(row.at) + (row.undone ? ' · undone' : '') }));
-  if (row.undoable && canEdit()) {
+    el('span', { class: 'mono when', text: when(row.at)
+      + (group.length > 1 ? ` · ${group.length} saves` : '')
+      + (row.undone ? ' · undone' : '') }));
+  if (row.undoable && canEdit() && group.length === 1) {
     line.append(' ', el('button', {
       class: 'lnk quiet', type: 'button', text: 'undo',
       onclick: (e) => {

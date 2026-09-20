@@ -109,6 +109,9 @@ type args struct {
 	Where       string  `json:"where"`
 	Document    int64   `json:"document"`
 	Block       int64   `json:"block"`
+	// Whole is a save made while somebody is typing: the block takes the text
+	// exactly as it was sent rather than trimmed and cut into paragraphs.
+	Whole bool `json:"whole"`
 }
 
 type client struct {

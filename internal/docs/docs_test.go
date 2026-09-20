@@ -189,7 +189,7 @@ func TestBlockCommandsAskMembershipAndTheArchivedRule(t *testing.T) {
 		}},
 		{"set", func(f *fixture, a core.Actor) error {
 			b := f.blocks(f.t)
-			_, err := f.SetBlock(ctx, a, b[0].ID, b[0].Version, "Changed.")
+			_, err := f.SetBlock(ctx, a, b[0].ID, b[0].Version, "Changed.", false)
 			return err
 		}},
 		{"move", func(f *fixture, a core.Actor) error {
@@ -242,16 +242,33 @@ func TestBlockCommandsAskMembershipAndTheArchivedRule(t *testing.T) {
 	}
 }
 
-func TestDeleteNeedsTheRoleThatMayDelete(t *testing.T) {
+// A block is a paragraph of a document, and taking one out is writing the
+// document: a researcher may do it, and the empty block they just left is
+// theirs to remove. The document itself is the other thing.
+func TestDeletingABlockIsAnEditAndDeletingADocumentIsNot(t *testing.T) {
 	ctx := context.Background()
-	f := setup(t, "")
-	b := f.blocks(t)
 
-	if _, err := f.DeleteBlock(ctx, f.who["researcher"], b[0].ID); !errors.Is(err, core.ErrForbidden) {
-		t.Fatalf("a researcher deleted a block: %v", err)
-	}
-	if _, err := f.DeleteDocument(ctx, f.who["researcher"], f.doc); !errors.Is(err, core.ErrForbidden) {
-		t.Fatalf("a researcher deleted a document: %v", err)
+	for _, tc := range []struct {
+		name string
+		run  func(f *fixture, a core.Actor) error
+		want error
+	}{
+		{"a researcher may delete a block", func(f *fixture, a core.Actor) error {
+			_, err := f.DeleteBlock(ctx, a, f.blocks(f.t)[0].ID)
+			return err
+		}, nil},
+		{"a researcher may not delete a document", func(f *fixture, a core.Actor) error {
+			_, err := f.DeleteDocument(ctx, a, f.doc)
+			return err
+		}, core.ErrForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			f.t = t
+			if err := tc.run(f, f.who["researcher"]); !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -311,12 +328,12 @@ func TestSetBlockMergesOrConflicts(t *testing.T) {
 				t.Fatalf("the block starts at %q, want %q", started.Text, tc.base)
 			}
 			if tc.theirs != "" {
-				if _, err := f.SetBlock(ctx, f.who["owner"], id, started.Version, tc.theirs); err != nil {
+				if _, err := f.SetBlock(ctx, f.who["owner"], id, started.Version, tc.theirs, false); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			_, err = f.SetBlock(ctx, f.who["editor"], id, started.Version, tc.ours)
+			_, err = f.SetBlock(ctx, f.who["editor"], id, started.Version, tc.ours, false)
 			var conflict *core.ConflictError
 			if tc.wantConflict {
 				if !errors.As(err, &conflict) {
@@ -348,6 +365,78 @@ func TestSetBlockMergesOrConflicts(t *testing.T) {
 	}
 }
 
+// A save made while somebody is typing stores the text as it was sent. What
+// the ordinary save does to it, trimming the edges and cutting it into
+// paragraphs, is right for a finished edit and wrong under a caret.
+func TestSetBlockWholeStoresTheTextAsItWasSent(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name    string
+		whole   bool
+		start   string
+		theirs  string
+		text    string
+		want    string
+		blocks  int
+		wantErr error
+	}{
+		{name: "whole keeps the edges and the blank line", whole: true,
+			text: "  One.\n\nTwo.\n", want: "  One.\n\nTwo.\n", blocks: 3},
+		{name: "a plain set of the same text trims it and cuts it up",
+			text: "  One.\n\nTwo.\n", want: "One.", blocks: 4},
+		{name: "whole normalises the line endings and nothing else", whole: true,
+			text: "One.\r\n Two. ", want: "One.\n Two. ", blocks: 3},
+		{name: "a whole save from a stale version still merges", whole: true,
+			start:  "The tide is high and the moon is full.",
+			theirs: "The tide is low and the moon is full.",
+			text:   "The tide is high and the moon is new.",
+			want:   "The tide is low and the moon is new.", blocks: 3},
+		{name: "a whole save longer than a block may be is refused", whole: true,
+			text: strings.Repeat("a", board.MaxBody+1), wantErr: board.ErrTooLong},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			id := f.blocks(t)[0].ID
+			if tc.start != "" {
+				if _, err := f.SetBlock(ctx, f.who["owner"], id, f.blocks(t)[0].Version, tc.start, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+			started, err := GetBlock(ctx, f.db, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.theirs != "" {
+				if _, err := f.SetBlock(ctx, f.who["owner"], id, started.Version, tc.theirs, false); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			_, err = f.SetBlock(ctx, f.who["editor"], id, started.Version, tc.text, tc.whole)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("got %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			now, err := GetBlock(ctx, f.db, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if now.Text != tc.want {
+				t.Fatalf("the block holds %q, want %q", now.Text, tc.want)
+			}
+			if n := len(f.blocks(t)); n != tc.blocks {
+				t.Fatalf("the document has %d blocks, want %d", n, tc.blocks)
+			}
+		})
+	}
+}
+
 func TestSetBlockWithoutARecoverableBaseIsAConflict(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t, "")
@@ -355,7 +444,7 @@ func TestSetBlockWithoutARecoverableBaseIsAConflict(t *testing.T) {
 
 	// Version 9 was never written, so the text it held cannot be recovered and
 	// there is nothing honest to merge against.
-	_, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, 9, "Something else.")
+	_, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, 9, "Something else.", false)
 	var conflict *core.ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("got %v, want a conflict", err)
@@ -370,7 +459,7 @@ func TestSetBlockSplitsAPasteIntoBlocks(t *testing.T) {
 	f := setup(t, "")
 	b := f.blocks(t)
 
-	if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, "# Title\n\nAnd a paragraph."); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, "# Title\n\nAnd a paragraph.", false); err != nil {
 		t.Fatal(err)
 	}
 	after := f.blocks(t)
@@ -402,7 +491,7 @@ func TestDeleteTombstonesAndUndoRestores(t *testing.T) {
 		t.Fatalf("a tombstoned block is still in the list: %+v", f.blocks(t))
 	}
 	// A tombstoned block is not there as far as any command is concerned.
-	if _, err := f.SetBlock(ctx, f.who["editor"], b[1].ID, gone.Version, "x"); !errors.Is(err, core.ErrNotFound) {
+	if _, err := f.SetBlock(ctx, f.who["editor"], b[1].ID, gone.Version, "x", false); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("setting a tombstoned block got %v", err)
 	}
 
@@ -429,7 +518,7 @@ func TestUndoOfASetPutsTheTextBack(t *testing.T) {
 	f := setup(t, "")
 	b := f.blocks(t)
 
-	changed, err := f.SetBlock(ctx, f.who["editor"], b[2].ID, b[2].Version, "Rewritten.")
+	changed, err := f.SetBlock(ctx, f.who["editor"], b[2].ID, b[2].Version, "Rewritten.", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -529,7 +618,7 @@ func TestPeriodicRevisionsStopWhenTheEditingDoes(t *testing.T) {
 	t.Cleanup(f.Stop)
 
 	b := f.blocks(t)
-	if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, "Edited once."); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, "Edited once.", false); err != nil {
 		t.Fatal(err)
 	}
 	if f.Editing() != 1 {
@@ -549,6 +638,48 @@ func TestPeriodicRevisionsStopWhenTheEditingDoes(t *testing.T) {
 			t.Fatalf("a stopped timer wrote %d revisions", n)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Saving as somebody types means a tick can find the document reading exactly
+// as the newest version does: a word written and taken back, or an edit merged
+// into what was already there. Keeping that copy would push the versions worth
+// restoring to off the end of the history list.
+func TestPeriodicRevisionsSkipASnapshotNothingChanged(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name string
+		text func(was string) string
+		want int
+	}{
+		{"a set that leaves the document as it was keeps no version",
+			func(was string) string { return was }, 1},
+		{"a set that changes it keeps one",
+			func(string) string { return "Rewritten." }, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			f.Every = 20 * time.Millisecond
+			t.Cleanup(f.Stop)
+			if _, err := f.CreateRevision(ctx, f.who["editor"], f.doc, ReasonManual); err != nil {
+				t.Fatal(err)
+			}
+
+			b := f.blocks(t)
+			if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, tc.text(b[0].Text), false); err != nil {
+				t.Fatal(err)
+			}
+			// Two ticks: the one that acts on the edit and the one that finds
+			// nothing edited since and forgets the document. Nothing can write
+			// another revision once the timers have stopped.
+			waitFor(t, "the timers to stop with the history settled", func() bool {
+				return f.Editing() == 0 && len(revisionsOf(t, f)) == tc.want
+			})
+			if n := len(revisionsOf(t, f)); n != tc.want {
+				t.Fatalf("the history holds %d versions, want %d", n, tc.want)
+			}
+		})
 	}
 }
 

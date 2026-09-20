@@ -323,7 +323,7 @@ func (s *Server) replaceBlock(ctx context.Context, req *sdk.CallToolRequest, in 
 		}
 		base = current.Version
 	}
-	e, err := service.SetBlock(ctx, who, in.Block, base, in.Text)
+	e, err := service.SetBlock(ctx, who, in.Block, base, in.Text, false)
 	if err != nil {
 		return nil, writeOut{}, s.refusal("replace the block", err)
 	}
