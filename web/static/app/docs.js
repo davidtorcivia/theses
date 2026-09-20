@@ -539,7 +539,16 @@ const onLink = (e) => !!e.target.closest('a');
 // or the API touches the block.
 function body(text) {
   if (!text.trim()) return [el('p', { class: 'empty', text: 'Empty. Click to write.' })];
-  return parts(text).map(drawPart);
+  try {
+    return parts(text).map(drawPart);
+  } catch (e) {
+    // The document is drawn inside the board's pane, so a renderer that threw
+    // over one block would take the whole proposition off the page for as long
+    // as the block said what it said. The words are drawn as one paragraph
+    // instead, which is what the block would read as with no markdown at all.
+    console.error('this block could not be read as markdown', e);
+    return [add(el('p'), [inline(text, byHandle)])];
+  }
 }
 
 function drawPart(part) {
@@ -550,10 +559,10 @@ function drawPart(part) {
       return add(el(part.kind), part.items.map((item) => add(el('li'), [inline(item, byHandle)])));
     case 'quote':
       return add(el('blockquote'), part.paragraphs.map((said) => add(el('p'), [inline(said, byHandle)])));
-    // Code is text and nothing else: no inline markdown in it, no highlighting,
-    // and the info string only says what the code is.
+    // Code is text and nothing else: no inline markdown in it and no
+    // highlighting, so its info string is left in the markdown a click shows.
     case 'code':
-      return scrolls(el('pre', { 'data-lang': part.lang || null }, el('code', { text: part.text })), 'Code block');
+      return scrolls(el('pre', {}, el('code', { text: part.text })), 'Code block');
     case 'table':
       return scrolls(grid(part), 'Table');
     default:

@@ -358,8 +358,9 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 #doc blockquote p:last-child{margin-bottom:0}
 /* Code and a table are the two things a document can hold that are wider than
    the pane, so each sits in a box of its own that scrolls sideways. The box
-   takes the keyboard, and says so when it has it: .blk turns its own outline
-   off and a scroller nobody can see the focus on cannot be scrolled by one. */
+   takes the keyboard and says so when it has it, in the ink the pane is
+   written in: a scroller nobody can see the focus on cannot be scrolled by
+   one, and nothing else on the block draws a focus ring for it. */
 #doc .scroll{overflow-x:auto;margin:0 0 1rem}
 #doc .scroll:focus-visible{outline:2px solid var(--k);outline-offset:3px}
 #doc pre{margin:0;padding:.5rem 0 .5rem .8rem;border-left:2px solid var(--hairp);font-family:var(--monof);font-size:13px;line-height:1.55;white-space:pre}

@@ -329,27 +329,27 @@ const shapes = [
   {
     name: 'a fenced code block',
     in: '```\nOne.\n```',
-    want: [{ kind: 'code', lang: '', text: 'One.' }],
+    want: [{ kind: 'code', text: 'One.' }],
   },
   {
     name: 'code keeps its blank lines, its hashes and its spaces',
     in: '```js\nconst a = 1;\n\n# not a heading\n  indented\n```',
-    want: [{ kind: 'code', lang: 'js', text: 'const a = 1;\n\n# not a heading\n  indented' }],
+    want: [{ kind: 'code', text: 'const a = 1;\n\n# not a heading\n  indented' }],
   },
   {
     name: 'an indented fence takes its own indent off the code',
     in: '  ```\n  One.\nTwo.\n  ```',
-    want: [{ kind: 'code', lang: '', text: 'One.\nTwo.' }],
+    want: [{ kind: 'code', text: 'One.\nTwo.' }],
   },
   {
     name: 'a fence nothing closes runs to the end',
     in: '```\nOne.',
-    want: [{ kind: 'code', lang: '', text: 'One.' }],
+    want: [{ kind: 'code', text: 'One.' }],
   },
   {
     name: 'a fence part way down a piece ends the paragraph above it',
     in: 'One.\n```\ntwo\n```\nThree.',
-    want: [{ kind: 'p', text: 'One.' }, { kind: 'code', lang: '', text: 'two' }, { kind: 'p', text: 'Three.' }],
+    want: [{ kind: 'p', text: 'One.' }, { kind: 'code', text: 'two' }, { kind: 'p', text: 'Three.' }],
   },
   {
     name: 'a line of inline code is not a fence',
@@ -404,7 +404,7 @@ const shapes = [
   {
     name: 'the blank line a piece starts with is nothing in front of a fence',
     in: 'a\n\n\n```\nx\n```',
-    want: [{ kind: 'p', text: 'a' }, { kind: 'code', lang: '', text: 'x' }],
+    want: [{ kind: 'p', text: 'a' }, { kind: 'code', text: 'x' }],
   },
   {
     name: 'and nothing in front of a table',
@@ -419,10 +419,40 @@ const shapes = [
   {
     name: 'a fence holding a blank line is one piece',
     in: 'One.\n\n```\ntwo\n\nthree\n```\n\nFour.',
-    want: [{ kind: 'p', text: 'One.' }, { kind: 'code', lang: '', text: 'two\n\nthree' }, { kind: 'p', text: 'Four.' }],
+    want: [{ kind: 'p', text: 'One.' }, { kind: 'code', text: 'two\n\nthree' }, { kind: 'p', text: 'Four.' }],
   },
 ];
 
 for (const c of shapes) assert.deepEqual(parts(c.in), c.want, c.name);
 
 console.log(`${shapes.length} shape cases pass`);
+
+// A block is as long as the server lets it be, twenty thousand runes, and the
+// pane has to draw whatever is in it. These are the shapes that used to be read
+// by one call per line of them: a block of nothing but headings, and one of
+// nothing but fences. The document is drawn inside the board's pane, so a
+// renderer that ran out of stack over one block would take the proposition off
+// the page for everybody who opened it.
+//
+// The times are a guard against a rule that reads the lines it has not come to
+// yet, which is quadratic and was: the bound is many times the tenth of a
+// second these take, so it fails on a mistake rather than on a busy machine.
+const long = [
+  { name: 'five thousand headings', in: '# a\n'.repeat(5000), want: 5000, kind: 'h1' },
+  { name: 'five thousand fences', in: '```\n'.repeat(5000), want: 2500, kind: 'code' },
+  { name: 'ten thousand lines of prose', in: 'a\n'.repeat(10000), want: 1, kind: 'p' },
+  { name: 'ten thousand table rows', in: '| a |\n| - |\n' + '| 1 |\n'.repeat(10000), want: 1, kind: 'table' },
+  { name: 'ten thousand quoted lines', in: '> a\n'.repeat(10000), want: 1, kind: 'quote' },
+  { name: 'ten thousand lines of code', in: '```\n' + 'a\n'.repeat(10000) + '```', want: 1, kind: 'code' },
+];
+
+for (const c of long) {
+  const began = performance.now();
+  const got = parts(c.in);
+  const took = performance.now() - began;
+  assert.equal(got.length, c.want, c.name + ': how many parts');
+  assert.equal(got[0].kind, c.kind, c.name + ': what they are');
+  assert.ok(took < 200, `${c.name}: took ${took.toFixed(1)}ms, which is over the bound`);
+}
+
+console.log(`${long.length} long block cases pass`);

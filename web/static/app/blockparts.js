@@ -7,11 +7,22 @@
 // an edit before its ack, an offline document and the snapshot all come through
 // here. The export is goldmark, in internal/markdown, and the two agree on
 // ordinary text; where they part company the rule below says so.
+//
+// Every rule below reads forward from a line and answers with the line it
+// stopped at, so a block of five thousand headings is five thousand turns of a
+// loop rather than five thousand frames on the stack, and nothing in here
+// copies the lines it has not read yet. The server takes a block of twenty
+// thousand runes, and the pane has to draw whatever it took.
 
-import { fence, step } from './blocktext.js';
+import { step } from './blocktext.js';
 
 export function parts(text) {
-  return pieces(text).flatMap(piece);
+  const out = [];
+  for (const each of pieces(text)) {
+    const lines = each.split('\n');
+    for (let at = 0; at < lines.length;) at = piece(lines, at, out);
+  }
+  return out;
 }
 
 // pieces is the text cut into the runs a blank line separates, with a fenced
@@ -38,65 +49,66 @@ function pieces(text) {
   return out.filter((each) => each.trim());
 }
 
-// piece is one of those read as what it is. The order is the order the markers
-// are looked for: a fence first, because it holds text that looks like anything
-// else, then the line markers, then the shapes that take more than one line.
-function piece(text) {
-  // Nothing but whitespace is nothing at all. A piece is never only that, but
-  // what is left in front of a fence or a table part way down one can be, and
-  // every list rule below reads true of no lines whatever.
-  if (!text.trim()) return [];
-  const lines = text.split('\n');
-  const opens = lines.findIndex((line) => step(null, line) !== null);
-  // A fence part way down a piece is where the server's markdown ends the
-  // paragraph and starts the code, so it ends this one too.
-  if (opens > 0) return [...piece(lines.slice(0, opens).join('\n')), ...piece(lines.slice(opens).join('\n'))];
-  if (opens === 0) return code(lines);
-
-  // A heading is its first line and nothing else, so whatever is under one is
+// piece reads one thing off the front of a piece, writes it into out and
+// answers with the line after it, which is always further on than the line it
+// was given. The order is the order the markers are looked for: a fence first,
+// because it holds text that looks like anything else, then the line markers,
+// then what is left over as a list or a paragraph.
+function piece(lines, at, out) {
+  if (step(null, lines[at]) !== null) return code(lines, at, out);
+  // A heading is its own line and nothing else, so whatever is under one is
   // read as what it is rather than swept into the heading.
-  const hash = /^(#{1,3}) /.exec(lines[0]);
-  if (hash) return [{ kind: 'h' + hash[1].length, text: lines[0].slice(hash[1].length + 1) }, ...more(lines.slice(1))];
-  if (/^ {0,3}>/.test(lines[0])) return quote(lines);
+  const hash = /^(#{1,3}) /.exec(lines[at]);
+  if (hash) {
+    out.push({ kind: 'h' + hash[1].length, text: lines[at].slice(hash[1].length + 1) });
+    return at + 1;
+  }
+  if (/^ {0,3}>/.test(lines[at])) return quote(lines, at, out);
   // A table runs to the end of its piece, because a blank line is where the
-  // server's markdown ends one and a piece is what a blank line separates. Like
-  // a fence, one part way down a piece ends the paragraph above it.
-  for (let i = 0; i < lines.length; i++) {
-    const grid = table(lines.slice(i));
-    if (!grid) continue;
-    return i ? [...piece(lines.slice(0, i).join('\n')), grid] : [grid];
+  // server's markdown ends one and a piece is what a blank line separates.
+  const grid = table(lines, at);
+  if (grid) {
+    out.push(grid);
+    return lines.length;
   }
 
-  const kept = lines.filter((line) => line.trim());
-  if (kept.every((line) => /^- /.test(line))) return [{ kind: 'ul', items: kept.map((line) => line.slice(2)) }];
-  if (kept.every((line) => /^\d+\. /.test(line))) return [{ kind: 'ol', items: kept.map((line) => line.replace(/^\d+\. /, '')) }];
-  return [{ kind: 'p', text }];
+  // Everything else is one list or one paragraph, as far as the fence or the
+  // table that ends it: both of those are where the server's markdown ends a
+  // paragraph too.
+  let stop = at + 1;
+  while (stop < lines.length && step(null, lines[stop]) === null && !table(lines, stop)) stop++;
+  const kept = [];
+  for (let i = at; i < stop; i++) if (lines[i].trim()) kept.push(lines[i]);
+  // Nothing but whitespace is nothing at all. A piece never begins with it, but
+  // what is left in front of a fence or a table part way down one can be, and
+  // every list rule below reads true of no lines whatever.
+  if (!kept.length) return stop;
+  if (kept.every((line) => /^- /.test(line))) out.push({ kind: 'ul', items: kept.map((line) => line.slice(2)) });
+  else if (kept.every((line) => /^\d+\. /.test(line))) out.push({ kind: 'ol', items: kept.map((line) => line.replace(/^\d+\. /, '')) });
+  else out.push({ kind: 'p', text: lines.slice(at, stop).join('\n') });
+  return stop;
 }
-
-// more is what is left under a heading, a quote or a fence, read as its own
-// piece.
-const more = (lines) => piece(lines.join('\n'));
 
 // code is a fenced code block: the lines between the fences as they were typed,
 // with the opening fence's own indent taken off each of them the way GitHub
 // does it. A fence nothing closes runs to the end of the piece, which is what
-// the server's markdown makes of it too. The info string is kept as the word it
-// starts with, for a reader who wants to know what the code is; nothing here
-// highlights it.
-function code(lines) {
-  const [, marks, info] = fence.exec(lines[0]);
-  const indent = lines[0].indexOf(marks[0]);
-  const open = step(null, lines[0]);
+// the server's markdown makes of it too. The info string is not kept: nothing
+// here highlights code, and the word stays in the markdown a click shows.
+function code(lines, at, out) {
+  const indent = /^ */.exec(lines[at])[0].length;
+  const open = step(null, lines[at]);
   let end = lines.length;
-  for (let i = 1; i < lines.length; i++) {
+  for (let i = at + 1; i < lines.length; i++) {
     if (step(open, lines[i]) === null) { end = i; break; }
   }
-  const text = lines.slice(1, end).map((line) => {
+  const text = [];
+  for (let i = at + 1; i < end; i++) {
     let cut = 0;
-    while (cut < indent && line[cut] === ' ') cut++;
-    return line.slice(cut);
-  });
-  return [{ kind: 'code', lang: info.trim().split(/\s+/)[0], text: text.join('\n') }, ...more(lines.slice(end + 1))];
+    while (cut < indent && lines[i][cut] === ' ') cut++;
+    text.push(lines[i].slice(cut));
+  }
+  out.push({ kind: 'code', text: text.join('\n') });
+  return end + 1;
 }
 
 // quote is the run of lines that open with a marker, the marker and one space
@@ -109,38 +121,45 @@ function code(lines) {
 // wrong: the line is drawn where it was typed rather than pulled into the quote
 // above it. Nothing inside a quote nests either: its paragraphs carry inline
 // markup and no list, heading or code of their own.
-function quote(lines) {
-  let end = lines.findIndex((line) => !/^ {0,3}>/.test(line));
-  if (end < 0) end = lines.length;
+function quote(lines, at, out) {
+  let end = at;
+  while (end < lines.length && /^ {0,3}>/.test(lines[end])) end++;
   const paragraphs = [];
   let part = [];
-  for (const line of lines.slice(0, end)) {
-    const said = line.replace(/^ {0,3}> ?/, '');
+  for (let i = at; i < end; i++) {
+    const said = lines[i].replace(/^ {0,3}> ?/, '');
     if (said.trim()) part.push(said);
     else if (part.length) { paragraphs.push(part.join('\n')); part = []; }
   }
   if (part.length) paragraphs.push(part.join('\n'));
-  return [{ kind: 'quote', paragraphs }, ...more(lines.slice(end))];
+  out.push({ kind: 'quote', paragraphs });
+  return end;
 }
 
-// table is a GitHub pipe table: a header row, a row of dashes under it with one
-// cell per header cell and a colon on the side each column is aligned to, then
-// the rows. The row of dashes has to hold a pipe, which is what keeps a line of
-// plain dashes under a line of words out of this: goldmark reads that as a
-// second level heading and the pane has always drawn it as the text it is, and
-// a table of one column would be a third answer and the worst of them. A row
-// short of cells is padded and a long one is cut, which is how goldmark keeps
-// every row the width of the header.
-function table(lines) {
-  if (lines.length < 2 || !lines[1].includes('|')) return null;
-  const head = cells(lines[0]);
-  const rule = cells(lines[1]);
-  if (!head.length || rule.length !== head.length || !rule.every((c) => /^:?-+:?$/.test(c))) return null;
-  const align = rule.map((c) => (c.endsWith(':') ? (c.startsWith(':') ? 'c' : 'r') : (c.startsWith(':') ? 'l' : '')));
-  const rows = lines.slice(2).filter((line) => line.trim()).map((line) => {
-    const row = cells(line);
-    return head.map((_, i) => row[i] ?? '');
-  });
+// table is a GitHub pipe table starting at a line: a header row, a row of
+// dashes under it with one cell per header cell and a colon on the side each
+// column is aligned to, then the rows. The row of dashes has to hold a pipe,
+// which is what keeps a line of plain dashes under a line of words out of this:
+// goldmark reads that as a second level heading and the pane has always drawn
+// it as the text it is, and a table of one column would be a third answer and
+// the worst of them. A row short of cells is padded and a long one is cut,
+// which is how goldmark keeps every row the width of the header.
+//
+// It is asked at every line of a paragraph, so it answers before it copies
+// anything: a line with no pipe under it cannot start one.
+function table(lines, at) {
+  const rule = lines[at + 1];
+  if (rule === undefined || !rule.includes('|')) return null;
+  const head = cells(lines[at]);
+  const marks = cells(rule);
+  if (!head.length || marks.length !== head.length || !marks.every((c) => /^:?-+:?$/.test(c))) return null;
+  const align = marks.map((c) => (c.endsWith(':') ? (c.startsWith(':') ? 'c' : 'r') : (c.startsWith(':') ? 'l' : '')));
+  const rows = [];
+  for (let i = at + 2; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const row = cells(lines[i]);
+    rows.push(head.map((_, n) => row[n] ?? ''));
+  }
   return { kind: 'table', align, head, rows };
 }
 

@@ -166,12 +166,13 @@ export function enter(text, start, end) {
 // because a dot does not match U+2028 or U+2029. Those are ordinary characters
 // on an ordinary line to the server, and a fence line holding one has to open
 // here as well or the two would disagree about where the code is.
-export const fence = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
+const fence = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
 
 // step is the fence a line leaves open: the delimiter that opened it, or null
-// outside one. It and the pattern above are the one definition of a fence on
-// this side: blockparts.js cuts the drawing by them as well. A backtick opener's info string holds no backtick, which is what
-// keeps a line of inline code from opening a fence that never closes.
+// outside one. It is the one definition of a fence on this side, and
+// blockparts.js draws code by it as well. A backtick opener's info string holds
+// no backtick, which is what keeps a line of inline code from opening a fence
+// that never closes.
 export function step(open, line) {
   const m = fence.exec(line);
   if (!m) return open;
