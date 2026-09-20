@@ -26,7 +26,10 @@ const compactGap = 10 * time.Minute
 // A generated log of 200,000 saves over 200 blocks folds in ten chunks, five
 // seconds altogether and at most six tenths of a second in any one
 // transaction. Unchunked it was one transaction of five seconds, which is
-// longer than the five second busy timeout a writer waits on the lock.
+// longer than the five second busy timeout a writer waits on the lock. Six
+// tenths of a second is what dividing that log by block came to and not a
+// bound: one block holding all 200,000 of those saves is one transaction of
+// about two and a half seconds, because a run cannot be folded in halves.
 const (
 	compactRows   = 20000
 	compactBlocks = 500
@@ -84,12 +87,8 @@ func (s *Service) fold(ctx context.Context, from, to string, cutoff int64) (int,
 
 	// The runs are found once and written down, because the update and the
 	// delete need the same answer and the pass over the log is the expensive
-	// half. The table belongs to this connection, and the drop at the top is
-	// what a transaction that failed between the create and the drop would
-	// otherwise leave behind on it.
-	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS temp.fold`); err != nil {
-		return 0, err
-	}
+	// half. Temp DDL is transactional, so a failure anywhere below takes the
+	// table with it.
 	if _, err := tx.ExecContext(ctx, foldQuery,
 		from, to, int64(compactGap/time.Second), cutoff); err != nil {
 		return 0, err
@@ -115,6 +114,10 @@ func (s *Service) fold(ctx context.Context, from, to string, cutoff int64) (int,
 	if err != nil {
 		return 0, err
 	}
+	// This drop is the one that matters: the rollback above cannot reach a
+	// table the commit has kept, and the connection goes back to the pool with
+	// whatever temp tables it still holds, so the next fold on it would find
+	// this one in its way.
 	if _, err := tx.ExecContext(ctx, `DROP TABLE temp.fold`); err != nil {
 		return 0, err
 	}

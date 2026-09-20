@@ -25,9 +25,12 @@ type kept struct {
 }
 
 func TestCompactFoldsRunsOfTypedSaves(t *testing.T) {
-	set := func(actor string, ago time.Duration, before, after string) logRow {
-		return logRow{entity: "block", entityID: "7", action: "set",
+	setOn := func(block, actor string, ago time.Duration, before, after string) logRow {
+		return logRow{entity: "block", entityID: block, action: "set",
 			actor: actor, ago: ago, before: before, after: after}
+	}
+	set := func(actor string, ago time.Duration, before, after string) logRow {
+		return setOn("7", actor, ago, before, after)
 	}
 	const day = 24 * time.Hour
 
@@ -109,6 +112,29 @@ func TestCompactFoldsRunsOfTypedSaves(t *testing.T) {
 				set("1", 3*day-11*time.Minute-30*time.Second, "t2", "t3"),
 			},
 			want: []kept{{1, "t0", "t1"}, {3, "t1", "t3"}},
+		},
+		// The two edges, each with the block a second the other side of it, so
+		// that moving the comparison either way fails the case rather than
+		// quietly widening or narrowing what is folded.
+		{
+			name: "a gap of exactly ten minutes joins a run and a second more breaks it",
+			rows: []logRow{
+				setOn("7", "1", 3*day, "a0", "a1"),
+				setOn("7", "1", 3*day-compactGap, "a1", "a2"),
+				setOn("8", "1", 3*day, "b0", "b1"),
+				setOn("8", "1", 3*day-compactGap-time.Second, "b1", "b2"),
+			},
+			want: []kept{{2, "a0", "a2"}, {3, "b0", "b1"}, {4, "b1", "b2"}},
+		},
+		{
+			name: "a run reaching the cutoff is left whole and one a second older folds",
+			rows: []logRow{
+				setOn("7", "1", CompactAfter+30*time.Second, "a0", "a1"),
+				setOn("7", "1", CompactAfter, "a1", "a2"),
+				setOn("8", "1", CompactAfter+31*time.Second, "b0", "b1"),
+				setOn("8", "1", CompactAfter+time.Second, "b1", "b2"),
+			},
+			want: []kept{{1, "a0", "a1"}, {2, "a1", "a2"}, {4, "b0", "b2"}},
 		},
 		{
 			name: "a run of one is left where it is",
