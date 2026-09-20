@@ -353,6 +353,11 @@ type writeDocumentOut struct {
 	// back as its own base. It is empty on a replayed call.
 	Base      []sourceBlock `json:"base"`
 	Conflicts []conflictOut `json:"conflicts"`
+	// Merged is the blocks that took somebody else's words in on the way, so
+	// what is stored there is neither this text nor theirs but both. The text
+	// this call sent is out of date for those paragraphs, and sending it again
+	// would write it back over the merge; read the document again to keep them.
+	Merged []int64 `json:"merged"`
 	// Replayed is a call answered out of the key it was sent under, having
 	// written nothing because the first one did. Read the document again before
 	// writing more: nothing remembers what the first answer said.
@@ -382,7 +387,8 @@ func (s *Server) writeDocument(ctx context.Context, req *sdk.CallToolRequest, in
 	if err != nil {
 		return nil, writeDocumentOut{}, s.refusal("write the document", err)
 	}
-	out := writeDocumentOut{Base: []sourceBlock{}, Conflicts: []conflictOut{}, Replayed: save.Replayed}
+	out := writeDocumentOut{Base: []sourceBlock{}, Conflicts: []conflictOut{},
+		Merged: save.Merged, Replayed: save.Replayed}
 	for _, b := range save.Base {
 		out.Base = append(out.Base, sourceBlock{ID: b.ID, Version: b.Version})
 	}

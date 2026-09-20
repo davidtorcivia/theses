@@ -991,3 +991,64 @@ func TestWriteSourceAMergePressedFourTimes(t *testing.T) {
 		t.Fatalf("the block is at version %d, want %d", after[1].Version, was[1].Version+3)
 	}
 }
+
+// A block that took somebody else's words in on the way is reported as merged,
+// which is what tells the person their text is out of date for it. A block
+// that took none of theirs is not in the list: one nobody else touched, one
+// this text leaves alone, and one that conflicted and so went nowhere at all.
+func TestWriteSourceReportsWhatMerged(t *testing.T) {
+	for _, tc := range []struct {
+		name, theirs, mine, reads string
+		want                      bool
+		clash                     bool
+	}{
+		{
+			name:   "a merge is reported",
+			theirs: "The tide comes in twice a night.",
+			mine:   "The sea comes in twice a day.",
+			reads:  "The sea comes in twice a night.",
+			want:   true,
+		},
+		{
+			name:   "a conflict is not a merge",
+			theirs: "The tide comes in twice a night.",
+			mine:   "The tide comes in twice a week.",
+			reads:  "The tide comes in twice a night.",
+			clash:  true,
+		},
+		{
+			name:  "a paragraph nobody else touched is not a merge",
+			mine:  "The sea comes in twice a day.",
+			reads: "The sea comes in twice a day.",
+		},
+		{
+			name:   "a paragraph this text leaves alone is not a merge",
+			theirs: "The tide comes in twice a night.",
+			mine:   "The tide comes in twice a day.",
+			reads:  "The tide comes in twice a night.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			base := f.seed(t, "# Tide", "The tide comes in twice a day.", "Two.")
+			was := f.blocks(t)
+			if tc.theirs != "" {
+				f.set(t, was[1].ID, was[1].Version, tc.theirs)
+			}
+
+			save := f.press(t, base, "# Tide\n\n"+tc.mine+"\n\nTwo.\n\nThree new.")
+			if tc.clash != (len(save.Conflicts) == 1) {
+				t.Fatalf("the save reported %+v, want a conflict: %v", save.Conflicts, tc.clash)
+			}
+			if tc.want != (len(save.Merged) == 1 && save.Merged[0] == was[1].ID) {
+				t.Fatalf("the save reported merged %v, want %v for block %d",
+					save.Merged, tc.want, was[1].ID)
+			}
+			// A merge is reported exactly when this save wrote the block and
+			// left it holding something other than what it sent.
+			if got := f.texts(t)[1]; got != tc.reads {
+				t.Fatalf("the paragraph reads %q, want %q", got, tc.reads)
+			}
+		})
+	}
+}

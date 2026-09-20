@@ -57,16 +57,23 @@ type SourceConflict struct {
 // paragraph, over somebody else's words where they are in the way, because the
 // version named is theirs. Blocks the text does not stand for are not in it.
 //
+// Merged is the blocks that took somebody else's words in on the way: what is
+// stored there is neither what the text sent nor what they wrote but both, so
+// the text the caller still holds is out of date for those paragraphs, and
+// sending it again would write their wording back over the merge. It is the
+// other half of Conflicts: those are the paragraphs that did not go in at all.
+//
 // Replayed is a save answered out of the client key it was sent under, having
 // applied nothing because the first one did. It carries no base, because
 // nothing remembers what the first answer said: read the document again.
 type SourceSave struct {
 	Base      []BlockRef       `json:"base"`
 	Conflicts []SourceConflict `json:"conflicts"`
+	Merged    []int64          `json:"merged"`
 	Replayed  bool             `json:"replayed,omitempty"`
 }
 
-// maxPairs is how large a table lining the paragraphs up may build, counted in
+// MaxPairs is how large a table lining the paragraphs up may build, counted in
 // changed base blocks times changed paragraphs. A million is a few
 // milliseconds and about eight megabytes, which is the same allowance one three
 // way merge of a block gets. It counts only the stretch that changed, because
@@ -76,7 +83,10 @@ type SourceSave struct {
 // Past it the save is refused. Pairing by position instead would rewrite every
 // block of a long document with its neighbor's text the moment one paragraph
 // was added at the top.
-const maxPairs = 1 << 20
+//
+// It is a variable so that a test of the refusal need not build a document of
+// a thousand paragraphs to reach it.
+var MaxPairs = 1 << 20
 
 // WriteSource writes a whole document from its markdown. base is the blocks the
 // markdown was written from, in order, and text is the markdown as it now
@@ -99,7 +109,7 @@ const maxPairs = 1 << 20
 func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 	base []BlockRef, text string) (SourceSave, error) {
 	paragraphs := Paragraphs(text)
-	out := SourceSave{Base: []BlockRef{}, Conflicts: []SourceConflict{}}
+	out := SourceSave{Base: []BlockRef{}, Conflicts: []SourceConflict{}, Merged: []int64{}}
 	err := s.Together(ctx, func(ctx context.Context) error {
 		// The revision is taken first for two reasons. It is the restore point,
 		// and it is the one command of this save that a replay under the same
@@ -156,7 +166,7 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 		for _, ref := range base {
 			was[ref.ID] = ref.Version
 		}
-		conflicted, wrote, refs, err := s.applyItems(ctx, a, document, items, blocks, func(b Block) missing {
+		conflicted, wrote, done, err := s.applyItems(ctx, a, document, items, blocks, func(b Block) missing {
 			version, named := was[b.ID]
 			switch {
 			case !named:
@@ -189,7 +199,10 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 				out.Base = append(out.Base, p.answer)
 				at++
 			default:
-				out.Base = append(out.Base, refs[at])
+				out.Base = append(out.Base, done[at].Ref)
+				if done[at].Merged {
+					out.Merged = append(out.Merged, done[at].Ref.ID)
+				}
 				at++
 			}
 		}
@@ -347,7 +360,7 @@ func pairs(texts, paragraphs []string) ([]int, error) {
 		texts[len(texts)-1-tail] == paragraphs[len(paragraphs)-1-tail] {
 		tail++
 	}
-	if (len(texts)-head-tail)*(len(paragraphs)-head-tail) > maxPairs {
+	if (len(texts)-head-tail)*(len(paragraphs)-head-tail) > MaxPairs {
 		return nil, ErrSourceSpread
 	}
 	middle := merge.Match(texts[head:len(texts)-tail], paragraphs[head:len(paragraphs)-tail])

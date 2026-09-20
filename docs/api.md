@@ -92,7 +92,7 @@ response body:
 - the attachment routes answer `{"card": …, "action": "attach"}` as they always
   do, read off that event;
 - `PUT /api/v1/documents/{id}/source` answers `{"base": [], "conflicts": [],
-  "replayed": true}`. It is many commands in one transaction and nothing
+  "merged": [], "replayed": true}`. It is many commands in one transaction and nothing
   remembers what the first answer said, so a caller that means to write more
   reads the document again first;
 - `POST /api/v1/files` makes no second file row and no second upload. For a
@@ -370,7 +370,8 @@ order of the text, and lists the paragraphs that did not go in:
 
 ```json
 {"base": [{"id": 31, "version": 5}, {"id": 32, "version": 7}, {"id": 44, "version": 1}],
- "conflicts": [{"block": 32, "version": 7, "current": "Then the counterclaim."}]}
+ "conflicts": [{"block": 32, "version": 7, "current": "Then the counterclaim."}],
+ "merged": [31]}
 ```
 
 Send that `base` back with the same text and nothing is written: every
@@ -389,6 +390,13 @@ theirs is reading the document again and working their paragraph into yours. A
 paragraph this text leaves alone is different: the answer names it at the
 version the text was written from, so a later write of it merges against what
 they wrote rather than replacing it.
+
+`merged` is the other half of `conflicts`: the blocks that took somebody else's
+words in on the way, so what is stored there is neither what this text sent nor
+what they wrote but both. Those paragraphs of the text the caller still holds
+are out of date, and writing that text again would put its wording back over
+the merge. To keep what came in, read the document again and write from that.
+`conflicts` is what did not go in at all; `merged` is what went in changed.
 
 Nothing is half applied: the whole thing is one transaction, and a revision
 with reason `pre-import` is kept first, so a write that went wrong is one
@@ -422,7 +430,7 @@ arrived is answered without applying anything a second time, and that answer
 says so and carries no base:
 
 ```json
-{"base": [], "conflicts": [], "replayed": true}
+{"base": [], "conflicts": [], "merged": [], "replayed": true}
 ```
 
 Nothing remembers what the first answer said, so read the document again before
@@ -1141,7 +1149,7 @@ one endpoint serves every tool.
 | `append_block` | `write` | Adds a paragraph at the end of a document, unlike `POST /api/v1/documents/{id}/blocks` with no `after`, which puts one at the head. |
 | `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
 | `replace_block` | `write` | Replaces the text of one block. |
-| `write_document` | `write` | Replaces a document, or the part of it `base` names, with markdown, and answers with the block each paragraph now stands in: `PUT /api/v1/documents/{id}/source` with `base` and `key` optional in the same way. |
+| `write_document` | `write` | Replaces a document, or the part of it `base` names, with markdown, and answers with the block each paragraph now stands in, what did not go in and what went in changed: `PUT /api/v1/documents/{id}/source` with `base` and `key` optional in the same way. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
 | `annotate_link` | `write` | Changes a saved link's note, kind and question. |

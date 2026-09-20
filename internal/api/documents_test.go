@@ -280,13 +280,17 @@ func TestWriteDocumentSource(t *testing.T) {
 	var save struct {
 		Base      []docs.BlockRef `json:"base"`
 		Conflicts []any           `json:"conflicts"`
+		Merged    []int64         `json:"merged"`
 		Replayed  bool            `json:"replayed"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &save); err != nil {
 		t.Fatal(err)
 	}
-	if len(save.Conflicts) != 0 || save.Replayed {
+	if len(save.Conflicts) != 0 || len(save.Merged) != 0 || save.Replayed {
 		t.Fatalf("the save answered %s", w.Body)
+	}
+	if !strings.Contains(w.Body.String(), `"merged":[]`) {
+		t.Fatalf("the answer has no merged list: %s", w.Body)
 	}
 	// The answer names the block each paragraph of the text now stands in, one
 	// per paragraph, which is what the next save sends as its base.
@@ -336,6 +340,37 @@ func TestWriteDocumentSource(t *testing.T) {
 	if len(revisions) != 1 {
 		t.Fatalf("the document has %d revisions after two identical saves, want 1", len(revisions))
 	}
+
+	// A block that took somebody else's words in on the way comes back in
+	// merged, which is what tells the caller its text is out of date there.
+	first := save.Base[0]
+	if _, err := h.docs.SetBlock(ctx, who, first.ID, first.Version, "The sea is a furnace.", false); err != nil {
+		t.Fatal(err)
+	}
+	folded := fmt.Sprintf(`{"base":[{"id":%d,"version":%d}],"text":%q}`,
+		first.ID, first.Version, "The deep sea is a battery.")
+	w = h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, folded)
+	if w.Code != http.StatusOK {
+		t.Fatalf("the merging save answered %d: %s", w.Code, w.Body)
+	}
+	save.Merged = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &save); err != nil {
+		t.Fatal(err)
+	}
+	if len(save.Merged) != 1 || save.Merged[0] != first.ID {
+		t.Fatalf("the merging save answered %s, want block %d merged", w.Body, first.ID)
+	}
+
+	// More changed at once than the paragraphs can be placed against is 422,
+	// with the budget wound down so the test need not send a thousand of them.
+	was := docs.MaxPairs
+	docs.MaxPairs = 1
+	t.Cleanup(func() { docs.MaxPairs = was })
+	wide := fmt.Sprintf(`{"base":%s,"text":%q}`, base, "One, all new.\n\nTwo, all new.")
+	if w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, wide); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("too large a change answered %d: %s", w.Code, w.Body)
+	}
+	docs.MaxPairs = was
 
 	// A base naming a version the server does not hold the text of is refused
 	// outright.

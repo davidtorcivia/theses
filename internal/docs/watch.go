@@ -375,6 +375,16 @@ type item struct {
 	Text    string
 }
 
+// An applied is what one item became: the block its text stands in now and the
+// version it stands at, and whether the block ended up holding something other
+// than what the item sent, which is the merge having folded somebody else's
+// words in. The two together are what lets a caller press save again knowing
+// exactly what that would assert.
+type applied struct {
+	Ref    BlockRef
+	Merged bool
+}
+
 // missing is what becomes of a block the document still has that no item names.
 type missing int
 
@@ -405,13 +415,12 @@ const (
 // that changed nothing from one that changed something: a set whose text the
 // block already holds is not a command, and neither is a conflict.
 //
-// refs is one entry per item, in item order: the block that item's text now
-// stands in and the version it stands at, which is what a source save answers
+// done is one entry per item, in item order, and is what a source save answers
 // with so that the next one need guess nothing. An item whose text holds more
 // than one paragraph, which only an import has, is answered by the first block
 // of them; an import ignores the whole list.
 func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, items []item,
-	blocks []Block, gone func(Block) missing) (conflicted map[int64]bool, wrote bool, refs []BlockRef, err error) {
+	blocks []Block, gone func(Block) missing) (conflicted map[int64]bool, wrote bool, done []applied, err error) {
 	live := map[int64]Block{}
 	for _, b := range blocks {
 		live[b.ID] = b
@@ -423,8 +432,9 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		current, known := live[item.ID]
 		if !known {
 			// A paragraph with no block is one block, whatever happens to it,
-			// so the answer for it is settled in this branch.
-			refs = append(refs, BlockRef{})
+			// so the answer for it is settled in this branch. A block made for
+			// it holds exactly what was sent, so nothing was merged into it.
+			done = append(done, applied{})
 			// A paragraph somebody added, or one whose block the browser
 			// deleted while the file was open. Either way the words are in the
 			// file and not in the database, so they go in as a new block: a
@@ -443,7 +453,7 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 					return nil, false, nil, err
 				}
 				if n == 0 {
-					refs[len(refs)-1] = rowOf(e, item.ID)
+					done[len(done)-1].Ref, _ = rowOf(e, item.ID)
 				}
 				wrote = true
 				after = e.EntityID
@@ -453,8 +463,10 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		seen[item.ID] = true
 		after = item.ID
 		// The block as it stands is the answer unless something below writes
-		// to it: a conflict leaves it exactly here.
-		refs = append(refs, BlockRef{ID: current.ID, Version: current.Version})
+		// to it: a conflict leaves it exactly here, holding their words and
+		// none of this item's, which is reported as a conflict and not as a
+		// merge.
+		done = append(done, applied{Ref: BlockRef{ID: current.ID, Version: current.Version}})
 		// A block carried as it already reads is nothing to do, and cutting it
 		// into paragraphs first would take a block somebody is in the middle of
 		// typing, which holds whatever they typed, and split it under them.
@@ -481,7 +493,8 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 				}
 				conflicted[item.ID] = true
 			} else {
-				refs[len(refs)-1] = rowOf(e, item.ID)
+				ref, stored := rowOf(e, item.ID)
+				done[len(done)-1] = applied{Ref: ref, Merged: stored != parts[0]}
 				wrote = true
 			}
 		}
@@ -512,23 +525,24 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 			conflicted[b.ID] = true
 		}
 	}
-	return conflicted, wrote, refs, nil
+	return conflicted, wrote, done, nil
 }
 
-// rowOf is the block an applied command wrote, read out of the row the event
-// carries rather than asked for again, since the transaction it was written in
-// has not committed and no other connection can see it yet. An event without a
-// readable row answers with the id it was about at no version, which is a base
-// the next save cannot line up against and refuses on rather than guesses.
-func rowOf(e core.Event, fallback int64) BlockRef {
+// rowOf is the block a command wrote and the text it left in it, read out of
+// the row the event carries rather than asked for again, since the transaction
+// it was written in has not committed and no other connection can see it yet.
+// An event without a readable row answers with the id it was about at no
+// version, which is a base the next save cannot line up against and refuses on
+// rather than guesses.
+func rowOf(e core.Event, fallback int64) (BlockRef, string) {
 	var b Block
 	if err := json.Unmarshal(e.After, &b); err == nil && b.ID != 0 {
-		return BlockRef{ID: b.ID, Version: b.Version}
+		return BlockRef{ID: b.ID, Version: b.Version}, b.Text
 	}
 	if e.EntityID != 0 {
-		return BlockRef{ID: e.EntityID}
+		return BlockRef{ID: e.EntityID}, ""
 	}
-	return BlockRef{ID: fallback}
+	return BlockRef{ID: fallback}, ""
 }
 
 // markedIn is the blocks the file already carries a conflict marker on, which
