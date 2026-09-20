@@ -161,9 +161,9 @@ func (s *Service) CreateDocument(ctx context.Context, a core.Actor, proposition 
 	}
 	// The row and the blocks it starts from go in one transaction, so a
 	// refusal partway through leaves no half made document, and the blocks go
-	// in as ordinary insert commands rather than as raw rows: the text a block
-	// holds at a version is recovered from the activity log, and a block that
-	// never wrote one there could never be merged, only refused.
+	// in as ordinary insert commands rather than as raw rows, because a block
+	// that appeared in a document with nobody recorded as having written it is
+	// a mutation the log does not hold.
 	var created core.Event
 	err = s.Together(ctx, func(ctx context.Context) error {
 		e, start, err := s.createDocumentRow(ctx, a, proposition, name, template)
@@ -551,21 +551,30 @@ func (s *Service) setOne(ctx context.Context, a core.Actor, id, base int64, text
 	})
 }
 
-// baseText recovers the text a block held at a given version. Every block.set
-// writes the whole row into the activity log as its after, so the text at a
-// version is the after of the row that produced it; block.insert writes the
-// same row at version one. Nothing else is kept: a per block column of previous
-// text would be a second copy of what the log already holds, and it would hold
-// only the one version back rather than every version an editor might have
-// started from.
+// baseText recovers the text a block held at a given version. The last twenty
+// versions of every block are in block_texts, written by the triggers migration
+// 004 put on the blocks table, so this is a primary key read.
 //
-// ponytail: an activity log pruned one day would take the older bases with it,
-// and a stale set whose base has been pruned becomes a conflict rather than a
-// merge. The upgrade path is keeping the last few texts per block when that day
-// comes.
+// The activity log is the fallback, and it is there for the versions written
+// before that migration ran: every block.set writes the whole row into the log
+// as its after, so the text at a version is the after of the row that produced
+// it, and block.insert writes the same row at version one. Nothing was
+// backfilled. core.Compact folds runs of typed saves into one row, which takes
+// the intermediate texts of that era away, so a base older than twenty versions
+// and older than the fold is not recoverable and the set becomes a conflict
+// carrying the text the block holds now. That is the honest answer: the editor
+// is offered keep mine and take theirs rather than a merge against a guess.
 func baseText(ctx context.Context, tx *sql.Tx, id, version int64) (string, bool, error) {
 	var text string
-	err := tx.QueryRowContext(ctx, `SELECT json_extract(after_json, '$.text') FROM activity
+	err := tx.QueryRowContext(ctx,
+		`SELECT text FROM block_texts WHERE block_id = ? AND version = ?`, id, version).Scan(&text)
+	if err == nil {
+		return text, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
+	}
+	err = tx.QueryRowContext(ctx, `SELECT json_extract(after_json, '$.text') FROM activity
 		WHERE entity = 'block' AND entity_id = ?
 		  AND json_extract(after_json, '$.version') = ?
 		ORDER BY id DESC LIMIT 1`, id, version).Scan(&text)
