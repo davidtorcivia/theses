@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/blob"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
@@ -115,13 +116,24 @@ func contains(list []string, want string) bool {
 // hours, so an hour's granularity is plenty and a restart never misses one.
 const sweepEvery = time.Hour
 
-// SweepUploads abandons uploads nobody finished, now and every hour after. It
-// stops with ctx and holds nothing between ticks, so a cancellation costs
-// whatever the current sweep has done and no more.
-func (s *Server) SweepUploads(ctx context.Context) {
+// Sweep is the housekeeping pass: it abandons uploads nobody finished and folds
+// the activity log's runs of typed saves, now and every hour after. It stops
+// with ctx and holds nothing between ticks, so a cancellation costs whatever
+// the current pass has done and no more.
+//
+// Hourly is more often than the fold needs, which is once a day, but a fold
+// never touches a run younger than core.CompactAfter, so every pass but the
+// first has at most an hour of new runs to find.
+func (s *Server) Sweep(ctx context.Context) {
 	sweep := func() {
 		if err := s.files.Sweep(ctx); err != nil && !errors.Is(err, files.ErrNoBucket) {
 			s.log.Error("upload sweep", "err", err)
+		}
+		folded, err := s.board.Compact(ctx, core.CompactAfter)
+		if err != nil {
+			s.log.Error("activity compaction", "err", err)
+		} else if folded > 0 {
+			s.log.Info("folded runs of typed saves in the activity log", "rows", folded)
 		}
 	}
 	sweep()

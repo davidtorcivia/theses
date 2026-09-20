@@ -114,6 +114,13 @@ with the last id you were given. Rows about a proposition are limited to the
 propositions the token's owner is a member of; an owner sees every one. Rows
 about the workspace itself are not about a proposition and are unaffected.
 
+A document saves itself as it is typed, so one person writing one paragraph
+would leave a row about every second. Once a run of those saves is two days old
+it is folded into one row, the last of the run, whose `before` is the text the
+block held when the run started: one row saying who changed what from what to
+what. The rows it replaced are gone, so a cursor that finds ids missing between
+two rows has not missed anything.
+
 ```json
 {"activity": [
   {"id": 12, "proposition_id": 10, "actor_kind": "user", "actor_id": "1",
