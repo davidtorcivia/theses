@@ -49,12 +49,18 @@ export function newKey() {
 // caught says this tab has read the stream since its last disconnection, which
 // is more than having a socket: state.connected is set the moment the socket
 // opens, and the read that tells this tab what happened while it was away
-// finishes some time after that. Anything concluding something from what it has
-// NOT heard has to wait for this, because a tab that is merely behind has heard
-// nothing either.
+// finishes some time after that.
+//
+// caughtUp asks for that read and for a connection it could send on this
+// instant, because only both together mean this tab has heard everything there
+// is to hear. A socket the browser has not noticed is dead is the case that
+// needs the second half: the network goes, nothing closes, and this tab would
+// otherwise still believe it was listening. Anything that concludes something
+// from what it has NOT heard has to ask this, because a tab that is merely
+// behind has heard nothing either.
 let caught = false;
 
-export const caughtUp = () => caught;
+export const caughtUp = () => caught && !down();
 
 export class Offline extends Error {
   constructor() {
