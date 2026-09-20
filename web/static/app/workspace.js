@@ -1,7 +1,7 @@
 // The workspace: the head with the number, title, statement, status, episode
 // and members, the four tabs, and the panes under them.
 
-import { $, el, clear, num, initials, say, editable } from './dom.js';
+import { $, el, children, num, initials, say, editable } from './dom.js';
 import { state, user, open, emit, hold, canEdit, archived } from './state.js';
 import { send } from './net.js';
 import { renderBoard, boardSummary } from './board.js';
@@ -31,21 +31,21 @@ function found(work) {
 }
 
 export function renderWork() {
-  // The whole work area is built again from nothing, so whatever held the
-  // keyboard is thrown away with the rest of it and the focus goes back on the
-  // new node at the end. Without this, somebody who had just reached a card, a
-  // column name or the title would find the keyboard on the body the moment
-  // anybody else touched this proposition.
+  // The head is built again from nothing, so whatever held the keyboard in it
+  // is thrown away with it and the focus goes back on the new node at the end.
+  // Without this, somebody who had just reached the title would find the
+  // keyboard on the body the moment anybody else touched this proposition. A
+  // card or a column name that was kept across the render keeps its focus by
+  // itself and this puts it where it already is.
   const back = found($('#work'));
-  const work = clear($('#work'));
+  const work = $('#work');
   const p = open();
   if (!p) {
-    work.append(el('p', { class: 'empty', text: nothing() }));
+    children(work, [el('p', { class: 'empty', text: nothing() })]);
     return;
   }
   document.title = `${num(p.number)} ${p.title} · THESES`;
-  work.append(head(p));
-  work.append(pane(p));
+  children(work, [head(p), pane(p)]);
   if (back) {
     const node = $(back);
     if (node) node.focus();
@@ -126,6 +126,11 @@ function editOnClick(node, read, save) {
   activate(node, edit);
 }
 
+// The board pane and the board inside it are made once and kept. A card is
+// carried by the pointer, and a pane rebuilt around one would take it out of
+// the page under the finger holding it.
+let boardPane = null;
+
 function pane(p) {
   if (state.tab === 'links') {
     const links = el('section', { class: 'pane', id: 'pane-links' });
@@ -147,18 +152,22 @@ function pane(p) {
     }));
   }
 
-  const board = el('div', { id: 'board' });
+  if (!boardPane) {
+    boardPane = el('section', { class: 'pane', id: 'pane-board' },
+      el('div', { class: 'ph' }), el('div', { id: 'board' }));
+  }
+  const ph = $('.ph', boardPane);
+  const board = $('#board', boardPane);
+  children(ph, [
+    el('h2', { text: 'Board' }),
+    el('span', { id: 'bsum', class: 'mono', text: boardSummary() }),
+    filters,
+    // Both are drawn and the stylesheet shows the one that is true for the
+    // reader, because a phone is told to press rather than to drag.
+    el('span', { class: 'hint mono', text: 'Drag cards between columns. Click a name to rename a column. + on a card assigns.' }),
+    el('span', { class: 'hint press mono', text: 'Press and hold a card to move it.' }),
+  ]);
   renderBoard(board);
-
-  return el('section', { class: 'pane', id: 'pane-board' },
-    el('div', { class: 'ph' },
-      el('h2', { text: 'Board' }),
-      el('span', { id: 'bsum', class: 'mono', text: boardSummary() }),
-      filters,
-      // Both are drawn and the stylesheet shows the one that is true for the
-      // reader, because a phone is told to press rather than to drag.
-      el('span', { class: 'hint mono', text: 'Drag cards between columns. Click a name to rename a column. + on a card assigns.' }),
-      el('span', { class: 'hint press mono', text: 'Press and hold a card to move it.' })),
-    board,
-    renderDocument());
+  children(boardPane, [ph, board, renderDocument()]);
+  return boardPane;
 }

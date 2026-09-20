@@ -1,7 +1,7 @@
 // The board: columns that wrap, cards that drag between and within them, the
 // inline form that assigns by account name, and the All, Mine and Open filter.
 
-import { $, el, clear, initials, say, editable, handles, stripHandles } from './dom.js';
+import { $, el, children, initials, say, editable, handles, stripHandles } from './dom.js';
 import { state, user, emit, hold, columnCards, canEdit } from './state.js';
 import { send } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
@@ -58,24 +58,57 @@ function meta(card) {
   return bits;
 }
 
+// drawn is the node each card was last rendered as, with the key it was built
+// from. The whole page is made again from the state on every applied event, and
+// with somebody saving a document every second, rebuilding cards nobody touched
+// would throw away the finger carrying one for nothing.
+const drawn = new Map();
+
+// The key is everything a card's appearance and its listeners are built from.
+// late is in it rather than only the date, because which day it is decides it
+// and the day turns without any event: the first render after midnight draws
+// the card again. Each assignee carries what the square of initials is drawn
+// from, so somebody renaming themselves redraws the cards they are on.
+function cardKey(card) {
+  const list = card.checklist || [];
+  return JSON.stringify([
+    canEdit(), (card.assignees || []).includes(state.me), late(card),
+    card.title, card.done_at, card.due_date, card.question,
+    list.filter((i) => i.done).length, list.length, (card.comments || []).length,
+    (card.assignees || []).map((id) => {
+      const person = user(id);
+      return [id, person.initials, person.colour, person.name];
+    }),
+  ]);
+}
+
 function cardNode(card) {
+  const key = cardKey(card);
+  const was = drawn.get(card.id);
+  if (was && was.key === key) return was.node;
+
+  // A node that is kept holds the closures it was built with, and the row it
+  // was built from is replaced by every event that touches the card. So the
+  // listeners read the card as it is now rather than the copy they closed over.
+  const id = card.id;
+  const row = () => state.cards.get(id) || card;
   const mine = (card.assignees || []).includes(state.me);
   const who = el('div', { class: 'cw' });
-  for (const id of card.assignees || []) who.append(initials(user(id)));
+  for (const person of card.assignees || []) who.append(initials(user(person)));
   if (canEdit()) {
     who.append(el('button', {
       class: 'asg', type: 'button', title: 'Assign someone', text: '+',
-      onclick: (e) => { e.stopPropagation(); assign(card, e.currentTarget); },
+      onclick: (e) => { e.stopPropagation(); assign(row(), e.currentTarget); },
     }));
   }
 
   const tick = el('button', {
     class: 'tick', type: 'button', text: card.done_at ? 'Done' : 'Mark done',
-    onclick: (e) => { e.stopPropagation(); toggleDone(card); },
+    onclick: (e) => { e.stopPropagation(); toggleDone(row()); },
   });
   const node = el('article', {
     class: 'card' + (card.done_at ? ' done' : '') + (mine ? ' mine' : ''),
-    'data-id': card.id,
+    'data-id': id,
   }, who, el('div', { class: 'cb' },
     el('div', { class: 'ct', text: card.title }),
     el('div', { class: 'cm' }, meta(card), canEdit() && tick)));
@@ -84,9 +117,9 @@ function cardNode(card) {
     // The pointer that has just carried a card ends in a click as well, and
     // that one finishes the drag rather than asking to read the card.
     if (carrying()) return;
-    openCard(card.id);
+    openCard(id);
   });
-  activate(node, () => openCard(card.id));
+  activate(node, () => openCard(id));
   // Cards are carried by the pointer, because a phone fires no drag event from
   // a finger. A card let go anywhere but over a column moves nothing.
   if (canEdit()) {
@@ -95,13 +128,14 @@ function cardNode(card) {
       drop: (col) => {
         const previous = node.previousElementSibling;
         send('card.move', {
-          card: card.id,
+          card: id,
           column: Number(col.dataset.col),
           after: previous ? Number(previous.dataset.id) : 0,
         }).catch((err) => { say(err.message); emit(); });
       },
     });
   }
+  drawn.set(id, { key, node });
   return node;
 }
 
@@ -116,20 +150,51 @@ export function toggleDone(card) {
   send('card.done', { card: card.id, done: !card.done_at }).catch((err) => say(err.message));
 }
 
-function columnNode(column) {
-  const all = columnCards(column.id);
-  const shown = all.filter(visible);
-  const done = all.filter((c) => c.done_at).length;
+// A column's section and the container its cards sit in are made once and kept
+// for as long as the column exists, whatever happens to the column itself. The
+// count in the header changes every time a card anywhere in it is done, and a
+// header that took the section with it would detach every card under it.
+const cols = new Map();
 
+function columnNode(column, all, nodes, keep) {
+  let col = cols.get(column.id);
+  if (!col) {
+    col = {
+      key: null, head: null, add: null,
+      cards: el('div', { class: 'cards' }),
+      section: el('section', { class: 'col', 'data-col': column.id }),
+    };
+    cols.set(column.id, col);
+  }
+
+  const done = all.filter((c) => c.done_at).length;
+  const count = all.length ? `${done}/${all.length}` : '—';
+  const key = JSON.stringify([canEdit(), count, column.name]);
+  if (col.key !== key) {
+    col.key = key;
+    col.head = header(column, count);
+    col.add = canEdit() && el('button', {
+      class: 'add mono', type: 'button', text: '+ Card',
+      onclick: () => inlineAdd(column.id, col.cards),
+    });
+  }
+
+  children(col.cards, nodes, keep);
+  children(col.section, [col.head, col.cards, col.add]);
+  return col.section;
+}
+
+function header(column, count) {
   const name = el('h3', { text: column.name, spellcheck: 'false' });
   if (canEdit()) {
     const rename = (e) => {
       e.stopPropagation();
       if (name.isContentEditable) return;
       hold(true);
-      editable(name, column.name, (value) => {
+      const was = column.name;
+      editable(name, was, (value) => {
         hold(false);
-        if (!value || value === column.name) { emit(); return; }
+        if (!value || value === was) { emit(); return; }
         send('column.rename', { column: column.id, title: value })
           .catch((err) => { say(err.message); emit(); });
       });
@@ -137,19 +202,7 @@ function columnNode(column) {
     name.addEventListener('click', rename);
     activate(name, rename);
   }
-
-  const cards = el('div', { class: 'cards' });
-  for (const card of shown) cards.append(cardNode(card));
-
-  const section = el('section', { class: 'col', 'data-col': column.id },
-    el('header', {}, name, el('span', { class: 'mono cnt', text: all.length ? `${done}/${all.length}` : '—' })),
-    cards,
-    canEdit() && el('button', {
-      class: 'add mono', type: 'button', text: '+ Card',
-      onclick: () => inlineAdd(column, cards),
-    }));
-
-  return section;
+  return el('header', {}, name, el('span', { class: 'mono cnt', text: count }));
 }
 
 // inlineAdd is the one place a card is written straight onto the board. An
@@ -172,7 +225,7 @@ function inlineAdd(column, cards) {
     if (!line) { emit(); return; }
     const assignees = handles(line).map((h) => state.byHandle.get(h)).filter(Boolean).map((u) => u.id);
     send('card.create', {
-      column: column.id,
+      column,
       title: stripHandles(line) || line,
       assignees: assignees.length ? assignees : [state.me],
     }).catch((err) => { say(err.message); emit(); });
@@ -185,15 +238,36 @@ function inlineAdd(column, cards) {
 }
 
 export function renderBoard(into) {
-  const board = clear(into);
-  for (const column of state.columns) board.append(columnNode(column));
-  if (canEdit()) {
-    board.append(el('button', {
-      class: 'addcol mono', id: 'addcol', type: 'button', text: '+ Column',
-      onclick: () => send('column.create', { proposition: state.open, title: 'New column' })
-        .catch((err) => say(err.message)),
-    }));
-  }
+  // Every card's node is asked for before any column is swept, because a card
+  // that moved to another column is still wanted: taking it out of the column
+  // it was in before its new one has claimed it would drop it out of the page,
+  // and with it the finger carrying it.
+  const lists = state.columns.map((column) => {
+    const all = columnCards(column.id);
+    return { column, all, nodes: all.filter(visible).map(cardNode) };
+  });
+  const keep = new Set(lists.flatMap((list) => list.nodes));
+  const sections = lists.map((list) => columnNode(list.column, list.all, list.nodes, keep));
+  children(into, [sections, canEdit() && addColumn()]);
+
+  // What no longer exists takes its node with it. A card the filter is hiding
+  // is still a card and keeps its own, so that turning the filter back on costs
+  // nothing.
+  for (const id of drawn.keys()) if (!state.cards.has(id)) drawn.delete(id);
+  const live = new Set(state.columns.map((column) => column.id));
+  for (const id of cols.keys()) if (!live.has(id)) cols.delete(id);
+}
+
+// The one button at the end of the board. It reads the open proposition when it
+// is pressed rather than when it was made, so one node does for the page.
+let addcol = null;
+
+function addColumn() {
+  return addcol ||= el('button', {
+    class: 'addcol mono', id: 'addcol', type: 'button', text: '+ Column',
+    onclick: () => send('column.create', { proposition: state.open, title: 'New column' })
+      .catch((err) => say(err.message)),
+  });
 }
 
 export function boardSummary() {
