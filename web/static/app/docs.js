@@ -218,7 +218,7 @@ function refusedInsert(row, err) {
 function named(id) {
   const row = blockAnywhere(id);
   if (!row || !row.key) return false;
-  return documents().some((d) => (d.blocks || []).some((b) => b.after_key === row.key));
+  return documents().some((d) => (d.blocks || []).some((b) => b.to && b.to.after_key === row.key));
 }
 
 // Online is a socket and a network. Joining two blocks and deleting one still
@@ -1793,8 +1793,13 @@ function save(id) {
   if (id < 0) {
     const row = blockAnywhere(id);
     retext(row.key, sent).then((held) => {
+      // The row is what the page draws, so it says what the person has written
+      // whether or not the command could take it: a paragraph that reads as
+      // empty while its words are in the editor is the page lying about them.
+      // What the command carries is what the server will make, and a reload
+      // draws the row from the command again.
+      writeLocal(row, sent);
       if (held && held.done) {
-        writeLocal(row, sent);
         acked(id, sent, base, null);
         return;
       }

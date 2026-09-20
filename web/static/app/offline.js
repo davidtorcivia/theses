@@ -134,7 +134,13 @@ export async function queue(row, key) {
         // The newest arguments and the newest idem, the oldest base and base
         // text: one change from where the server still is to where this person
         // has got to, under a name the server has not answered before.
-        store.put({ ...found, args: row.args, idem: row.idem, at: Date.now() });
+        //
+        // Whether it counts as sent is the incoming command's to say. An edit
+        // folding into a row that went up is a change nobody has sent, under a
+        // name nobody has answered; the same command coming back from a socket
+        // that died is the one that has.
+        store.put({ ...found, args: row.args, idem: row.idem, at: Date.now(),
+          sending: Boolean(row.sending) });
         return;
       }
       const add = store.add({ at: Date.now(), ...row, key });

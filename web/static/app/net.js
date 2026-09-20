@@ -278,7 +278,12 @@ function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
       // The socket going while this is in the air files it under the same name
       // it would have been queued under, so a command that must not fold over
       // what is already waiting does not fold on this road either.
-      queue: () => { if (row) offline.queue(row, fold).then(count); },
+      //
+      // It is filed as one that has been sent, because it has: the server may
+      // have applied it before the socket went, and nothing in the tab may now
+      // treat it as a command that has not happened. It goes up again under its
+      // own name, and the answer to that is what settles it.
+      queue: () => { if (row) offline.queue({ ...row, sending: true }, fold).then(count); },
     });
     socket.send(JSON.stringify({ id, cmd, key, args }));
   });
