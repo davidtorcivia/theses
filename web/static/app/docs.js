@@ -807,6 +807,9 @@ const onLink = (e) => !!e.target.closest('a');
 // Alt and an arrow, which is what the title says; this is the pointer's way,
 // and the only one a phone has.
 function grip(node, id) {
+  // A block the server has not got yet has no id to be moved by, so it is given
+  // no handle rather than one that would ask for nothing anybody can answer.
+  if (id <= 0) return;
   node.append(el('span', {
     class: 'grip', 'aria-hidden': 'true', text: '≡',
     title: 'Drag to move this block. Alt with an arrow key moves it too.',
@@ -819,12 +822,15 @@ function grip(node, id) {
       // Somebody deleted the block while it was in the air. There is nothing
       // left to move and nothing to move it among.
       if (at < 0) return;
+      // Where it was, by the same rule the page is read by below: the nearest
+      // block above it that the server has. It is read out of the state rather
+      // than off the page, because a move by somebody else arriving mid drag is
+      // held off the page until the drop and is still where this one started.
+      let was = 0;
+      for (let i = at - 1; i >= 0 && !was; i--) if (list[i].id > 0) was = list[i].id;
       const after = previousBlock(node);
-      // A block let go where it already was asks the server for nothing. Where
-      // it was is where the state has it rather than where the page drew it,
-      // because a move by somebody else arriving mid drag is held off the page
-      // until the drop and is still the place this one is starting from.
-      if (after === (at > 0 ? list[at - 1].id : 0)) return;
+      // A block let go where it already was asks the server for nothing.
+      if (after === was) return;
       send('block.move', { block: id, after }).catch((err) => { say(err.message); emit(); });
     },
   });

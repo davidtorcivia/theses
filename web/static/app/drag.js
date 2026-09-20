@@ -202,8 +202,11 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
       // A row already where it belongs is left where it is. Putting it back
       // takes it out of the page for the instant it takes to insert it again,
       // and a node taken out releases the pointer capture the finger holding it
-      // has.
-      if (before !== node && node.nextSibling !== before) rows.insertBefore(node, before);
+      // has. Where it belongs is in this list: a row arriving from another one
+      // is always inserted, however its old neighbors happen to line up.
+      if (before !== node && !(node.parentNode === rows && node.nextSibling === before)) {
+        rows.insertBefore(node, before);
+      }
     }
 
     // A finger at the edge of a phone cannot reach the column below the fold,
