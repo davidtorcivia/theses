@@ -103,8 +103,9 @@ const MENTION = /@([a-z0-9][a-z0-9-]*)/g;
 // nobody meant.
 //   - a bare URL in the text is a link on the server, which runs goldmark's
 //     Linkify, and plain text here;
-//   - tables, footnotes, strikethrough and code fences are the server's alone,
-//     because the live view renders a paragraph at a time;
+//   - footnotes, strikethrough and inline code are the server's alone; a table,
+//     a quote and a fenced code block are shapes rather than inline markup, and
+//     blockparts.js reads them before anything reaches this pattern;
 //   - a note carries data-by on the server and only its text here;
 //   - a target nests parentheses more than one deep, .../a_(b_(c)), is a link
 //     on the server and text here, because the pattern above takes one level;

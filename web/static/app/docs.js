@@ -11,6 +11,7 @@ import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit } from './state.js';
 import { send, live, where, onCarets, Conflict, Offline } from './net.js';
 import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './blocktext.js';
+import { parts } from './blockparts.js';
 
 // The block this tab has open: its node and its textarea, and nothing else. The
 // editor is a way of typing into an entry below, not a place anything is kept,
@@ -514,7 +515,9 @@ function blockNode(b) {
 }
 
 // body is the client renderer: the same markdown the mockup draws, built as
-// nodes so that nothing anybody typed is ever parsed as markup.
+// nodes so that nothing anybody typed is ever parsed as markup. What the text
+// is made of is blockparts.js, which has no page in it and is tested on its
+// own; this is the drawing of it.
 //
 // A block may hold a blank line, because a save made while somebody is typing
 // stores the text as it was typed. It is drawn as it reads, one piece per blank
@@ -523,27 +526,47 @@ function blockNode(b) {
 // or the API touches the block.
 function body(text) {
   if (!text.trim()) return [el('p', { class: 'empty', text: 'Empty. Click to write.' })];
-  return text.split(/\n[ \t]*\n/).filter((part) => part.trim()).flatMap(piece);
+  return parts(text).map(drawPart);
 }
 
-function piece(text) {
-  // A heading is its first line and nothing else, so whatever is under one is
-  // drawn as what it is rather than swept into the heading.
-  const [top, ...rest] = text.split('\n');
-  const under = rest.join('\n');
-  if (top.startsWith('# ') || top.startsWith('## ')) {
-    const sub = top.startsWith('## ');
-    return [add(el(sub ? 'h2' : 'h1'), [inline(top.slice(sub ? 3 : 2), byHandle)]),
-      ...(under.trim() ? piece(under) : [])];
+function drawPart(part) {
+  switch (part.kind) {
+    case 'h1': case 'h2': case 'h3':
+      return add(el(part.kind), [inline(part.text, byHandle)]);
+    case 'ul': case 'ol':
+      return add(el(part.kind), part.items.map((item) => add(el('li'), [inline(item, byHandle)])));
+    case 'quote':
+      return add(el('blockquote'), part.paragraphs.map((said) => add(el('p'), [inline(said, byHandle)])));
+    // Code is text and nothing else: no inline markdown in it, no highlighting,
+    // and the info string only says what the code is.
+    case 'code':
+      return scrolls(el('pre', { 'data-lang': part.lang || null }, el('code', { text: part.text })), 'Code block');
+    case 'table':
+      return scrolls(grid(part), 'Table');
+    default:
+      return add(el('p'), [inline(part.text, byHandle)]);
   }
-  const lines = text.split('\n').filter((l) => l.trim());
-  if (lines.every((l) => /^- /.test(l))) {
-    return [add(el('ul'), lines.map((l) => add(el('li'), [inline(l.slice(2), byHandle)])))];
-  }
-  if (lines.every((l) => /^\d+\. /.test(l))) {
-    return [add(el('ol'), lines.map((l) => add(el('li'), [inline(l.replace(/^\d+\. /, ''), byHandle)])))];
-  }
-  return [add(el('p'), [inline(text, byHandle)])];
+}
+
+// Code and a table are the two things in a document wider than the pane it is
+// read in. Each is wrapped in a box that scrolls on its own, so a phone moves
+// the code sideways rather than the page. The box takes the keyboard, because
+// a scroller nothing can focus cannot be scrolled without a pointer.
+function scrolls(node, label) {
+  return el('div', { class: 'scroll', tabindex: '0', role: 'region', 'aria-label': label }, node);
+}
+
+// The alignment of a column is a class: the CSP has no unsafe-inline in
+// style-src, and there are three of them.
+const ALIGN = { l: 'al-l', c: 'al-c', r: 'al-r' };
+
+function grid(part) {
+  const cell = (tag, text, i) => add(el(tag, {
+    class: ALIGN[part.align[i]] || null, scope: tag === 'th' ? 'col' : null,
+  }), [inline(text, byHandle)]);
+  return el('table', {},
+    el('thead', {}, add(el('tr'), part.head.map((text, i) => cell('th', text, i)))),
+    add(el('tbody'), part.rows.map((row) => add(el('tr'), row.map((text, i) => cell('td', text, i))))));
 }
 
 // raw is a block drawn as the markdown the people in it are looking at, with
@@ -593,11 +616,10 @@ function flag(c) {
 }
 
 // A heading keeps the size it renders at while it is being edited, which is
-// what the h1 and h2 classes on an editing block are for.
+// what the h1, h2 and h3 classes on an editing block are for.
 function heading(text) {
-  if (text.startsWith('# ')) return ' h1';
-  if (text.startsWith('## ')) return ' h2';
-  return '';
+  const hash = /^(#{1,3}) /.exec(text);
+  return hash ? ' h' + hash[1].length : '';
 }
 
 // startEditing opens a block. caret is where to stand in it, the end of the
