@@ -287,6 +287,35 @@ export function refuse(n, at, why, detail) {
   });
 }
 
+// file is a command the server has already refused, put in the outbox as
+// refused rather than queued. A conflict or a refusal answered on the block
+// itself is a question held in one tab, and a tab is a thing that closes; filed
+// here it is the same row a refusal during the drain makes, so it survives a
+// reload, the panel offers it, and one answer settles both.
+//
+// A refusal already filed under the same name is written over rather than
+// joined: one block has one unanswered question, and the newest words are the
+// ones worth keeping. It answers the key the row is filed under, or zero when
+// there was no storage to file it in, because the caller has to know whether
+// the question outlived the tab before it promises that it did.
+//
+// ponytail: the same scan queue and named make, with the same ceiling and the
+// same reason it is fine at the few rows a person makes by hand.
+export async function file(row, key, why, detail) {
+  const filed = await withStore('outbox', 'readwrite', (store) => {
+    const out = { n: 0 };
+    const all = store.getAll();
+    all.onsuccess = () => {
+      const found = all.result.find((r) => r.key === key && r.refused);
+      const put = store.put({ at: Date.now(), ...row, key,
+        refused: why, detail: detail || null, ...(found ? { n: found.n } : {}) });
+      put.onsuccess = () => { out.n = put.result; };
+    };
+    return out;
+  });
+  return filed ? filed.n : 0;
+}
+
 // retry clears a refusal so the row goes up again, which is what the panel's
 // try it again offers on a refusal that was nobody's fault.
 export function retry(n) {

@@ -564,6 +564,20 @@ export async function letGo(row) {
   await count();
 }
 
+// chosen takes a refused row off the list because the question it asks has been
+// answered on the block itself rather than here. Nothing is undrawn and nothing
+// is sent: the editor has already put that block where the person chose to put
+// it, and the row is all that was left to clear away.
+//
+// The list is cut before the read rather than left to it, because a render
+// between the two would offer a choice that has just been made, and the editor
+// reads this list to decide whether a block is still waiting on one.
+export async function chosen(n) {
+  state.refused = state.refused.filter((r) => r.n !== n);
+  await offline.drop(n);
+  await count();
+}
+
 // resend is keep mine: the command goes again with the version that is there
 // now. The new send has drawn the new value itself, so the old guess is dropped
 // without being undrawn; undrawing it would take the new one away with it.
