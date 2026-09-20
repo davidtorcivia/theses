@@ -7,7 +7,7 @@
 // test, so it is not served to browsers or kept by the service worker.
 
 import assert from 'node:assert/strict';
-import { history, of, reset, keep, together, cap } from './static/app/undo.js';
+import { history, of, reset, keep, move, together, cap } from './static/app/undo.js';
 
 // A snapshot with the caret at the end, which is where typing leaves it.
 const end = (text) => ({ text, start: text.length, end: text.length });
@@ -194,6 +194,21 @@ function typing(h, texts, kind = 'type', from = 0) {
   keep(new Set([4]));
   assert.equal(of(4, end('alive!')), alive, 'a block still drawn keeps its history');
   assert.equal(of(5, end('gone')).undo(), null, 'a block that is gone does not');
+}
+
+{
+  // move is a block this tab drew getting the id the server gave it. What was
+  // typed into it before it had one is still that paragraph's to take back.
+  const made = of(-1, end('made here'));
+  typing(made, ['made here and typed in']);
+  move(-1, 31);
+  assert.equal(of(31, end('made here and typed in')), made, 'the history follows the block');
+  assert.deepEqual(of(31, end('x')).undo(), end('made here'), 'and still has what was typed before the id');
+  assert.equal(of(-1, end('nothing')).undo(), null, 'nothing is left under the id it was drawn with');
+  // A block with nothing to take back has no history, and moving one is not an
+  // error: most blocks arrive without anybody having typed into them.
+  move(-9, 32);
+  assert.equal(of(32, end('fresh')).now(), 'fresh', 'moving a block with no history leaves the new id alone');
 }
 
 console.log('undo history cases pass');

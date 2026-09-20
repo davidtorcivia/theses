@@ -213,7 +213,7 @@ func TestBlockCommandsAskMembershipAndTheArchivedRule(t *testing.T) {
 		run  func(f *fixture, a core.Actor) error
 	}{
 		{"insert", func(f *fixture, a core.Actor) error {
-			_, err := f.InsertBlock(ctx, a, f.doc, 0, "Hello.", false)
+			_, err := f.InsertBlock(ctx, a, f.doc, 0, "", "Hello.", false)
 			return err
 		}},
 		{"set", func(f *fixture, a core.Actor) error {
@@ -343,7 +343,7 @@ func TestSetBlockMergesOrConflicts(t *testing.T) {
 			if tc.seeded {
 				id = f.blocks(t)[0].ID
 			} else {
-				inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, tc.base, false)
+				inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, "", tc.base, false)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -495,7 +495,7 @@ func TestInsertBlockWholeStoresTheTextAsItWasSent(t *testing.T) {
 			f := setup(t, "")
 			was := f.blocks(t)
 
-			_, err := f.InsertBlock(ctx, f.who["editor"], f.doc, was[0].ID, tc.text, tc.whole)
+			_, err := f.InsertBlock(ctx, f.who["editor"], f.doc, was[0].ID, "", tc.text, tc.whole)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("got %v, want %v", err, tc.wantErr)
@@ -630,7 +630,7 @@ func TestBaseTextComesFromEitherTheTableOrTheLog(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t, "")
-			inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0,
+			inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0, "",
 				"The tide is high and the moon is full.", false)
 			if err != nil {
 				t.Fatal(err)
@@ -961,4 +961,146 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+// after_key is how a block whose id nobody knows yet is named: the key the
+// command that makes it was sent under. A browser with no connection draws the
+// block it has just made and queues the insert, and a second block made below
+// the first has only that key to point at.
+func TestInsertAfterKey(t *testing.T) {
+	ctx := context.Background()
+
+	// keyed is one command's context, the way the socket and the API build one.
+	keyed := func(t *testing.T, key string) context.Context {
+		t.Helper()
+		c, err := core.WithKey(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	// texts is the document as it reads, so an assertion is about the order the
+	// blocks are in rather than about their ids.
+	texts := func(f *fixture) []string {
+		var out []string
+		for _, b := range f.blocks(t) {
+			out = append(out, b.Text)
+		}
+		return out
+	}
+	reads := func(f *fixture) string { return strings.Join(texts(f), "|") }
+
+	t.Run("a key names the block the command under it made", func(t *testing.T) {
+		f := setup(t, "")
+		was := f.blocks(t)
+		if _, err := f.InsertBlock(keyed(t, "one"), f.who["editor"], f.doc,
+			was[len(was)-1].ID, "", "First.", true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.InsertBlock(keyed(t, "two"), f.who["editor"], f.doc,
+			0, "one", "Second.", true); err != nil {
+			t.Fatal(err)
+		}
+		got := reads(f)
+		if !strings.HasSuffix(got, "First.|Second.") {
+			t.Fatalf("the document reads %q, want it to end First.|Second.", got)
+		}
+	})
+
+	t.Run("a key names the last block a paste made", func(t *testing.T) {
+		f := setup(t, "")
+		was := f.blocks(t)
+		if _, err := f.InsertBlock(keyed(t, "paste"), f.who["editor"], f.doc,
+			was[len(was)-1].ID, "", "One.\n\nTwo.\n\nThree.", false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.InsertBlock(keyed(t, "after"), f.who["editor"], f.doc,
+			0, "paste", "Four.", true); err != nil {
+			t.Fatal(err)
+		}
+		got := reads(f)
+		if !strings.HasSuffix(got, "One.|Two.|Three.|Four.") {
+			t.Fatalf("the document reads %q, want it to end One.|Two.|Three.|Four.", got)
+		}
+	})
+
+	t.Run("a key nobody spent is nothing to insert after", func(t *testing.T) {
+		f := setup(t, "")
+		_, err := f.InsertBlock(keyed(t, "mine"), f.who["editor"], f.doc, 0, "nobodys", "Text.", true)
+		if !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("got %v, want %v", err, core.ErrNotFound)
+		}
+	})
+
+	t.Run("one person cannot name another person's key", func(t *testing.T) {
+		f := setup(t, "")
+		was := f.blocks(t)
+		if _, err := f.InsertBlock(keyed(t, "shared"), f.who["owner"], f.doc,
+			was[len(was)-1].ID, "", "The owner's.", true); err != nil {
+			t.Fatal(err)
+		}
+		_, err := f.InsertBlock(keyed(t, "editors"), f.who["editor"], f.doc, 0, "shared", "Text.", true)
+		if !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("got %v, want %v", err, core.ErrNotFound)
+		}
+	})
+
+	t.Run("a key whose command made no block is nothing to insert after", func(t *testing.T) {
+		f := setup(t, "")
+		if _, err := f.RenameDocument(keyed(t, "rename"), f.who["editor"], f.doc, "Notes"); err != nil {
+			t.Fatal(err)
+		}
+		_, err := f.InsertBlock(keyed(t, "insert"), f.who["editor"], f.doc, 0, "rename", "Text.", true)
+		if !errors.Is(err, core.ErrNotFound) {
+			t.Fatalf("got %v, want %v", err, core.ErrNotFound)
+		}
+	})
+
+	t.Run("an insert names after or after_key, not both", func(t *testing.T) {
+		f := setup(t, "")
+		was := f.blocks(t)
+		_, err := f.InsertBlock(ctx, f.who["editor"], f.doc, was[0].ID, "one", "Text.", true)
+		if !errors.Is(err, ErrAfterBoth) {
+			t.Fatalf("got %v, want %v", err, ErrAfterBoth)
+		}
+		if len(f.blocks(t)) != len(was) {
+			t.Fatal("a refused insert left a block behind")
+		}
+	})
+
+	// A key is forgotten after a day. The insert that was waiting on the key is
+	// then applied again rather than answered with what it did, which records
+	// the key afresh, so the insert queued behind it still finds its block.
+	t.Run("a forgotten key is recorded again by the replay", func(t *testing.T) {
+		f := setup(t, "")
+		was := f.blocks(t)
+		if _, err := f.InsertBlock(keyed(t, "old"), f.who["editor"], f.doc,
+			was[len(was)-1].ID, "", "First.", true); err != nil {
+			t.Fatal(err)
+		}
+		now := f.Now
+		f.Now = func() time.Time { return now().Add(core.KeyLife + time.Minute) }
+		if err := f.PruneKeys(ctx); err != nil {
+			t.Fatal(err)
+		}
+		f.Now = now
+		// The tab never saw the answer to the first, so it sends it again under
+		// the same key. Nothing remembers it, so this is a second block.
+		if _, err := f.InsertBlock(keyed(t, "old"), f.who["editor"], f.doc,
+			was[len(was)-1].ID, "", "First.", true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.InsertBlock(keyed(t, "new"), f.who["editor"], f.doc,
+			0, "old", "Second.", true); err != nil {
+			t.Fatal(err)
+		}
+		// The replay made a second block, which is what a forgotten key costs
+		// and why it is only forgotten after a day. What this is about is that
+		// the insert queued behind it still found a block to go after, which is
+		// the one the replay made.
+		got := reads(f)
+		if !strings.HasSuffix(got, "First.|Second.|First.") {
+			t.Fatalf("the document reads %q, want it to end First.|Second.|First.", got)
+		}
+	})
 }

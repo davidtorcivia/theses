@@ -134,7 +134,13 @@ export async function queue(row, key) {
         // The newest arguments and the newest idem, the oldest base and base
         // text: one change from where the server still is to where this person
         // has got to, under a name the server has not answered before.
-        store.put({ ...found, args: row.args, idem: row.idem, at: Date.now() });
+        //
+        // Whether it counts as sent is the incoming command's to say. An edit
+        // folding into a row that went up is a change nobody has sent, under a
+        // name nobody has answered; the same command coming back from a socket
+        // that died is the one that has.
+        store.put({ ...found, args: row.args, idem: row.idem, at: Date.now(),
+          sending: Boolean(row.sending) });
         return;
       }
       const add = store.add({ at: Date.now(), ...row, key });
@@ -166,19 +172,82 @@ export const drop = (n) => withStore('outbox', 'readwrite', (store) => store.del
 // its own name in between, and this would put the old name back over it while
 // the caller held the old arguments, sending the superseded text under a name
 // the server had already answered.
+// The row is also marked as being sent, and stays marked until it is dropped or
+// refused. A row does not leave the outbox when it goes up: it leaves when the
+// answer comes back, and a socket that dies in between leaves it where it is.
+// So from here on nobody may treat it as a command that has not happened, which
+// is what the two calls below are asked to do and what the mark refuses them.
 export function take(n, idem) {
   return withStore('outbox', 'readwrite', (store) => {
     const out = { row: null };
     const req = store.get(n);
     req.onsuccess = () => {
       if (!req.result) return;
-      if (req.result.idem) {
-        out.row = req.result;
-        return;
-      }
-      out.row = { ...req.result, idem };
+      out.row = { ...req.result, idem: req.result.idem || idem, sending: true };
       store.put(out.row);
     };
+    return out;
+  });
+}
+
+// named is the command with this name that is still only waiting, for the two
+// calls below. A command that has been refused is not it: it is waiting on a
+// person rather than on a connection, and the panel is where it is answered.
+// Neither is one the drain has taken, whether it is in the air now or was in
+// the air when a socket died: the server may have applied it, so rewriting it
+// or dropping it would be deciding something only the answer can decide.
+//
+// ponytail: it is the same scan queue makes for a fold, with the same ceiling
+// and the same reason it is fine at the few rows a person makes by hand.
+function named(store, idem, then) {
+  const all = store.getAll();
+  all.onsuccess = () => {
+    const any = all.result.find((r) => r.idem === idem);
+    const found = any && !any.refused && !any.sending ? any : null;
+    then(found, Boolean(any));
+  };
+}
+
+// retext writes what somebody has typed into the command that has not gone yet,
+// which is how a block the server has not made keeps what is written in it: the
+// insert waiting in the outbox is the only place that text can be, because the
+// block it belongs to has no id to address a save to. It answers whether there
+// was a command there to write into; there is not when the insert is in the air
+// on a live socket, and then the text waits in the editor for the ack.
+//
+// The name is left alone, unlike a fold: this is the same command, carrying
+// what it always carried, rather than a second change from where the first one
+// left the block. If the server has already applied it, because it was in the
+// air when the socket went, the replay is answered with what it did and the
+// text typed since goes up as an ordinary save once the real block is here.
+// It answers whether it wrote, and whether the command is in the outbox at all.
+// A command that is not there has been answered and has left, and the block the
+// caller drew for it stands for one the server has already made.
+export function retext(idem, text) {
+  return withStore('outbox', 'readwrite', (store) => {
+    const out = { done: false, filed: false };
+    named(store, idem, (row, any) => {
+      out.filed = any;
+      if (!row) return;
+      store.put({ ...row, args: { ...row.args, text }, at: Date.now() });
+      out.done = true;
+    });
+    return out;
+  });
+}
+
+// unqueue drops the command with this name, which is how a block joined back
+// into the one above it before it was ever made stops being made at all. It
+// answers whether it was still there to drop: a command the drain has already
+// taken is on its way and cannot be called back.
+export function unqueue(idem) {
+  return withStore('outbox', 'readwrite', (store) => {
+    const out = { done: false };
+    named(store, idem, (row) => {
+      if (!row) return;
+      store.delete(row.n);
+      out.done = true;
+    });
     return out;
   });
 }
@@ -189,7 +258,13 @@ export function take(n, idem) {
 export function dropIfUnchanged(n, at) {
   return withStore('outbox', 'readwrite', (store) => {
     const req = store.get(n);
-    req.onsuccess = () => { if (req.result && req.result.at === at) store.delete(n); };
+    req.onsuccess = () => {
+      if (!req.result) return;
+      if (req.result.at === at) { store.delete(n); return; }
+      // Written into while it was in flight, so what it holds now is a change
+      // nobody has sent and the mark comes off: it is waiting again.
+      if (req.result.sending) store.put({ ...req.result, sending: false });
+    };
     return null;
   });
 }
@@ -203,7 +278,9 @@ export function refuse(n, at, why, detail) {
     const req = store.get(n);
     req.onsuccess = () => {
       if (req.result && req.result.at === at) {
-        store.put({ ...req.result, refused: why, detail: detail || null });
+        // The mark comes off with the refusal: nothing was applied, and the row
+        // is now waiting on a person rather than on the connection.
+        store.put({ ...req.result, refused: why, detail: detail || null, sending: false });
       }
     };
     return null;

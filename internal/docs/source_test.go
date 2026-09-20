@@ -25,7 +25,7 @@ func (f *fixture) seed(t *testing.T, texts ...string) []BlockRef {
 	}
 	after := int64(0)
 	for _, text := range texts {
-		e, err := f.InsertBlock(ctx, f.who["editor"], f.doc, after, text, true)
+		e, err := f.InsertBlock(ctx, f.who["editor"], f.doc, after, "", text, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -340,7 +340,7 @@ func TestWriteSourceLeavesANewBlockInPlace(t *testing.T) {
 	base := f.seed(t, "# Tide", "One.")
 	was := f.blocks(t)
 
-	added, err := f.InsertBlock(ctx, f.who["owner"], f.doc, was[1].ID, "Theirs.", false)
+	added, err := f.InsertBlock(ctx, f.who["owner"], f.doc, was[1].ID, "", "Theirs.", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func (f *fixture) set(t *testing.T, block, version int64, text string) {
 
 func (f *fixture) insert(t *testing.T, after int64, text string) {
 	t.Helper()
-	if _, err := f.InsertBlock(context.Background(), f.who["owner"], f.doc, after, text, true); err != nil {
+	if _, err := f.InsertBlock(context.Background(), f.who["owner"], f.doc, after, "", text, true); err != nil {
 		t.Fatal(err)
 	}
 }

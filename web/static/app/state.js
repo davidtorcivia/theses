@@ -219,8 +219,15 @@ export function open() {
 // controls would only offer a refusal.
 export function canEdit() {
   const p = open();
-  return Boolean(state.can.edit && p && !p.archived_at);
+  return Boolean(state.can.edit && !readOnly && p && !p.archived_at);
 }
+
+// readOnly is a proposition this device kept a copy of but is not the one it
+// saw last, which the plan lets somebody read offline and not change. It is
+// held here rather than written into state.can, because state.can goes into the
+// snapshot: a tab that wrote it there would tell the next one this person may
+// not edit this proposition at all, and there is nothing to take that back.
+let readOnly = false;
 
 export function archived() {
   const p = open();
@@ -233,7 +240,7 @@ export function columnCards(columnID) {
     .sort(order);
 }
 
-const order = (a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0);
+export const order = (a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0);
 
 function sortProps() {
   state.props.sort(order);
@@ -352,6 +359,14 @@ export function apply(ev) {
       }
       if (at < 0) blocks.push(now); else blocks[at] = now;
       blocks.sort(order);
+      // The real block is here, so the one this tab drew in its place goes, in
+      // the same tick and before anything is drawn again. This is the only
+      // place that does it, so it happens whichever road the block came by: the
+      // answer to this tab's own command, the copy the room was sent, or the
+      // stream a tab reads after being away. A tab that did not send the
+      // command matches it the same way, which is what stops the paragraph
+      // standing twice in a second tab until it reloads.
+      if (ev.key) settle(ev.key, now);
       break;
     }
 
@@ -530,6 +545,203 @@ function local(entity, row) {
   return { seq: 0, proposition: state.open, entity, entity_id: row.id, action: 'edit', after: row };
 }
 
+// The blocks this tab has made that the server has not. Each is a row in its
+// document like any other, so everything that draws or walks a document sees
+// it, with a negative id and three fields of its own: the key the insert that
+// makes it goes up under, and where that insert says it goes, which is a block
+// id or another block's key. They are written into the snapshot with the rest,
+// which is what keeps a block made with no connection on the page across a
+// reload. Nothing with a negative id is ever sent; docs.js is the one place
+// that knows how to name one to the server.
+export function makeLocal(row) {
+  let id = 0;
+  for (const doc of state.documents) for (const b of doc.blocks || []) id = Math.min(id, b.id);
+  const made = {
+    ...row, id: id - 1, position: under(row.document_id, row.after), version: 0,
+    updated_by: state.me, updated_at: seconds(),
+  };
+  apply(local('block', made));
+  // Written now rather than in two seconds, because this row is in this tab and
+  // nowhere else: a reload before the timer fires would lose the paragraph off
+  // the page, and with no connection there is no server to draw it again from.
+  write();
+  return made;
+}
+
+// under is where a block this tab has made is drawn: behind the block it was
+// made under, by the rule behind above follows. Nothing at all is the head of
+// the document, which is where a block made under nothing goes.
+//
+// A block made under one this tab does not hold goes at the end of its document
+// instead. That is an insert whose anchor has already been answered and left
+// the outbox, so the block it names is on the server and this one belongs after
+// it; the head, which is where an anchor nobody can find would otherwise put
+// it, is the one place it certainly does not belong.
+function under(document, after) {
+  const above = after ? rowOf('block', after) : null;
+  if (above) return behind('block', after, above);
+  if (!after) return '';
+  const blocks = (state.documents.find((d) => d.id === document) || {}).blocks || [];
+  const last = blocks[blocks.length - 1];
+  return last ? last.position + '0' : '';
+}
+
+// writeLocal is typing reaching the row itself. A block the server holds is
+// written by the event its save comes back as; one it does not hold has no such
+// event, and without this a reload would draw it as it was first made.
+export function writeLocal(row, text) {
+  // Not once the real block has taken its place, which a save that was in the
+  // air while the answer arrived would otherwise do: applying a row that is no
+  // longer in the document puts it back, and the paragraph would stand twice
+  // for the rest of the session.
+  if (!localOf(row.key)) return;
+  apply(local('block', { ...row, text, updated_at: seconds() }));
+  // Written now for the reason a new one is: this text is in the command the
+  // outbox holds and in this tab, and nowhere a reload could read it from
+  // otherwise. It is the save rate rather than the typing rate, because the
+  // caller writes here when the text reaches that command and not before.
+  write();
+}
+
+// settle is the real block taking the place of the one this tab drew for it.
+// The row goes here rather than through unmakeLocal below, because this runs
+// inside the apply that has just drawn the real one and the two must be one
+// change: the paragraph is never on the page twice, not even for a frame, and
+// never off it for one either.
+//
+// A command that made several blocks, which is a paste the server cut up, spent
+// the key and then the key with a number on the end. The row this tab drew
+// stood for all of them, so it goes when the first arrives and the rest find
+// nothing to settle, which is why the number is cut off before the lookup.
+function settle(key, now) {
+  const made = localOf(key.split('#')[0]);
+  if (!made) return;
+  for (const doc of state.documents) {
+    const at = (doc.blocks || []).indexOf(made);
+    if (at >= 0) doc.blocks.splice(at, 1);
+  }
+  // Written now for the reason making one is: a reload before the timer fires
+  // would draw the block the server has and this one standing for it.
+  write();
+  if (settled) settled(made, now);
+}
+
+// settleReplayed is the answer to a command the server had already applied. It
+// is not drawn, because the row it carries may be older than what this tab
+// holds, and the row it is about is on the page already: it came in the payload
+// this tab loaded, or through the stream. What is left is the block this tab
+// drew for that command, still standing beside the real one, and nothing else
+// will ever come to put the two together.
+export function settleReplayed(ev) {
+  if (!ev || !ev.key || ev.entity !== 'block') return;
+  settle(ev.key, rowOf('block', ev.entity_id) || ev.after);
+}
+
+// settled is how docs.js hears it, handed here rather than imported because
+// this module knows nothing of the editor: the text somebody has typed into
+// such a block, and an editor standing in it, follow the row to the real block.
+let settled = null;
+
+export function onSettled(fn) {
+  settled = fn;
+}
+
+// rekeyLocal gives a block this tab drew a new name, which is what Try again
+// sends the second attempt under. The command that was to make it under the old
+// one has been answered and gone, so the attempt has to be a command of its
+// own: sent under a name the server has already answered it would be told what
+// that answer was rather than making anything.
+//
+// The name it was drawn under stays on the row as former. An insert waiting to
+// be made under this block was filed against that one and is left alone, since
+// on the server that name still points at the block the first command made,
+// which is where it belongs; this is what the page reads it back by.
+export function rekeyLocal(row, key) {
+  apply(local('block', { ...row, key, former: row.key }));
+  return localOf(key);
+}
+
+// localOf is the block a key names: what a refusal, a block joined back into
+// the one above it and an insert queued behind it all find the row again by.
+export function localOf(key) {
+  for (const doc of state.documents) {
+    const row = (doc.blocks || []).find((b) => b.id < 0 && b.key === key);
+    if (row) return row;
+  }
+  return null;
+}
+
+// drawQueued puts the page and the outbox back in step over the blocks this
+// device has made and not sent. The snapshot is a drawing of what one tab had;
+// the outbox is the record of what this device promised, and it is the only one
+// of the two that is shared, so the drawing can be older than the promise or
+// missing it altogether: another tab that never had these rows writes a
+// snapshot without them, and a reload then loses the paragraph off the page
+// while its command is still waiting to go.
+//
+// So every command that is still waiting draws its block, from its own
+// arguments, and a block drawn for a command that is no longer there goes: a
+// command leaves the outbox when it has been answered, and the block it made is
+// then a real one. The commands are walked in the order they were filed, which
+// is the order they will go up in, so one that names another by key finds the
+// block it names already drawn.
+export async function drawQueued() {
+  if (!state.open) return;
+  const rows = (await offline.queued()) || [];
+  const mine = new Map();
+  for (const doc of state.documents) {
+    for (const b of doc.blocks || []) if (b.id < 0 && b.key) mine.set(b.key, b);
+  }
+  const waiting = new Set();
+  for (const row of rows) {
+    // A command the server would not take keeps its block too. The panel holds
+    // the row with the two answers and undraws the block by its key when the
+    // person lets it go, so a reload that drew everything but the refused ones
+    // would take the paragraph off the page and leave the answer to a question
+    // about nothing.
+    if (row.cmd !== 'block.insert') continue;
+    if (row.me && state.me && row.me !== state.me) continue;
+    const args = row.args || {};
+    if (!state.documents.some((d) => d.id === args.document)) continue;
+    waiting.add(row.idem);
+    const drawn = mine.get(row.idem);
+    if (drawn) {
+      if (drawn.text !== args.text) apply(local('block', { ...drawn, text: args.text }));
+      continue;
+    }
+    // A command that names where it goes by key names a block this tab drew.
+    // If that block is gone the command it named has been answered, so the
+    // block it made is on the server and this one belongs at the end of the
+    // document rather than at the head, which is where an anchor nobody can
+    // find would otherwise put it.
+    const above = args.after_key ? mine.get(args.after_key) : null;
+    const blocks = (state.documents.find((d) => d.id === args.document) || {}).blocks || [];
+    const last = args.after_key && !above ? blocks[blocks.length - 1] : null;
+    mine.set(row.idem, makeLocal({
+      document_id: args.document, text: args.text, whole: Boolean(args.whole), key: row.idem,
+      after: (above && above.id) || (last && last.id) || args.after || 0,
+      to: args.after_key ? { after_key: args.after_key } : { after: args.after || 0 },
+    }));
+  }
+  for (const [key, row] of mine) if (!waiting.has(key)) unmakeLocal(key);
+}
+
+// unmakeLocal takes one off the page when no block is ever going to arrive for
+// it: an insert the server would not take, either answered on the block itself
+// or let go from the activity panel, and one joined back into the block above
+// before it was made at all. The real block arriving is settle above.
+export function unmakeLocal(key) {
+  const row = localOf(key);
+  if (row) {
+    apply({ seq: 0, proposition: state.open, entity: 'block', entity_id: row.id,
+      action: 'delete', before: row });
+    // For the reason above: a reload before the timer fires would draw a block
+    // the server has, and this one that stands for the same paragraph.
+    write();
+  }
+  return row;
+}
+
 // target names the row and the field a command sets, or nothing for a command
 // that adds rather than sets. It is what the outbox folds two edits together
 // on, so a second edit to a title made with no connection replaces the first
@@ -591,14 +803,22 @@ const VERSION = import.meta.url.match(/\/static\/([^/]+)\//)?.[1] || 'dev';
 let keeping = 0;
 
 export function remember() {
-  if (!state.open || keeping || state.fromCache) return;
+  if (!state.open || keeping || (state.fromCache && !booted)) return;
   keeping = setTimeout(write, 2000);
 }
+
+// booted says a page the worker handed back has read the snapshot and is
+// drawing it. Until then it holds nothing worth keeping and writing would put
+// an empty proposition over what this device has. After it, what is made on
+// such a page is made nowhere else, so it is kept like anything else: without
+// this a block drawn with no connection was gone at the next reload while the
+// command that makes it was still in the outbox.
+let booted = false;
 
 function write() {
   clearTimeout(keeping);
   keeping = 0;
-  if (!state.open || state.fromCache) return;
+  if (!state.open || (state.fromCache && !booted)) return;
   offline.keep({
     proposition: state.open,
     at: Date.now(),
@@ -647,8 +867,11 @@ export async function restore(open) {
   state.attachments = material.attachments || { links: [], files: [] };
   // The material is what was cached, so material() must not go looking for it.
   state.loaded = open;
+  // From here this page holds what this device knows of the proposition, so
+  // what is made on it is worth keeping.
+  booted = true;
   // Only the proposition this device saw last can be changed offline. The rest
   // are read only from whatever was cached, which is what the plan asks for.
-  if ((await offline.newest()) !== open) state.can = { ...state.can, edit: false };
+  readOnly = (await offline.newest()) !== open;
   return true;
 }

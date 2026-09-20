@@ -8,7 +8,7 @@
 // applying the guess again; a refusal puts back what was there and, for a
 // command that was queued, leaves a row in the activity panel to choose from.
 
-import { state, apply, emit, predict, baseText, target, retryMaterial } from './state.js';
+import { state, apply, emit, predict, baseText, target, retryMaterial, unmakeLocal, settleReplayed } from './state.js';
 import { parseWhere } from './blocktext.js';
 import * as offline from './offline.js';
 import * as api from './api.js';
@@ -46,6 +46,27 @@ export function newKey() {
     .map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// caught says a read of the stream has finished since the last moment this
+// socket could have dropped a frame. Three things are such a moment: the socket
+// opening, the server saying there is a gap, and an ack the server is saying
+// again, which is an answer this tab never heard the first time. Each of them
+// clears this and takes it from what its read answers, so a read that failed
+// leaves it false until the next one rather than for the life of the socket.
+//
+// caughtUp asks for that read and for a connection it could send on this
+// instant, because only both together mean this tab has heard everything there
+// is to hear. Anything that concludes something from what it has NOT heard has
+// to ask this, because a tab that is merely behind has heard nothing either.
+//
+// A network that goes while the socket notices nothing is the case none of the
+// three can see: no close, no gap, and the read that would be made runs over
+// HTTP and answers, which says nothing about what the socket is carrying. So
+// the browser's own offline is taken as the socket going, at the foot of this
+// file, and the reconnection reads the stream over one known to be alive.
+let caught = false;
+
+export const caughtUp = () => caught && !down();
+
 export class Offline extends Error {
   constructor() {
     super('You are offline. That change was not saved.');
@@ -60,6 +81,10 @@ export class Conflict extends Error {
 }
 
 export function connect() {
+  // One socket at a time. A close schedules a reconnection and a browser saying
+  // the network is back asks for one now, and either can arrive while the other
+  // is already in the air.
+  if (socket && socket.readyState !== WebSocket.CLOSED) return;
   // A workspace with nothing in it still opens a socket, because creating the
   // first proposition goes through it.
   const url = new URL('/ws', location.href);
@@ -86,12 +111,13 @@ export function connect() {
     // again, so the links and files of the open proposition are marked unread
     // and the next render asks for them without waiting out the retry gap.
     retryMaterial();
-    await catchUp();
+    caught = await catchUp();
     replay();
   });
   socket.addEventListener('message', (e) => receive(JSON.parse(e.data)));
   socket.addEventListener('close', () => {
     state.connected = false;
+    caught = false;
     // A command that was in flight when the socket went is not lost: it goes to
     // the back of the outbox and replays with the rest. The server may have
     // applied it before the socket died, and this tab has no way of knowing,
@@ -140,8 +166,19 @@ function receive(m) {
           // taking the caret out of what somebody is typing into. A catchUp
           // that cannot reach the server leaves the block missing until the
           // next one, which is the same place a dropped event leaves it.
-          catchUp().finally(() => { if (task) task.resolve(m.event); });
+          //
+          // An answer said twice is an answer this tab never heard, so what it
+          // has heard is behind until this read comes back.
+          caught = false;
+          catchUp().then((ok) => { caught = ok; })
+            .finally(() => { if (task) task.resolve(m.event); });
           break;
+        } else {
+          // The row is one this tab already holds, so nothing will be applied
+          // for it and nothing else is coming: the answer is drawn nowhere.
+          // A block this tab drew for this command is still standing beside the
+          // real one, and this is the only word anybody will ever say about it.
+          settleReplayed(m.event);
         }
       } else {
         apply(m.event);
@@ -172,7 +209,10 @@ function receive(m) {
       break;
     }
     case 'gap':
-      catchUp();
+      // The server saying frames were dropped, so this tab is behind until the
+      // read comes back and is behind still if it does not.
+      caught = false;
+      catchUp().then((ok) => { caught = ok; });
       break;
     case 'ping':
       // The server's heartbeat, answered from here rather than on a timer of
@@ -227,14 +267,20 @@ function down() {
 // activity panel's undo of a run of saves is the one: it carries older text
 // against an older base, and folding it over a save already waiting for the
 // same block would throw that save away unsent.
+//
+// opts.key names the change, and a caller passes its own when it has drawn
+// something the answer has to be matched back to: the editor draws a block
+// before the server has made it and has nothing but that name to find it by
+// again.
 export function send(cmd, args = {}, proposition = state.open, opts = {}) {
   const fold = opts.fold ?? target(cmd, args);
+  const key = opts.key ?? newKey();
   const baseWas = baseText(cmd, args);
   const revert = predict(cmd, args);
-  const row = { proposition, me: state.me, cmd, args, idem: newKey(),
+  const row = { proposition, me: state.me, cmd, args, idem: key,
     base: args.base ?? null, base_text: baseWas };
   if (down() || replaying) return keep(row, fold, revert);
-  return ship(cmd, args, revert, row, row.idem, fold);
+  return ship(cmd, args, revert, row, key, fold);
 }
 
 // keep puts a command in the outbox and answers as though it had gone. It has
@@ -272,80 +318,16 @@ function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
       // The socket going while this is in the air files it under the same name
       // it would have been queued under, so a command that must not fold over
       // what is already waiting does not fold on this road either.
-      queue: () => { if (row) offline.queue(row, fold).then(count); },
+      //
+      // It is filed as one that has been sent, because it has: the server may
+      // have applied it before the socket went, and nothing in the tab may now
+      // treat it as a command that has not happened. It goes up again under its
+      // own name, and the answer to that is what settles it.
+      queue: () => { if (row) offline.queue({ ...row, sending: true }, fold).then(count); },
     });
     socket.send(JSON.stringify({ id, cmd, key, args }));
   });
 }
-
-// live is a command that must not be kept for later. The editor's block.insert
-// is the one: it carries text that is in no entry yet and has no row on the
-// page, so the answer is what decides where that text ends up. Queued, it would
-// arrive long after the editor had put the text back into the block it came
-// from, and the paragraph would be there twice.
-//
-// A socket that goes while it is in the air used to be a refusal, and that was
-// the same duplicate by another route: the server may have applied the insert
-// before the socket died. So the frame carries a key and goes again, under the
-// same key, as soon as there is a socket to go on. The server either does it or
-// says it already did, and either way the answer is the one block.
-//
-// One deadline covers the whole attempt, tries and all, rather than one per
-// try: the caller is holding text with nowhere to be, and what matters to them
-// is how long until it lands somewhere, not how many times this tried. It gives
-// up the way the drain does, for the same reason: a socket can be open and
-// connected to nothing.
-//
-// It does not wait behind a replay the way send does. The outbox's order is
-// about one field's edits folding into one another; an insert names a block the
-// server already has and has nothing to queue behind.
-export function live(cmd, args) {
-  const key = newKey();
-  return new Promise((resolve, reject) => {
-    let over = false;
-    const timer = setTimeout(() => {
-      // The frame that was in the air when this fired may still be applied. The
-      // caller has been told it was not, so it draws nothing; the block arrives
-      // as an ordinary event like anybody else's.
-      over = true;
-      reject(new Offline());
-    }, replyWait);
-    const settle = (fn) => (v) => {
-      if (over) return;
-      over = true;
-      clearTimeout(timer);
-      fn(v);
-    };
-    const attempt = (first) => {
-      if (over) return;
-      if (down()) {
-        // Nothing has gone up yet and there is no connection, so there is
-        // nothing uncertain to wait out: this is the refusal it always was, and
-        // the caller puts the text back now rather than in fifteen seconds.
-        if (first) settle(reject)(new Offline());
-        else setTimeout(() => attempt(false), tryAgainIn);
-        return;
-      }
-      ship(cmd, args, null, null, key).then(settle(resolve), (err) => {
-        if (over) return;
-        // The socket went while the frame was in the air, which says nothing
-        // about whether the server applied it. The key is what makes sending it
-        // again safe either way.
-        if (err instanceof Offline) {
-          setTimeout(() => attempt(false), tryAgainIn);
-          return;
-        }
-        settle(reject)(err);
-      });
-    };
-    attempt(true);
-  });
-}
-
-// tryAgainIn is how long live waits between tries. A reconnection starts at
-// half a second and backs off, so this is short enough to take the first socket
-// that opens and long enough not to spin while there is none.
-const tryAgainIn = 250;
 
 // where tells the others what this tab has open. It is never worth an answer,
 // and the same string twice is nothing to tell: a caret moving inside a block
@@ -508,8 +490,28 @@ function answered(promise, wait) {
 // A browser noticing a network is the other way a replay starts. A socket that
 // was never actually broken, which is what a machine coming back from sleep
 // often has, fires no close and therefore no open.
+//
+// A socket that went with the network is waiting out a backoff that has been
+// doubling all through the outage and may be fifteen seconds long. There is a
+// network now, so it is worth trying at once; connect above refuses a second
+// socket, so the attempt this cuts in front of does nothing when it comes.
 addEventListener('online', () => {
-  if (socket && socket.readyState === WebSocket.OPEN) replay();
+  if (socket && socket.readyState === WebSocket.OPEN) { replay(); return; }
+  // Never the first socket: start says which proposition it is for, and a page
+  // that has not reached it yet is about to open one of its own.
+  if (!socket) return;
+  backoff = 500;
+  connect();
+});
+
+// A browser losing its network takes the socket with it. Nothing else closes a
+// socket whose network has gone: the frames stop arriving and the tab goes on
+// believing it is listening, so a read that finished before the outage would
+// still answer for everything since. Closing is what marks the moment: it puts
+// what was in flight back in the outbox, forgets the read, and leaves the
+// reconnection to read the stream again over a socket that carries.
+addEventListener('offline', () => {
+  if (socket) socket.close();
 });
 
 // post is a queued command that is a request rather than a socket frame: adding
@@ -550,9 +552,15 @@ export async function again(n) {
 // letGo drops a refused row and undraws the guess that was never taken, to what
 // the server says it holds when it said, and to what was there before when it
 // did not.
-export async function letGo(n, detail) {
-  await offline.drop(n);
-  undraw(n, detail);
+//
+// A block drawn for an insert nobody took has no such guess to put back: the
+// closure that would undraw it belongs to the tab that made it and a reload has
+// none. The row names that block itself, by the key the insert was to go up
+// under, which is on the block as well and survives in the snapshot.
+export async function letGo(row) {
+  await offline.drop(row.n);
+  undraw(row.n, row.detail);
+  if (row.cmd === 'block.insert') unmakeLocal(row.idem);
   await count();
 }
 
@@ -605,7 +613,7 @@ function stillSignedIn() {
 // them behind one another was worse: one read that never settled took every
 // later one with it.
 async function catchUp() {
-  if (!state.open) return;
+  if (!state.open) return false;
   try {
     const res = await fetch(`/api/events?proposition=${state.open}&since=${state.seq}&wait=0`, {
       headers: { Accept: 'application/json' },
@@ -613,10 +621,12 @@ async function catchUp() {
       // before, which is the old behavior rather than a broken one.
       signal: AbortSignal.timeout?.(replyWait),
     });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const body = await res.json();
     for (const ev of body.events || []) apply(ev);
+    return true;
   } catch {
     // Offline, or a read nobody answered in time. The next open tries again.
+    return false;
   }
 }

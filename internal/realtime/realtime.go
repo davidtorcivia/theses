@@ -137,6 +137,11 @@ type args struct {
 	Where       string  `json:"where"`
 	Document    int64   `json:"document"`
 	Block       int64   `json:"block"`
+	// AfterKey is where an insert goes when the block it goes after has no id
+	// yet: the key the command making that block was sent under. A tab with no
+	// connection draws the block it has just made and queues the command that
+	// makes it, so a second block below the first has only that key to name.
+	AfterKey string `json:"after_key"`
 	// Whole is a save made while somebody is typing: the block takes the text
 	// exactly as it was sent rather than trimmed and cut into paragraphs.
 	Whole bool `json:"whole"`

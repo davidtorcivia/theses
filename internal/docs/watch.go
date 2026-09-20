@@ -448,7 +448,7 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 			// given holds more than one paragraph, and following that one
 			// would put the next chunk of the file in among them.
 			for n, part := range Paragraphs(item.Text) {
-				e, err := s.InsertBlock(ctx, a, document, after, part, false)
+				e, err := s.InsertBlock(ctx, a, document, after, "", part, false)
 				if err != nil {
 					return nil, false, nil, err
 				}
@@ -504,7 +504,7 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		// not in the database, so it goes in whether or not the block itself
 		// would take its own change, which is the rule the branch above uses.
 		for _, part := range parts[1:] {
-			e, err := s.InsertBlock(ctx, a, document, after, part, false)
+			e, err := s.InsertBlock(ctx, a, document, after, "", part, false)
 			if err != nil {
 				return nil, false, nil, err
 			}

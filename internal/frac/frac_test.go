@@ -171,3 +171,47 @@ func TestRandomInsertions(t *testing.T) {
 		t.Errorf("average key length %.2f, want under 12", avg)
 	}
 }
+
+// The browser guesses where a row it has just made goes, before the server has
+// allocated a key for it, by putting a zero on the end of the key of the row it
+// was made under. That guess has to hold whatever the server does next: the row
+// is drawn below the one it was made under and above everything that was
+// already there, and it stays there when the real key arrives. What makes it
+// hold is that a trailing zero is not a key anybody else can be given.
+func TestAKeyWithAZeroOnTheEndSitsDirectlyAfterIt(t *testing.T) {
+	r := rand.New(rand.NewPCG(7, 11))
+	keys := []string{""}
+	for i := 0; i < 2000; i++ {
+		at := r.IntN(len(keys) + 1)
+		lo, hi := "", ""
+		if at > 0 {
+			lo = keys[at-1]
+		}
+		if at < len(keys) {
+			hi = keys[at]
+		}
+		keys = append(keys, "")
+		copy(keys[at+1:], keys[at:])
+		keys[at] = Between(lo, hi)
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		guess := key + "0"
+		if Valid(guess) {
+			t.Fatalf("%q is a key the server could allocate", guess)
+		}
+		if guess <= key {
+			t.Fatalf("%q does not sort after %q", guess, key)
+		}
+		// Every valid key above the one the row was made under is above the
+		// guess as well, so nothing the server has already given out, and
+		// nothing it can give out later, lands between the two.
+		for _, other := range keys {
+			if other > key && guess >= other {
+				t.Fatalf("%q is not below %q, which is above %q", guess, other, key)
+			}
+		}
+	}
+}

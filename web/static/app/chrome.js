@@ -3,23 +3,38 @@
 // and the per proposition settings page both start from here and add their own.
 
 import { $, el, clear, initials, offlineLine, saying } from './dom.js';
-import { state, boot, restore, subscribe, user } from './state.js';
+import { state, boot, restore, subscribe, user, emit, drawQueued } from './state.js';
 import { connect, count } from './net.js';
 import { renderRail } from './rail.js';
 import { openPalette, closePalette } from './palette.js';
 import { closePicker } from './picker.js';
 import { closeDrawer } from './drawer.js';
 
-export async function start(renderRest) {
+export function start(renderRest) {
   // A page the service worker handed back carries no payload, because it is the
   // one page here with nothing of anybody's in it. What it draws instead is the
   // snapshot this device kept of the proposition in the address bar.
   const payload = JSON.parse($('#payload').textContent);
   if (payload) {
     boot(payload);
+    // What this device has promised and not sent is not in the payload, so the
+    // blocks those commands make are drawn from the commands themselves.
+    drawQueued();
   } else {
     state.fromCache = true;
-    await restore(propositionInURL());
+    // Which proposition this is, said by the address bar rather than by the
+    // snapshot: the socket below needs it now. It is what tells this page the
+    // server is there again, and fromCache turns that into the reload that
+    // draws the real page, so a page that opened one under no proposition, or
+    // never opened one at all, is a page with no way back.
+    state.open = propositionInURL();
+    // What this device kept is drawn when it has been read, and the page does
+    // not wait here for it. Storage can take its time and can stop answering
+    // altogether: a database another tab is holding, a browser that refuses
+    // one. That is a page with nothing on it until the connection is back,
+    // which is bad; waiting for the read before opening the socket is a page
+    // that never finds out the connection is back at all, which is worse.
+    restore(state.open).catch(() => false).then(drawQueued).then(emit);
   }
 
   const render = () => {
@@ -29,7 +44,12 @@ export async function start(renderRest) {
     renderRest();
   };
   subscribe(render);
-  render();
+  // A page drawn from what this device kept draws nothing until the read is
+  // back: what it would put up in the meantime is the line that says there is
+  // nothing of this proposition here, which is about to be untrue. The read
+  // draws the page whether it found something or nothing, so that line still
+  // appears when there really is nothing.
+  if (!state.fromCache) render();
   connect();
   count();
   register();

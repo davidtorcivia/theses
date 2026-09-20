@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,10 @@ var (
 	ErrReason = errors.New("that is not a reason to keep a revision")
 	// ErrTooManyDocuments is more tabs than the document area can draw.
 	ErrTooManyDocuments = errors.New("that proposition has as many documents as it takes")
+	// ErrAfterBoth is an insert that names where it goes twice. The two are
+	// different questions, an id and a key, and a caller that sent both has not
+	// decided which it means.
+	ErrAfterBoth = errors.New("an insert names after or after_key, not both")
 )
 
 // maxDocuments is the number of tabs above the document. Past this the tabs
@@ -225,7 +230,7 @@ func (s *Service) CreateDocument(ctx context.Context, a core.Actor, proposition 
 		created = e
 		after := int64(0)
 		for _, text := range Paragraphs(start) {
-			block, err := s.insertOne(ctx, a, proposition, e.EntityID, after, text)
+			block, err := s.insertOne(ctx, a, proposition, e.EntityID, after, "", text)
 			if err != nil {
 				return err
 			}
@@ -376,6 +381,43 @@ func place(ctx context.Context, tx *sql.Tx, document, after, exclude int64) (str
 	return frac.Between(lo, hi.String), nil
 }
 
+// blockUnderKey is the block this actor's earlier command made, found by the
+// key that command was sent under. It is how an insert names a block whose id
+// the caller cannot know: a browser with no connection draws the block it has
+// just made and queues the command that makes it, and a second block made below
+// the first has only that key to point at.
+//
+// A command that made several blocks, which is a paste the server cut up, spent
+// the key and then the key with a number on the end, one per block. What the
+// key names is the last of them, because that is the block the next one belongs
+// under.
+//
+// A key nobody spent, one spent by somebody else, and one whose command made no
+// block are all the same answer: there is no such block. A key older than
+// core.KeyLife has been forgotten, and the command that made the block is
+// replayed rather than replied to, so it records the key afresh and this finds
+// the block that replay made.
+func blockUnderKey(ctx context.Context, tx *sql.Tx, a core.Actor, key string) (int64, error) {
+	// The run's later keys are the key, a hash and a decimal number, so they sit
+	// between the key with a hash on the end and the key with the character
+	// after the last digit on it. It is a range rather than a pattern because
+	// the key comes from a client: a pattern would have to be escaped, and a
+	// caller sending wildcards would be matching keys it did not name.
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT a.entity_id
+		FROM client_keys k JOIN activity a ON a.id = k.activity_id
+		WHERE k.actor_id = ? AND (k.key = ? OR (k.key > ? AND k.key < ?))
+		AND a.entity = 'block' AND a.action = 'insert'
+		ORDER BY a.id DESC LIMIT 1`, a.ID, key, key+"#", key+"#:").Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, core.ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(id, 10, 64)
+}
+
 // LastBlock is the block an append goes after, or zero for an empty document.
 func LastBlock(ctx context.Context, q store.Querier, document int64) (int64, error) {
 	var id sql.NullInt64
@@ -392,11 +434,20 @@ func LastBlock(ctx context.Context, q store.Querier, document int64) (int64, err
 // document when after is zero. Text holding more than one paragraph becomes
 // more than one block, because a block is a paragraph.
 //
+// afterKey is the other way of naming where it goes: the key this actor sent an
+// earlier command under, meaning after the block that command made. A client
+// that draws a block before the server has answered has no id to name, and two
+// blocks made in a row with no connection are two commands in an outbox, the
+// second of which names the first. Exactly one of the two may be given.
+//
 // whole is the same flag block.set has, and it is the editor splitting a block
 // under somebody's caret: the text is stored exactly as it was sent and is
 // always one block, so what comes back is what went up and the half paragraph
 // they are in the middle of writing is not trimmed or cut up on the way.
-func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after int64, text string, whole bool) (core.Event, error) {
+func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after int64, afterKey, text string, whole bool) (core.Event, error) {
+	if after != 0 && afterKey != "" {
+		return core.Event{}, ErrAfterBoth
+	}
 	if whole {
 		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 		if err := board.Fits(text, board.MaxBody); err != nil {
@@ -420,7 +471,7 @@ func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after
 		}
 	}
 	if len(parts) == 1 {
-		e, err := s.insertOne(ctx, a, proposition, document, after, parts[0])
+		e, err := s.insertOne(ctx, a, proposition, document, after, afterKey, parts[0])
 		if err == nil {
 			s.touch(document, a)
 		}
@@ -429,14 +480,17 @@ func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after
 	var first core.Event
 	err = s.Together(ctx, func(ctx context.Context) error {
 		for i, part := range parts {
-			e, err := s.insertOne(ctx, a, proposition, document, after, part)
+			e, err := s.insertOne(ctx, a, proposition, document, after, afterKey, part)
 			if err != nil {
 				return err
 			}
 			if i == 0 {
 				first = e
 			}
+			// Every paragraph after the first goes behind the one before it,
+			// which is an id this transaction has just made and no longer a key.
 			after = e.EntityID
+			afterKey = ""
 		}
 		return nil
 	})
@@ -449,9 +503,17 @@ func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after
 // insertOne is told the proposition rather than looking it up, because the
 // blocks a document starts from are written in the transaction that makes the
 // document, where no other connection can yet see the row to look it up from.
-func (s *Service) insertOne(ctx context.Context, a core.Actor, proposition, document, after int64, text string) (core.Event, error) {
+func (s *Service) insertOne(ctx context.Context, a core.Actor, proposition, document, after int64,
+	afterKey, text string) (core.Event, error) {
 	e, err := s.do(ctx, a, proposition, auth.CanEdit, "block", "insert",
 		func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+			if afterKey != "" {
+				resolved, err := blockUnderKey(ctx, tx, a, afterKey)
+				if err != nil {
+					return core.Change{}, err
+				}
+				after = resolved
+			}
 			position, err := place(ctx, tx, document, after, 0)
 			if err != nil {
 				return core.Change{}, err
@@ -564,7 +626,7 @@ func (s *Service) SetBlock(ctx context.Context, a core.Actor, id, base int64, te
 		first = e
 		after := id
 		for _, part := range parts[1:] {
-			inserted, err := s.insertOne(ctx, a, proposition, document, after, part)
+			inserted, err := s.insertOne(ctx, a, proposition, document, after, "", part)
 			if err != nil {
 				return err
 			}
