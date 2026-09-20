@@ -581,16 +581,26 @@ const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('t
 if (channel) {
   channel.addEventListener('message', (e) => {
     const said = e.data;
-    if (said && said.answered && answers) answers(said.answered, said.answer);
+    if (!said || !said.answered) return;
+    settled(said.answered, said.answer, { post: false });
+    // What the other tab did to the store, this one has not read yet.
+    count();
   });
 }
 
 // settled says a row has been answered, here and in the tabs beside this one.
 // The number is all either needs: a tab drawing the question is drawing it from
 // that row, and one that is not has nothing to settle.
-function settled(n, answer, here = true) {
+//
+// The row leaves this tab's list first, because it has stopped being a question
+// either way: dropped when it was let go or taken, waiting again when it goes
+// back in the queue. Left in it, the render that the settling itself causes
+// would find the question still listed and put it back on the block it had just
+// been taken off.
+function settled(n, answer, { here = true, post = true } = {}) {
+  state.refused = state.refused.filter((r) => r.n !== n);
   if (here && answers) answers(n, answer);
-  if (channel) channel.postMessage({ answered: n, answer });
+  if (post && channel) channel.postMessage({ answered: n, answer });
 }
 
 // retry puts a refused row back in the queue, which is what the panel offers on
@@ -628,10 +638,15 @@ export async function letGo(row) {
 // between the two would offer a choice that has just been made, and the editor
 // reads this list to decide whether a block is still waiting on one.
 export async function chosen(n) {
+  // Out of this tab's list before anything is awaited. The editor settles the
+  // block in the same breath as calling this, and the render that follows would
+  // otherwise find the question still listed and put it back on the block it
+  // has just been taken off.
   state.refused = state.refused.filter((r) => r.n !== n);
   await offline.drop(n);
-  // The editor has settled its own block already; the tabs beside it have not.
-  settled(n, 'done', false);
+  // The tabs beside this one have settled nothing yet, and they are told once
+  // the row has actually gone, so a count of theirs cannot find it again.
+  settled(n, 'done', { here: false });
   await count();
 }
 
