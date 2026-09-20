@@ -95,6 +95,13 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
     if (active || e.button !== 0 || e.target.closest('button')) return;
     if (handle) {
       if (!e.target.closest(handle)) return;
+      // A press on a handle is never a request to open what is under it,
+      // however little it moves afterwards, so the click it ends in is
+      // swallowed from here rather than from the end of a drag that may never
+      // begin. It has to be swallowed by the row rather than by the handle:
+      // the line below takes the compatibility mouse events away, and the
+      // click the browser makes without them is aimed at the row.
+      carried = true;
       // The press is answered here and nowhere else. Letting it through would
       // move the focus to the row, and on a block that is the open editor
       // somewhere else on the page blurring and closing before the drag has

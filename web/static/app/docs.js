@@ -774,12 +774,10 @@ function blockNode(b) {
   if (canEdit()) {
     node.addEventListener('click', (e) => {
       // The pointer that has just carried the block ends in a click as well,
-      // and that one finishes the drag rather than asking to write in it. A
-      // press on the handle that moved too little to carry anything ends in one
-      // too, and the handle is a control for moving the block: it says grab and
-      // it is not where anybody asks to write. A finger says the same, because
-      // the handle answers its press itself.
-      if (!carrying() && !onGrip(e) && !onLink(e)) startEditing(b.id);
+      // and that one finishes the drag rather than asking to write in it. So
+      // does a press on the handle that moved too little to carry anything:
+      // the handle says grab and is not where anybody asks to write.
+      if (!carrying() && !onLink(e)) startEditing(b.id);
     });
     node.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !onLink(e)) { e.preventDefault(); startEditing(b.id); }
@@ -802,8 +800,6 @@ function blockNode(b) {
 // else is standing in, builds text and spans and no links at all, so such a
 // block opens on a click wherever it is clicked, as it did.
 const onLink = (e) => !!e.target.closest('a');
-
-const onGrip = (e) => !!e.target.closest('.grip');
 
 // grip is the handle a block is carried by, in the margin beside it, and the
 // drag it starts. Only the handle carries the block: pressing the text of one
