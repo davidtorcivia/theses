@@ -575,17 +575,36 @@ export async function letGo(row) {
 export async function chosen(n) {
   state.refused = state.refused.filter((r) => r.n !== n);
   await offline.drop(n);
+  // The editor has settled its own block already; the tabs beside it have not.
+  settled(n, 'done', false);
   await count();
 }
 
 // resend is keep mine: the command goes again with the version that is there
 // now. The new send has drawn the new value itself, so the old guess is dropped
 // without being undrawn; undrawing it would take the new one away with it.
+//
+// The row leaves once the command has been taken, and not before. Dropped
+// first, a command the server refuses a second time would have nowhere left to
+// be: the outbox would have let go of the only copy of what the person wrote
+// before finding out that it still could not be sent. So a refusal puts the
+// question back where it was, carrying what the server said this time, and the
+// block and the panel go on offering it.
 export async function resend(row, args) {
+  let ev;
+  try {
+    ev = await send(row.cmd, args, row.proposition);
+  } catch (err) {
+    await offline.file({ ...row, args, idem: newKey() }, row.key, err.message,
+      err instanceof Conflict ? err.detail : row.detail);
+    await count();
+    throw err;
+  }
   reverts.delete(row.n);
   await offline.drop(row.n);
+  settled(row.n, 'done');
   await count();
-  return send(row.cmd, args, row.proposition);
+  return ev;
 }
 
 // queueLink is the links pane's way in: no socket command adds a link, so the
