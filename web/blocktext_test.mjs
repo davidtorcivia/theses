@@ -372,9 +372,19 @@ const shapes = [
     want: [{ kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['one | two', 'three']] }],
   },
   {
-    name: 'a short row is padded and a long one is cut',
+    name: 'a short row is padded and a long one keeps the cells it has',
     in: '| a | b |\n| - | - |\n| 1 |\n| 1 | 2 | 3 |',
-    want: [{ kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['1', ''], ['1', '2']] }],
+    want: [{ kind: 'table', align: ['', ''], head: ['a', 'b'], rows: [['1', ''], ['1', '2', '3']] }],
+  },
+  {
+    name: 'a line with more pipes than the header keeps every word of it',
+    in: '| a |\n| - |\n| 1 |\n# x | y',
+    want: [{ kind: 'table', align: [''], head: ['a'], rows: [['1'], ['# x', 'y']] }],
+  },
+  {
+    name: 'a row of dashes under a blank line is not a table',
+    in: 'a\n\n\n|---|\n| 1 |',
+    want: [{ kind: 'p', text: 'a' }, { kind: 'p', text: '\n|---|\n| 1 |' }],
   },
   {
     name: 'a delimiter row of the wrong width is not a table',
@@ -456,3 +466,33 @@ for (const c of long) {
 }
 
 console.log(`${long.length} long block cases pass`);
+
+// Nothing in the module may leave text somebody typed undrawn. Every line below
+// carries a word of its own, and every text that can be built out of three of
+// them has to hand all of those words back in the parts it reads. The markers
+// themselves are syntax and are not looked for; a fence's info string is syntax
+// here too, so the lines below do not put a word in one.
+const marked = [
+  'wpara', '# whead', '## whead2', '### whead3', '- wbullet', '1. wnumber',
+  '> wquote', '>', '```', 'wcode', '| wcellone | wcelltwo |', '| --- | --- |',
+  '| wrowone | wrowtwo | wrowthree |', '', '   ', 'a | wpipe', '|---|', 'wsetext', '---',
+];
+
+const words = (part) => [part.text, ...(part.items || []), ...(part.paragraphs || []),
+  ...(part.head || []), ...(part.rows || []).flat()].filter(Boolean).join(' ');
+
+let texts = 0;
+for (const one of marked) {
+  for (const two of marked) {
+    for (const three of marked) {
+      const text = `${one}\n${two}\n${three}`;
+      texts++;
+      const said = parts(text).map(words).join(' ');
+      for (const word of text.match(/w[a-z]+/g) || []) {
+        assert.ok(said.includes(word), `${JSON.stringify(text)} lost ${word}: ${JSON.stringify(said)}`);
+      }
+    }
+  }
+}
+
+console.log(`${texts} generated texts keep every word`);

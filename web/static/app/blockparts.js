@@ -142,14 +142,20 @@ function quote(lines, at, out) {
 // which is what keeps a line of plain dashes under a line of words out of this:
 // goldmark reads that as a second level heading and the pane has always drawn
 // it as the text it is, and a table of one column would be a third answer and
-// the worst of them. A row short of cells is padded and a long one is cut,
-// which is how goldmark keeps every row the width of the header.
+// the worst of them. A blank header line is no header either, or a row of
+// dashes under a blank line would make a table with nothing at the top of it,
+// where goldmark leaves the dashes the paragraph they are.
+//
+// A row short of cells is padded, as goldmark pads it. A row with more cells
+// than the header keeps them, where goldmark drops them: nothing in this module
+// may leave text somebody typed undrawn, and a cell too many is drawn past the
+// last column rather than swallowed.
 //
 // It is asked at every line of a paragraph, so it answers before it copies
 // anything: a line with no pipe under it cannot start one.
 function table(lines, at) {
   const rule = lines[at + 1];
-  if (rule === undefined || !rule.includes('|')) return null;
+  if (rule === undefined || !rule.includes('|') || !lines[at].trim()) return null;
   const head = cells(lines[at]);
   const marks = cells(rule);
   if (!head.length || marks.length !== head.length || !marks.every((c) => /^:?-+:?$/.test(c))) return null;
@@ -158,7 +164,8 @@ function table(lines, at) {
   for (let i = at + 2; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
     const row = cells(lines[i]);
-    rows.push(head.map((_, n) => row[n] ?? ''));
+    while (row.length < head.length) row.push('');
+    rows.push(row);
   }
   return { kind: 'table', align, head, rows };
 }
