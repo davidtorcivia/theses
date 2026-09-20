@@ -134,6 +134,11 @@ function bound(row, now) {
     w.flight = false;
     work.set(now.id, w);
   }
+  // What Ctrl+Z takes back in this paragraph was typed before the server had
+  // given it an id, and it is the same paragraph's to take back now that it
+  // has one. It has to move before the next render, whose keep drops the
+  // histories of blocks that are no longer on the page.
+  undo.move(row.id, now.id);
   if (editing && editing.id === row.id) {
     editing.id = now.id;
     editing.node.dataset.b = now.id;
@@ -2027,10 +2032,9 @@ function resume(id, give) {
     work.delete(id);
     // A block the server would not make has no text to fall back to, because
     // there is no row anywhere but here. Letting it go takes it off the page,
-    // and its history with it: there is no block left for it to answer for.
+    // and the render that follows takes its history with it.
     if (id < 0) {
       if (openOn(id)) editing = null;
-      undo.reset(id, '');
       unmakeLocal(b.key);
       emit();
       status();

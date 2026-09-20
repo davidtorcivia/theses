@@ -117,6 +117,18 @@ export function reset(id, text, start = text.length, end = start) {
   kept.set(id, history(text, start, end));
 }
 
+// move carries a history from one block id to another. A block made in this tab
+// is drawn under an id of its own until the server answers, and what was typed
+// into it while it waited is the same paragraph's to take back once it has the
+// id the server gave it. A block with nothing to take back has no history and
+// nothing to carry.
+export function move(from, to) {
+  const h = kept.get(from);
+  if (!h) return;
+  kept.delete(from);
+  kept.set(to, h);
+}
+
 // keep drops the histories of blocks that are not on the page any more: one
 // somebody deleted, and every block of a document that is no longer the open
 // one.
