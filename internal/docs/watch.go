@@ -348,7 +348,7 @@ func (s *Service) Import(ctx context.Context, path string) error {
 			// The version in the comment is the version the person at the
 			// terminal started from, so this is the same stale set the browser
 			// sends and it goes through the same merge.
-			if _, err := s.SetBlock(ctx, fileActor, item.ID, item.Version, parts[0]); err != nil {
+			if _, err := s.SetBlock(ctx, fileActor, item.ID, item.Version, parts[0], false); err != nil {
 				var clash *core.ConflictError
 				if !errors.As(err, &clash) {
 					return err

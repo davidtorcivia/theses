@@ -123,7 +123,7 @@ func TestMirrorDoesNotClobberAPendingHandEdit(t *testing.T) {
 	}
 	// A change in the browser would otherwise write over it.
 	b := f.blocks(t)
-	if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, "# Changed in the browser"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], b[0].ID, b[0].Version, "# Changed in the browser", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -320,7 +320,7 @@ func TestImportLeavesAConflictingBlockAloneAndMarksIt(t *testing.T) {
 	blocks := f.blocks(t)
 
 	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, true); err != nil {
@@ -354,7 +354,7 @@ func TestImportMergesAStaleEditOnAnotherLine(t *testing.T) {
 	blocks := f.blocks(t)
 
 	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version,
-		"The tide is high and the moon is full."); err != nil {
+		"The tide is high and the moon is full.", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, true); err != nil {
@@ -366,7 +366,7 @@ func TestImportMergesAStaleEditOnAnotherLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := f.SetBlock(ctx, f.who["owner"], blocks[1].ID, current.Version,
-		"The tide is low and the moon is full."); err != nil {
+		"The tide is low and the moon is full.", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, true); err != nil {
@@ -438,7 +438,7 @@ func TestRunImportsAHandEditAndNotItsOwnWrites(t *testing.T) {
 
 	// A change in the browser reaches the file.
 	blocks := f.blocks(t)
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, "# From the browser"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, "# From the browser", false); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the browser's change to reach the file", func() bool {
@@ -519,7 +519,7 @@ func TestRunKeepsTheConflictMarkersItWrote(t *testing.T) {
 
 	blocks := f.blocks(t)
 	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version,
-		"## Is it true in the browser?"); err != nil {
+		"## Is it true in the browser?", false); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "the browser's change to reach the file", func() bool {
@@ -614,7 +614,7 @@ func TestMirrorRecoversFromAWriteThatDidNotLand(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(path, "in the way"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, "# Written while blocked"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version, "# Written while blocked", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err == nil {
@@ -630,7 +630,7 @@ func TestMirrorRecoversFromAWriteThatDidNotLand(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := f.blocks(t)
-	if _, err := f.SetBlock(ctx, f.who["editor"], after[0].ID, after[0].Version, "# Written after the block cleared"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], after[0].ID, after[0].Version, "# Written after the block cleared", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -650,7 +650,7 @@ func TestMirrorKeepsTheMarkersUntilAnImportClearsThem(t *testing.T) {
 	blocks := f.blocks(t)
 
 	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -667,7 +667,7 @@ func TestMirrorKeepsTheMarkersUntilAnImportClearsThem(t *testing.T) {
 	}
 
 	// A change to another block rewrites the file, and the marker stays.
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[2].ID, blocks[2].Version, "## Who pays for it?"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[2].ID, blocks[2].Version, "## Who pays for it?", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -692,7 +692,7 @@ func TestMirrorKeepsTheMarkersUntilAnImportClearsThem(t *testing.T) {
 	if strings.Contains(read(t, path), conflictMarker) {
 		t.Fatalf("the marker outlived the conflict:\n%s", read(t, path))
 	}
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, f.blocks(t)[0].Version, "# Later still"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, f.blocks(t)[0].Version, "# Later still", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -791,7 +791,7 @@ func TestImportKeepsTheMarkersItFindsAfterARestart(t *testing.T) {
 	blocks := f.blocks(t)
 
 	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -841,7 +841,7 @@ func TestMirrorForgetsAMarkerOnABlockThatIsGone(t *testing.T) {
 	blocks := f.blocks(t)
 
 	stale := strings.Replace(read(t, path), "## Is it true?", "## Is it true at the terminal?", 1)
-	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?"); err != nil {
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version, "## Is it true in the browser?", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
@@ -930,7 +930,7 @@ func TestImportKeepsAParagraphWrittenUnderABlockItCouldNotSet(t *testing.T) {
 		"## Is it true at the terminal?\nA note under it.", 1)
 	// The browser rewrites the same heading another way.
 	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[1].ID, blocks[1].Version,
-		"## Is it true in the browser?"); err != nil {
+		"## Is it true in the browser?", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {

@@ -34,6 +34,9 @@ type documentBody struct {
 	After       int64  `json:"after"`
 	BaseVersion int64  `json:"base_version"`
 	Reason      string `json:"reason"`
+	// Whole asks for the text to be stored exactly as it was sent, which is
+	// what an editor saving while somebody types needs and nothing else does.
+	Whole bool `json:"whole"`
 }
 
 // documentView is one document with its blocks and, on the read of a single
@@ -167,7 +170,7 @@ func (a *API) setBlock(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	a.applied(w, r, p, func() (core.Event, error) {
-		return a.Docs.SetBlock(r.Context(), actorOf(p), id, body.BaseVersion, body.Text)
+		return a.Docs.SetBlock(r.Context(), actorOf(p), id, body.BaseVersion, body.Text, body.Whole)
 	})
 }
 

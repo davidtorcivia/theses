@@ -30,8 +30,10 @@ const (
 
 // RevisionEvery is how often a document being edited is snapshotted. The timer
 // is armed by an edit and re-arms only while edits keep arriving, so a document
-// nobody is touching costs nothing.
-const RevisionEvery = 10 * time.Minute
+// nobody is touching costs nothing. Two minutes, because the editor saves as it
+// is typed: a version is what somebody restores to, and half an hour of writing
+// should leave more than three of them to choose from.
+const RevisionEvery = 2 * time.Minute
 
 // Nullable columns are pointers so a JSON payload round-trips a NULL as null.
 // Undo writes the before payload straight back into the row, and a deleted_at
@@ -85,7 +87,7 @@ type Service struct {
 	// the moment it is created so changing the setting changes the next one.
 	Template func() string
 	// Every is the gap between periodic revisions, a field so a test does not
-	// have to wait ten minutes for one.
+	// have to wait two minutes for one.
 	Every time.Duration
 	// Debounce is how long the watcher waits for a file to settle, a field for
 	// the same reason.
@@ -281,8 +283,9 @@ func Load(ctx context.Context, q store.Querier, proposition int64) ([]Doc, error
 }
 
 // HistoryLimit is how many revisions the history list shows. A document is
-// snapshotted at most once every ten minutes it is worked on, so this is a long
-// way back and still one small query.
+// snapshotted at most once every couple of minutes it is worked on, and only
+// when it has changed since the last one, so this is a long way back and still
+// one small query.
 const HistoryLimit = 50
 
 // ListRevisions is the history list, newest first, with the markdown each

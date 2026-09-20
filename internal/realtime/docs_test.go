@@ -53,7 +53,7 @@ func TestSocketCarriesTheDocumentCommands(t *testing.T) {
 	// Somebody else writes the block, and this tab's stale set comes back as a
 	// conflict carrying what the block holds now.
 	if _, err := r.hub.Docs.SetBlock(ctx, r.actor("grace"), block.ID, block.Version,
-		"The sea is a flywheel."); err != nil {
+		"The sea is a flywheel.", false); err != nil {
 		t.Fatal(err)
 	}
 	send(t, mine, command{ID: 3, Cmd: "block.set", Args: args{

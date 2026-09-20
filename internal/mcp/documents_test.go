@@ -115,7 +115,7 @@ func TestReplaceBlockReportsWhatTheBlockHoldsNow(t *testing.T) {
 	h.call(cs, "append_block", appendBlockArgs{Document: made.ID, Text: "The tide is high."}, &appended)
 
 	if _, err := h.srv.api.Docs.SetBlock(ctx, h.owner(), appended.ID, appended.Version,
-		"The tide is low."); err != nil {
+		"The tide is low.", false); err != nil {
 		t.Fatal(err)
 	}
 	res := h.call(cs, "replace_block", replaceBlockArgs{
