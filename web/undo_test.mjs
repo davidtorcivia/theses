@@ -7,7 +7,7 @@
 // test, so it is not served to browsers or kept by the service worker.
 
 import assert from 'node:assert/strict';
-import { history, of, reset, move, keep, together, cap } from './static/app/undo.js';
+import { history, of, reset, keep, together, cap } from './static/app/undo.js';
 
 // A snapshot with the caret at the end, which is where typing leaves it.
 const end = (text) => ({ text, start: text.length, end: text.length });
@@ -181,19 +181,8 @@ function typing(h, texts, kind = 'type', from = 0) {
   typing(h, ['ours and theirs!']);
   assert.deepEqual(h.undo(), end('ours and theirs'), 'and starts again from the text it was reset to');
   reset(7, 'theirs alone');
+  assert.equal(of(7, end('theirs alone')).now(), 'theirs alone', 'resetting again begins from the new text');
   assert.equal(of(7, end('theirs alone')).undo(), null, 'resetting again drops what was there');
-}
-
-{
-  // move is the ack of a block this tab drew before the server had one.
-  reset(-1, '');
-  const h = of(-1, end(''));
-  typing(h, ['new']);
-  move(-1, 91);
-  assert.equal(of(91, end('new')), h, 'the history follows the block to its real id');
-  assert.deepEqual(of(91, end('new')).undo(), { text: '', start: 0, end: 0 }, 'holding what was typed under the old one');
-  const fresh = of(-1, end(''));
-  assert.notEqual(fresh, h, 'and nothing is left behind under it');
 }
 
 {

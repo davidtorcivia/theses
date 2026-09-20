@@ -117,20 +117,9 @@ export function reset(id, text, start = text.length, end = start) {
   kept.set(id, history(text, start, end));
 }
 
-// move carries a history from one id to another. The editor can draw a block
-// before the server has made one, under an id of its own, and the ack gives it
-// the real one: what was typed into it under the first id was typed into this
-// block. That re-keying is where the insert is acknowledged, in docs.js.
-export function move(from, to) {
-  const h = kept.get(from);
-  if (!h) return;
-  kept.delete(from);
-  kept.set(to, h);
-}
-
 // keep drops the histories of blocks that are not on the page any more: one
 // somebody deleted, and every block of a document that is no longer the open
-// one. Nothing would ever draw an editor on those again.
+// one.
 export function keep(ids) {
   for (const id of kept.keys()) if (!ids.has(id)) kept.delete(id);
 }
