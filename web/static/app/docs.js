@@ -195,7 +195,7 @@ export function renderDocument() {
       }),
       // Save stands between the two, next to the toggle it belongs to, and is
       // there only while the markdown is open to somebody who may write it.
-      state.docSource && src && src.document === doc.id ? saveButton(doc) : null,
+      state.docSource && sourceOf(doc) ? saveButton(doc) : null,
       el('button', {
         class: 'lnk', type: 'button', id: 'docmode',
         text: state.docSource ? 'Rendered' : 'Source',
@@ -259,7 +259,9 @@ export function beforeRender() {
   arrived();
   // Where the person is in the markdown they are writing. The textarea itself
   // is carried across the rebuild with its text, but taking it out of the page
-  // drops the focus and can move what is scrolled into view.
+  // drops the focus and can move what is scrolled into view. Only the open
+  // document's can be on the page, so it is the only one asked.
+  const src = sourceOf(current());
   if (src && src.area.isConnected) {
     src.at = [src.area.selectionStart, src.area.selectionEnd];
     src.scroll = src.area.scrollTop;
@@ -287,6 +289,7 @@ function prune() {
 
 export function afterRender() {
   rendering = false;
+  const src = sourceOf(current());
   if (src && src.area.isConnected) {
     // The scroll goes back whether or not they were in it: reading the
     // markdown while somebody else writes is a page that must not jump.
@@ -488,30 +491,41 @@ function when(unix) {
 // importer the markdown file on disk goes through, which is what keeps the
 // block a paragraph came out of when it comes back unchanged.
 //
-// src is that editing session: which document it is about, the blocks it was
-// opened on with the version each was at, the text as it stands here, and the
-// textarea it is being typed into. The base is what the server lines the
-// paragraphs up against, so it is taken once, when the markdown is opened, and
-// never moved by anything that happens afterwards; what has been typed lives
-// in text, not only in the textarea, the way a block's does in its entry.
+// sources is one editing session per document, by document id: the blocks the
+// markdown was opened on with the version each was at, the text as it stands
+// here, and the textarea it is being typed into. The base is what the server
+// lines the paragraphs up against, so it is taken once, when the markdown is
+// opened, and never moved by anything that happens afterwards; what has been
+// typed lives in text, not only in the textarea, the way a block's does in its
+// entry.
 //
-// It outlives the toggle and the tab switch, so going to the rendered document
-// and back finds the same text against the same base and nothing has to be
-// asked. It does not outlive the page: a reload leaves the document as the
-// server last took it, which is what an unsaved block does too.
-let src = null;
+// One per document rather than one for the tab, because the tabs above the
+// document are a click apart: a session that followed whichever tab was open
+// would leave the markdown of the document somebody was writing to be thrown
+// away by the next document they looked at. Each outlives the toggle and the
+// tab switch, so coming back to a document finds the same text against the same
+// base and nothing has to be asked. None of them outlives the page: a reload
+// leaves every document as the server last took it, which is what an unsaved
+// block does too.
+const sources = new Map();
+
+// sourceOf is the session for a document, or null, and the only reader of the
+// map: a session is never asked for by anything but the document it belongs to,
+// so one cannot be drawn or saved under another.
+const sourceOf = (doc) => (doc && sources.get(doc.id)) || null;
 
 const markdownOf = (doc) => (doc.blocks || []).map((b) => b.text).join('\n\n');
 
 function source(doc) {
   const wrap = el('div', { id: 'docsource' });
-  if (doc && canEdit() && src && src.document === doc.id) {
+  const src = sourceOf(doc);
+  if (src && canEdit()) {
     // The textarea is carried from render to render rather than made again,
     // because somebody else saving a block is a render like any other and it
     // must not take the caret, the scroll or the words out from under the
     // person writing. beforeRender and afterRender put the caret and the
     // scroll back across the move.
-    if (moved(doc)) {
+    if (moved(doc, src)) {
       wrap.append(el('p', { class: 'notice',
         text: 'This document has changed since you opened its markdown. Saving merges what you have written into theirs, paragraph by paragraph.' }));
     }
@@ -527,7 +541,7 @@ function source(doc) {
 
 // moved reports the document standing somewhere other than where the open
 // markdown was taken from, which is the note above the textarea.
-function moved(doc) {
+function moved(doc, src) {
   const now = doc.blocks || [];
   return now.length !== src.base.length
     || now.some((b, i) => b.id !== src.base[i].id || b.version !== src.base[i].version);
@@ -542,7 +556,7 @@ function moved(doc) {
 // only view and has no session to make.
 function openSource(doc) {
   if (!doc || !canEdit()) return true;
-  if (src && src.document === doc.id) return true;
+  if (sourceOf(doc)) return true;
   // A provisional editor names no block and is left where it is: its insert is
   // in the air, which the count below refuses on anyway.
   if (editing && editing.id) leave(editing.id);
@@ -567,8 +581,7 @@ function reopen(doc) {
   const area = el('textarea', { id: 'docsrc', spellcheck: 'false',
     'aria-label': 'This document as markdown' });
   area.value = markdownOf(doc);
-  src = {
-    document: doc.id,
+  const src = {
     base: (doc.blocks || []).map((b) => ({ id: b.id, version: b.version })),
     text: area.value,
     area,
@@ -576,6 +589,7 @@ function reopen(doc) {
     scroll: 0,
     focused: false,
   };
+  sources.set(doc.id, src);
   area.addEventListener('input', () => { src.text = area.value; });
 }
 
@@ -602,7 +616,8 @@ function saveButton(doc) {
 }
 
 async function writeSource(doc) {
-  if (!src || src.document !== doc.id) return;
+  const src = sourceOf(doc);
+  if (!src) return;
   let answer;
   try {
     answer = await replace(`/documents/${doc.id}/source`, { base: src.base, text: src.text });
@@ -612,18 +627,20 @@ async function writeSource(doc) {
   }
   const left = (answer.conflicts || []).length;
   if (!left) {
-    src = null;
+    sources.delete(doc.id);
     state.docSource = false;
     emit();
     return;
   }
   // The rest of it went in. What is left is theirs, and the two answers are
   // take the document as it now reads, which throws this text away, or stay
-  // here and write something that can go in beside it.
+  // here and write something that can go in beside it. Saving again is not a
+  // third answer: it is the same markdown against the same base, so it reports
+  // the same paragraphs and writes nothing.
   const one = left === 1;
   const yes = await ask(
     `${left} ${one ? 'paragraph was' : 'paragraphs were'} left as ${one ? 'it is' : 'they are'}, because somebody else changed ${one ? 'it' : 'them'} while you were writing.`,
-    'Everything else you wrote went in. Read the markdown again to see what they wrote, which throws away what is in front of you, or keep it and edit around theirs.',
+    `Everything else you wrote went in. Saving again reports the same ${one ? 'paragraph' : 'paragraphs'}: to take what they wrote, read the markdown again, which throws away what is in front of you. Or keep yours and edit around theirs.`,
     'Read it again');
   if (yes) {
     reopen(current());
