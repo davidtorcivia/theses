@@ -9,7 +9,7 @@
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order } from './state.js';
-import { send, newKey, where, onCarets, caughtUp, Conflict, Offline } from './net.js';
+import { send, newKey, where, onCarets, caughtUp, count, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { retext, unqueue } from './offline.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
@@ -1854,6 +1854,15 @@ function save(id) {
       }
       const entry = work.get(id);
       if (entry) entry.flight = false;
+      // This is the moment this tab learns the outbox holds nothing for this
+      // block, and the save line reads the count of what it holds. Without a
+      // recount here that count is whatever the last one left, which is what
+      // was waiting before another tab drained the queue, and the line answers
+      // from it instead of saying this block is waiting to save. The line is
+      // written again when the count comes back, because the status below runs
+      // before it and a render is a frame away. Nothing here arms a timer: the
+      // next keystroke is what moves this block on.
+      if (held && !held.filed) count().then(status);
       // No command to write into, none in the air under this name and none
       // waiting means the command has been answered and left. Only a tab whose
       // read of the stream has finished since the last moment its socket could
