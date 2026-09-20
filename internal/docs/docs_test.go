@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -508,6 +509,132 @@ func TestSetBlockWithoutARecoverableBaseIsAConflict(t *testing.T) {
 	}
 }
 
+// The triggers migration 004 put on the blocks table are what fills
+// block_texts, so a base is kept whichever path wrote the text.
+func TestBlockTextsFollowEveryWriteAndKeepTwenty(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	b := f.blocks(t)[0]
+
+	if got := blockTexts(t, f, b.ID); len(got) != 1 || got[1] != b.Text {
+		t.Fatalf("after the insert block_texts holds %v, want version 1 as %q", got, b.Text)
+	}
+
+	// Twenty saves take the version to twenty one, which is the first that
+	// drops a row: everything at or below version one goes.
+	version := b.Version
+	for i := 0; i < 20; i++ {
+		if _, err := f.SetBlock(ctx, f.who["editor"], b.ID, version, "Save "+strconv.Itoa(i)+".", true); err != nil {
+			t.Fatal(err)
+		}
+		now, err := GetBlock(ctx, f.db, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		version = now.Version
+	}
+	kept := blockTexts(t, f, b.ID)
+	if len(kept) != 20 {
+		t.Fatalf("block_texts holds %d versions, want 20", len(kept))
+	}
+	if _, ok := kept[1]; ok {
+		t.Error("the twenty first version did not drop the first")
+	}
+	if kept[21] != "Save 19." {
+		t.Errorf("version 21 holds %q, want %q", kept[21], "Save 19.")
+	}
+
+	// An undo writes the columns back itself rather than through SetBlock, and
+	// it too leaves a base behind, at the version it moved the block on to.
+	e, err := f.SetBlock(ctx, f.who["editor"], b.ID, version, "Undone shortly.", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], e.Seq); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockTexts(t, f, b.ID); got[23] != "Save 19." {
+		t.Errorf("the undo left version 23 as %q, want %q", got[23], "Save 19.")
+	}
+
+	if _, err := f.DeleteDocument(ctx, f.who["owner"], f.doc); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockTexts(t, f, b.ID); len(got) != 0 {
+		t.Errorf("the document's delete left %d rows in block_texts", len(got))
+	}
+}
+
+func blockTexts(t *testing.T, f *fixture, block int64) map[int64]string {
+	t.Helper()
+	rows, err := f.db.QueryContext(context.Background(),
+		`SELECT version, text FROM block_texts WHERE block_id = ?`, block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var version int64
+		var text string
+		if err := rows.Scan(&version, &text); err != nil {
+			t.Fatal(err)
+		}
+		out[version] = text
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// baseText has two places to look and a stale set merges from either: the
+// block_texts row a trigger wrote, or, for a version written before that table
+// existed, the after of the activity row that produced it.
+func TestBaseTextComesFromEitherTheTableOrTheLog(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name  string
+		clear string
+	}{
+		{name: "from block_texts", clear: `DELETE FROM activity WHERE entity = 'block'`},
+		{name: "from the activity log", clear: `DELETE FROM block_texts`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			inserted, err := f.InsertBlock(ctx, f.who["editor"], f.doc, 0,
+				"The tide is high and the moon is full.", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := inserted.EntityID
+			started, err := GetBlock(ctx, f.db, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.SetBlock(ctx, f.who["owner"], id, started.Version,
+				"The tide is low and the moon is full.", false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.db.ExecContext(ctx, tc.clear); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := f.SetBlock(ctx, f.who["editor"], id, started.Version,
+				"The tide is high and the moon is new.", false); err != nil {
+				t.Fatal(err)
+			}
+			now, err := GetBlock(ctx, f.db, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "The tide is low and the moon is new."; now.Text != want {
+				t.Fatalf("the block holds %q, want %q", now.Text, want)
+			}
+		})
+	}
+}
+
 func TestSetBlockSplitsAPasteIntoBlocks(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t, "")
@@ -585,6 +712,54 @@ func TestUndoOfASetPutsTheTextBack(t *testing.T) {
 	}
 	if back.Text != b[2].Text {
 		t.Fatalf("the block holds %q, want %q", back.Text, b[2].Text)
+	}
+}
+
+// A folded run is still one undo. core.Compact keeps the newest row of the
+// run, so undo's check that the block has not moved on since passes, and the
+// before it puts back is the text the person started typing over.
+func TestUndoOfACompactedRunPutsThePreRunTextBack(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	b := f.blocks(t)[0]
+
+	// The saves are dated four days back so the run is old enough to fold; the
+	// compaction itself runs on the real clock.
+	clock := time.Now().Add(-4 * 24 * time.Hour)
+	f.Now = func() time.Time { return clock }
+	version := b.Version
+	var last core.Event
+	for i := 0; i < 5; i++ {
+		clock = clock.Add(30 * time.Second)
+		e, err := f.SetBlock(ctx, f.who["editor"], b.ID, version, "Draft "+strconv.Itoa(i)+".", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = e
+		now, err := GetBlock(ctx, f.db, b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		version = now.Version
+	}
+	f.Now = time.Now
+
+	removed, err := f.Compact(ctx, core.CompactAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 4 {
+		t.Fatalf("Compact removed %d rows of the run of five, want 4", removed)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], last.Seq); err != nil {
+		t.Fatal(err)
+	}
+	back, err := GetBlock(ctx, f.db, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Text != b.Text {
+		t.Fatalf("the block holds %q, want the text before the run, %q", back.Text, b.Text)
 	}
 }
 

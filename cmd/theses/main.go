@@ -96,12 +96,13 @@ func run() error {
 		srv.Docs().Run(ctx)
 	}()
 
-	// The upload sweep, on the same terms: an upload it was half way through
-	// abandoning is found again on the next start, because the rows say so.
+	// The housekeeping sweep, on the same terms: an upload it was half way
+	// through abandoning, or a run of typed saves it was half way through
+	// folding, is found again on the next start, because the rows say so.
 	sweepDone := make(chan struct{})
 	go func() {
 		defer close(sweepDone)
-		srv.SweepUploads(ctx)
+		srv.Sweep(ctx)
 	}()
 
 	// The notifier is two goroutines: one filling the outbox from the bus every
