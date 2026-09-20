@@ -616,9 +616,9 @@ func (s *Service) setOne(ctx context.Context, a core.Actor, id, base int64, text
 // and older than the fold is not recoverable and the set becomes a conflict
 // carrying the text the block holds now. That is the honest answer: the editor
 // is offered keep mine and take theirs rather than a merge against a guess.
-func baseText(ctx context.Context, tx *sql.Tx, id, version int64) (string, bool, error) {
+func baseText(ctx context.Context, q store.Querier, id, version int64) (string, bool, error) {
 	var text string
-	err := tx.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT text FROM block_texts WHERE block_id = ? AND version = ?`, id, version).Scan(&text)
 	if err == nil {
 		return text, true, nil
@@ -626,7 +626,7 @@ func baseText(ctx context.Context, tx *sql.Tx, id, version int64) (string, bool,
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT json_extract(after_json, '$.text') FROM activity
+	err = q.QueryRowContext(ctx, `SELECT json_extract(after_json, '$.text') FROM activity
 		WHERE entity = 'block' AND entity_id = ?
 		  AND json_extract(after_json, '$.version') = ?
 		ORDER BY id DESC LIMIT 1`, id, version).Scan(&text)
