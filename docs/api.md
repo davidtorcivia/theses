@@ -1183,12 +1183,12 @@ Every tool returns structured output against a schema the tool list carries, and
 is annotated with what calling it does. The read tools are read only.
 `set_setting`, `replace_block`, `move_block`, `set_status`, `move_card`,
 `complete_card` and `annotate_link` are destructive and idempotent, since each
-replaces what was there. `create_document`, `append_block`, `insert_after_heading`, `add_link`,
-`create_proposition`, `create_card`, `comment`, `request_upload` and
-`backup_now` are neither, because calling one twice makes two of the thing, and
-`add_link` also reads a page on the open web. `attach_to_card` and `assign_card`
-are idempotent without being destructive: doing either twice leaves the one
-thing there.
+replaces what was there. `create_document`, `append_block`,
+`insert_after_heading`, `add_link`, `create_proposition`, `create_card`,
+`comment`, `request_upload` and `backup_now` are neither, because calling one
+twice makes two of the thing, and `add_link` also reads a page on the open web.
+`attach_to_card` and `assign_card` are idempotent without being destructive:
+doing either twice leaves the one thing there.
 
 The tools that make something take an optional `key`, which is the same idea as
 the `Idempotency-Key` header above and takes the same 1 to 64 letters, digits,
