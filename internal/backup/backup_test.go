@@ -225,8 +225,14 @@ func TestManifestSaysWhatIsInside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Schema != "001_initial.sql" {
-		t.Errorf("schema version is %q", m.Schema)
+	// The newest migration applied, read from the database rather than written
+	// out here, because every migration after this one would fail a literal.
+	var schema string
+	if err := f.db.QueryRowContext(ctx, `SELECT max(name) FROM schema_migrations`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	if m.Schema != schema {
+		t.Errorf("schema version is %q, want %q", m.Schema, schema)
 	}
 	if m.Rows["users"] != 1 {
 		t.Errorf("users counted as %d", m.Rows["users"])
