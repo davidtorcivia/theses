@@ -159,7 +159,10 @@ function bound(row, now) {
     // place and another somewhere else in the same block, between the command
     // going and this answer, leaves only the first of them.
     const lost = w && w.text !== w.sent ? span(w.sent, w.text).ins : '';
-    if (w) { clearTimeout(w.timer); work.delete(row.id); }
+    // The entry goes, so the question it was keeping goes with it. Left filed,
+    // the row would be a refusal about a block that arrived after all, drawn
+    // again out of the outbox by the next reload as a paragraph nobody wrote.
+    if (w) { clearTimeout(w.timer); forgetClash(w); work.delete(row.id); }
     if (lost.trim()) putBack(now.id, '\n\n' + lost);
     return;
   }
@@ -2082,10 +2085,11 @@ function keepClash(id) {
   const row = b.id < 0
     // spent says the name this block was drawn under has been answered, which
     // is what rename says in the entry. It has to survive with the row: a tab
-    // that reads this back after a reload would otherwise try again under a
-    // name the server has already answered, be told what that answer was
-    // rather than making anything, and leave the paragraph drawn beside the
-    // real block it was told about until the next reload.
+    // that read this back after a reload would otherwise press try again into
+    // a command the server has already done, spend a round trip being told so,
+    // and make nothing. The block does arrive, through the answer's key like
+    // any other, so nothing is lost by it; it is a question asked twice for
+    // no reason, and a new name is what makes the second one a command.
     ? { proposition: state.open, me: state.me, cmd: 'block.insert', idem: b.key,
       args: insertArgs(b, w.text), base: null, base_text: null, spent: Boolean(w.rename) }
     : { proposition: state.open, me: state.me, cmd: 'block.set', idem: newKey(),
