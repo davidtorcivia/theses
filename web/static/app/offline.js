@@ -202,8 +202,9 @@ export function take(n, idem) {
 function named(store, idem, then) {
   const all = store.getAll();
   all.onsuccess = () => {
-    const found = all.result.find((r) => r.idem === idem && !r.refused && !r.sending);
-    if (found) then(found);
+    const any = all.result.find((r) => r.idem === idem);
+    const found = any && !any.refused && !any.sending ? any : null;
+    then(found, Boolean(any));
   };
 }
 
@@ -219,10 +220,15 @@ function named(store, idem, then) {
 // left the block. If the server has already applied it, because it was in the
 // air when the socket went, the replay is answered with what it did and the
 // text typed since goes up as an ordinary save once the real block is here.
+// It answers whether it wrote, and whether the command is in the outbox at all.
+// A command that is not there has been answered and has left, and the block the
+// caller drew for it stands for one the server has already made.
 export function retext(idem, text) {
   return withStore('outbox', 'readwrite', (store) => {
-    const out = { done: false };
-    named(store, idem, (row) => {
+    const out = { done: false, filed: false };
+    named(store, idem, (row, any) => {
+      out.filed = any;
+      if (!row) return;
       store.put({ ...row, args: { ...row.args, text }, at: Date.now() });
       out.done = true;
     });
@@ -238,6 +244,7 @@ export function unqueue(idem) {
   return withStore('outbox', 'readwrite', (store) => {
     const out = { done: false };
     named(store, idem, (row) => {
+      if (!row) return;
       store.delete(row.n);
       out.done = true;
     });

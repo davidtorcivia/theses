@@ -240,7 +240,7 @@ export function columnCards(columnID) {
     .sort(order);
 }
 
-const order = (a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0);
+export const order = (a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : 0);
 
 function sortProps() {
   state.props.sort(order);
@@ -557,7 +557,7 @@ export function makeLocal(row) {
   let id = 0;
   for (const doc of state.documents) for (const b of doc.blocks || []) id = Math.min(id, b.id);
   const made = {
-    ...row, id: id - 1, position: behindBlock(row.after), version: 0,
+    ...row, id: id - 1, position: under(row.document_id, row.after), version: 0,
     updated_by: state.me, updated_at: seconds(),
   };
   apply(local('block', made));
@@ -568,14 +568,22 @@ export function makeLocal(row) {
   return made;
 }
 
-// behindBlock is the position key a new block is guessed at, by the same rule
-// as behind above: the block it was made under, with a zero on the end, which
-// is below every key the server can make above that block and above the block
-// itself. Nothing at all sorts first, which is where a block made under no
-// other one goes.
-function behindBlock(after) {
+// under is where a block this tab has made is drawn: behind the block it was
+// made under, by the rule behind above follows. Nothing at all is the head of
+// the document, which is where a block made under nothing goes.
+//
+// A block made under one this tab does not hold goes at the end of its document
+// instead. That is an insert whose anchor has already been answered and left
+// the outbox, so the block it names is on the server and this one belongs after
+// it; the head, which is where an anchor nobody can find would otherwise put
+// it, is the one place it certainly does not belong.
+function under(document, after) {
   const above = after ? rowOf('block', after) : null;
-  return above ? above.position + '0' : '';
+  if (above) return behind('block', after, above);
+  if (!after) return '';
+  const blocks = (state.documents.find((d) => d.id === document) || {}).blocks || [];
+  const last = blocks[blocks.length - 1];
+  return last ? last.position + '0' : '';
 }
 
 // writeLocal is typing reaching the row itself. A block the server holds is
@@ -618,6 +626,17 @@ function settle(key, now) {
   if (settled) settled(made, now);
 }
 
+// settleReplayed is the answer to a command the server had already applied. It
+// is not drawn, because the row it carries may be older than what this tab
+// holds, and the row it is about is on the page already: it came in the payload
+// this tab loaded, or through the stream. What is left is the block this tab
+// drew for that command, still standing beside the real one, and nothing else
+// will ever come to put the two together.
+export function settleReplayed(ev) {
+  if (!ev || !ev.key || ev.entity !== 'block') return;
+  settle(ev.key, rowOf('block', ev.entity_id) || ev.after);
+}
+
 // settled is how docs.js hears it, handed here rather than imported because
 // this module knows nothing of the editor: the text somebody has typed into
 // such a block, and an editor standing in it, follow the row to the real block.
@@ -625,6 +644,16 @@ let settled = null;
 
 export function onSettled(fn) {
   settled = fn;
+}
+
+// strandLocal is a block this tab drew whose command has been answered and has
+// left the outbox without this tab hearing which block it made. The row stays
+// on the page with what was written in it; the mark is what stops the rest of
+// the page counting it as work still to be done, because nothing here is going
+// anywhere.
+export function strandLocal(key) {
+  const row = localOf(key);
+  if (row) apply(local('block', { ...row, stranded: true }));
 }
 
 // localOf is the block a key names: what a refusal, a block joined back into
@@ -660,7 +689,12 @@ export async function drawQueued() {
   }
   const waiting = new Set();
   for (const row of rows) {
-    if (row.cmd !== 'block.insert' || row.refused) continue;
+    // A command the server would not take keeps its block too. The panel holds
+    // the row with the two answers and undraws the block by its key when the
+    // person lets it go, so a reload that drew everything but the refused ones
+    // would take the paragraph off the page and leave the answer to a question
+    // about nothing.
+    if (row.cmd !== 'block.insert') continue;
     if (row.me && state.me && row.me !== state.me) continue;
     const args = row.args || {};
     if (!state.documents.some((d) => d.id === args.document)) continue;
@@ -670,10 +704,17 @@ export async function drawQueued() {
       if (drawn.text !== args.text) apply(local('block', { ...drawn, text: args.text }));
       continue;
     }
+    // A command that names where it goes by key names a block this tab drew.
+    // If that block is gone the command it named has been answered, so the
+    // block it made is on the server and this one belongs at the end of the
+    // document rather than at the head, which is where an anchor nobody can
+    // find would otherwise put it.
     const above = args.after_key ? mine.get(args.after_key) : null;
+    const blocks = (state.documents.find((d) => d.id === args.document) || {}).blocks || [];
+    const last = args.after_key && !above ? blocks[blocks.length - 1] : null;
     mine.set(row.idem, makeLocal({
       document_id: args.document, text: args.text, whole: Boolean(args.whole), key: row.idem,
-      after: above ? above.id : args.after || 0,
+      after: (above && above.id) || (last && last.id) || args.after || 0,
       to: args.after_key ? { after_key: args.after_key } : { after: args.after || 0 },
     }));
   }

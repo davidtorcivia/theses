@@ -8,7 +8,7 @@
 // between is merged on the server or comes back as a choice.
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, onSettled } from './state.js';
+import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, strandLocal, onSettled, order } from './state.js';
 import { send, newKey, where, onCarets, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { retext, unqueue } from './offline.js';
@@ -92,6 +92,12 @@ export function anchorOf(block) {
 // between the check and the frame, and the same command goes into the outbox
 // under the same key. A browser with no storage to keep it in cannot do even
 // that, and there this is a refusal like any other.
+// flying is the key of every insert this tab has sent and has no answer to. A
+// command that is in no store is either one of these or one that has been
+// answered and left, and those two want opposite things from a save, so this is
+// what tells them apart.
+const flying = new Set();
+
 function insert(row, again) {
   const w = work.get(row.id);
   // The row is read again rather than trusted: a save of a block this tab made
@@ -99,14 +105,16 @@ function insert(row, again) {
   // was called with may be a copy from before that.
   const text = w ? w.text : (blockAnywhere(row.id) || row).text;
   const args = { document: row.document_id, text, whole: row.whole, ...row.to };
+  flying.add(row.key);
   send('block.insert', args, state.open, { key: row.key })
     // An answer that came back is the block itself arriving, and applying it is
     // what takes the row this tab drew off the page: the key on the event is
     // what the two are matched by, and state.js does it wherever the event
     // comes from. Null is the command going into the outbox instead, which is
     // this entry agreeing that the text has reached the only place it can.
-    .then((ev) => { if (!ev) acked(row.id, text, 0, null); })
+    .then((ev) => { flying.delete(row.key); if (!ev) acked(row.id, text, 0, null); })
     .catch((err) => {
+      flying.delete(row.key);
       if (err instanceof Offline && !again) { insert(row, true); return; }
       refusedInsert(row, err);
     });
@@ -162,10 +170,22 @@ function bound(row, now) {
     where('block:' + now.id);
     notice(now.id);
   }
-  // A block made under this one still points at the id it is losing. It names
-  // the insert by key, which does not change, so this is only so that a refusal
-  // of that one knows which block to put the words back into.
-  for (const d of documents()) for (const b of d.blocks || []) if (b.after === row.id) b.after = now.id;
+  // A block made under this one still points at the id it is losing, and sits
+  // on a key guessed under the one this row was guessed at. The server has just
+  // put this block above that guess, so the one below would be drawn above it
+  // until its own insert landed: both are moved on, the id so that a refusal
+  // knows which block to put the words back into, and the key so that the
+  // paragraphs stay in the order they were written in.
+  for (const d of documents()) {
+    let moved = false;
+    for (const b of d.blocks || []) {
+      if (b.after !== row.id) continue;
+      b.after = now.id;
+      b.position = now.position + '0';
+      moved = true;
+    }
+    if (moved) (d.blocks || []).sort(order);
+  }
   if (w) arm(now.id, w);
 }
 
@@ -599,7 +619,7 @@ const busy = (w) => w.status !== 'ok' || w.flight || w.text !== w.sent;
 // work outstanding on its document whatever its entry says, because the insert
 // still has to land, and the entry of a block nobody is typing in is dropped as
 // soon as its text has reached the outbox.
-const making = (doc) => (doc ? doc.blocks || [] : []).some((b) => b.id < 0);
+const making = (doc) => (doc ? doc.blocks || [] : []).some((b) => b.id < 0 && !b.stranded);
 
 // A block on its way into a document is outstanding on that document too, so
 // its tab carries the dot until it is made.
@@ -1805,6 +1825,19 @@ function save(id) {
       }
       const entry = work.get(id);
       if (entry) entry.flight = false;
+      // No command to write into, none in the air under this name, and none
+      // waiting: it has been answered and has left, so this block stands for
+      // one the server made and this tab never heard about. It cannot say which
+      // block that is, so the words stay where they are, visible, and this tab
+      // stops answering for them rather than saying they are on their way for
+      // ever. The entry goes, which nothing else but finished, the two answers
+      // and prune do; there is no block on the server to move it to.
+      if (entry && held && !held.filed && !flying.has(row.key)) {
+        clearTimeout(entry.timer);
+        work.delete(id);
+        strandLocal(row.key);
+        say('That paragraph was already saved. What you have written in it since is on the page and not on its way.');
+      }
       status();
     });
     status();

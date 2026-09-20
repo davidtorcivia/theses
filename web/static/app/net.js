@@ -8,7 +8,7 @@
 // applying the guess again; a refusal puts back what was there and, for a
 // command that was queued, leaves a row in the activity panel to choose from.
 
-import { state, apply, emit, predict, baseText, target, retryMaterial, unmakeLocal } from './state.js';
+import { state, apply, emit, predict, baseText, target, retryMaterial, unmakeLocal, settleReplayed } from './state.js';
 import { parseWhere } from './blocktext.js';
 import * as offline from './offline.js';
 import * as api from './api.js';
@@ -142,6 +142,12 @@ function receive(m) {
           // next one, which is the same place a dropped event leaves it.
           catchUp().finally(() => { if (task) task.resolve(m.event); });
           break;
+        } else {
+          // The row is one this tab already holds, so nothing will be applied
+          // for it and nothing else is coming: the answer is drawn nowhere.
+          // A block this tab drew for this command is still standing beside the
+          // real one, and this is the only word anybody will ever say about it.
+          settleReplayed(m.event);
         }
       } else {
         apply(m.event);
