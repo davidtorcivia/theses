@@ -219,8 +219,15 @@ export function open() {
 // controls would only offer a refusal.
 export function canEdit() {
   const p = open();
-  return Boolean(state.can.edit && p && !p.archived_at);
+  return Boolean(state.can.edit && !readOnly && p && !p.archived_at);
 }
+
+// readOnly is a proposition this device kept a copy of but is not the one it
+// saw last, which the plan lets somebody read offline and not change. It is
+// held here rather than written into state.can, because state.can goes into the
+// snapshot: a tab that wrote it there would tell the next one this person may
+// not edit this proposition at all, and there is nothing to take that back.
+let readOnly = false;
 
 export function archived() {
   const p = open();
@@ -562,12 +569,13 @@ export function makeLocal(row) {
 }
 
 // behindBlock is the position key a new block is guessed at, by the same rule
-// and with the same ceiling as behind above: a key that sorts after the block
-// this one was made under. Nothing at all sorts first, which is where a block
-// made under no other one goes.
+// as behind above: the block it was made under, with a zero on the end, which
+// is below every key the server can make above that block and above the block
+// itself. Nothing at all sorts first, which is where a block made under no
+// other one goes.
 function behindBlock(after) {
   const above = after ? rowOf('block', after) : null;
-  return above ? above.position + '~' : '';
+  return above ? above.position + '0' : '';
 }
 
 // writeLocal is typing reaching the row itself. A block the server holds is
@@ -627,6 +635,49 @@ export function localOf(key) {
     if (row) return row;
   }
   return null;
+}
+
+// drawQueued puts the page and the outbox back in step over the blocks this
+// device has made and not sent. The snapshot is a drawing of what one tab had;
+// the outbox is the record of what this device promised, and it is the only one
+// of the two that is shared, so the drawing can be older than the promise or
+// missing it altogether: another tab that never had these rows writes a
+// snapshot without them, and a reload then loses the paragraph off the page
+// while its command is still waiting to go.
+//
+// So every command that is still waiting draws its block, from its own
+// arguments, and a block drawn for a command that is no longer there goes: a
+// command leaves the outbox when it has been answered, and the block it made is
+// then a real one. The commands are walked in the order they were filed, which
+// is the order they will go up in, so one that names another by key finds the
+// block it names already drawn.
+export async function drawQueued() {
+  if (!state.open) return;
+  const rows = (await offline.queued()) || [];
+  const mine = new Map();
+  for (const doc of state.documents) {
+    for (const b of doc.blocks || []) if (b.id < 0 && b.key) mine.set(b.key, b);
+  }
+  const waiting = new Set();
+  for (const row of rows) {
+    if (row.cmd !== 'block.insert' || row.refused) continue;
+    if (row.me && state.me && row.me !== state.me) continue;
+    const args = row.args || {};
+    if (!state.documents.some((d) => d.id === args.document)) continue;
+    waiting.add(row.idem);
+    const drawn = mine.get(row.idem);
+    if (drawn) {
+      if (drawn.text !== args.text) apply(local('block', { ...drawn, text: args.text }));
+      continue;
+    }
+    const above = args.after_key ? mine.get(args.after_key) : null;
+    mine.set(row.idem, makeLocal({
+      document_id: args.document, text: args.text, whole: Boolean(args.whole), key: row.idem,
+      after: above ? above.id : args.after || 0,
+      to: args.after_key ? { after_key: args.after_key } : { after: args.after || 0 },
+    }));
+  }
+  for (const [key, row] of mine) if (!waiting.has(key)) unmakeLocal(key);
 }
 
 // unmakeLocal takes one off the page when no block is ever going to arrive for
@@ -706,14 +757,22 @@ const VERSION = import.meta.url.match(/\/static\/([^/]+)\//)?.[1] || 'dev';
 let keeping = 0;
 
 export function remember() {
-  if (!state.open || keeping || state.fromCache) return;
+  if (!state.open || keeping || (state.fromCache && !booted)) return;
   keeping = setTimeout(write, 2000);
 }
+
+// booted says a page the worker handed back has read the snapshot and is
+// drawing it. Until then it holds nothing worth keeping and writing would put
+// an empty proposition over what this device has. After it, what is made on
+// such a page is made nowhere else, so it is kept like anything else: without
+// this a block drawn with no connection was gone at the next reload while the
+// command that makes it was still in the outbox.
+let booted = false;
 
 function write() {
   clearTimeout(keeping);
   keeping = 0;
-  if (!state.open || state.fromCache) return;
+  if (!state.open || (state.fromCache && !booted)) return;
   offline.keep({
     proposition: state.open,
     at: Date.now(),
@@ -762,8 +821,11 @@ export async function restore(open) {
   state.attachments = material.attachments || { links: [], files: [] };
   // The material is what was cached, so material() must not go looking for it.
   state.loaded = open;
+  // From here this page holds what this device knows of the proposition, so
+  // what is made on it is worth keeping.
+  booted = true;
   // Only the proposition this device saw last can be changed offline. The rest
   // are read only from whatever was cached, which is what the plan asks for.
-  if ((await offline.newest()) !== open) state.can = { ...state.can, edit: false };
+  readOnly = (await offline.newest()) !== open;
   return true;
 }

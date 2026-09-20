@@ -3,7 +3,7 @@
 // and the per proposition settings page both start from here and add their own.
 
 import { $, el, clear, initials, offlineLine, saying } from './dom.js';
-import { state, boot, restore, subscribe, user, emit } from './state.js';
+import { state, boot, restore, subscribe, user, emit, drawQueued } from './state.js';
 import { connect, count } from './net.js';
 import { renderRail } from './rail.js';
 import { openPalette, closePalette } from './palette.js';
@@ -17,6 +17,9 @@ export function start(renderRest) {
   const payload = JSON.parse($('#payload').textContent);
   if (payload) {
     boot(payload);
+    // What this device has promised and not sent is not in the payload, so the
+    // blocks those commands make are drawn from the commands themselves.
+    drawQueued();
   } else {
     state.fromCache = true;
     // Which proposition this is, said by the address bar rather than by the
@@ -31,7 +34,7 @@ export function start(renderRest) {
     // one. That is a page with nothing on it until the connection is back,
     // which is bad; waiting for the read before opening the socket is a page
     // that never finds out the connection is back at all, which is worse.
-    restore(state.open).catch(() => false).then(emit);
+    restore(state.open).catch(() => false).then(drawQueued).then(emit);
   }
 
   const render = () => {

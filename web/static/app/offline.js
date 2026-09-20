@@ -166,33 +166,37 @@ export const drop = (n) => withStore('outbox', 'readwrite', (store) => store.del
 // its own name in between, and this would put the old name back over it while
 // the caller held the old arguments, sending the superseded text under a name
 // the server had already answered.
+// The row is also marked as being sent, and stays marked until it is dropped or
+// refused. A row does not leave the outbox when it goes up: it leaves when the
+// answer comes back, and a socket that dies in between leaves it where it is.
+// So from here on nobody may treat it as a command that has not happened, which
+// is what the two calls below are asked to do and what the mark refuses them.
 export function take(n, idem) {
   return withStore('outbox', 'readwrite', (store) => {
     const out = { row: null };
     const req = store.get(n);
     req.onsuccess = () => {
       if (!req.result) return;
-      if (req.result.idem) {
-        out.row = req.result;
-        return;
-      }
-      out.row = { ...req.result, idem };
+      out.row = { ...req.result, idem: req.result.idem || idem, sending: true };
       store.put(out.row);
     };
     return out;
   });
 }
 
-// named is the waiting command with this name, for the two calls below. A
-// command that has been refused is not it: it is waiting on a person rather
-// than on a connection, and the panel is where it is answered.
+// named is the command with this name that is still only waiting, for the two
+// calls below. A command that has been refused is not it: it is waiting on a
+// person rather than on a connection, and the panel is where it is answered.
+// Neither is one the drain has taken, whether it is in the air now or was in
+// the air when a socket died: the server may have applied it, so rewriting it
+// or dropping it would be deciding something only the answer can decide.
 //
 // ponytail: it is the same scan queue makes for a fold, with the same ceiling
 // and the same reason it is fine at the few rows a person makes by hand.
 function named(store, idem, then) {
   const all = store.getAll();
   all.onsuccess = () => {
-    const found = all.result.find((r) => r.idem === idem && !r.refused);
+    const found = all.result.find((r) => r.idem === idem && !r.refused && !r.sending);
     if (found) then(found);
   };
 }
@@ -241,7 +245,13 @@ export function unqueue(idem) {
 export function dropIfUnchanged(n, at) {
   return withStore('outbox', 'readwrite', (store) => {
     const req = store.get(n);
-    req.onsuccess = () => { if (req.result && req.result.at === at) store.delete(n); };
+    req.onsuccess = () => {
+      if (!req.result) return;
+      if (req.result.at === at) { store.delete(n); return; }
+      // Written into while it was in flight, so what it holds now is a change
+      // nobody has sent and the mark comes off: it is waiting again.
+      if (req.result.sending) store.put({ ...req.result, sending: false });
+    };
     return null;
   });
 }
@@ -255,7 +265,9 @@ export function refuse(n, at, why, detail) {
     const req = store.get(n);
     req.onsuccess = () => {
       if (req.result && req.result.at === at) {
-        store.put({ ...req.result, refused: why, detail: detail || null });
+        // The mark comes off with the refusal: nothing was applied, and the row
+        // is now waiting on a person rather than on the connection.
+        store.put({ ...req.result, refused: why, detail: detail || null, sending: false });
       }
     };
     return null;
