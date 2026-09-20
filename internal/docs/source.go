@@ -48,14 +48,15 @@ type SourceConflict struct {
 // A SourceSave is what writing a document from its markdown did.
 //
 // Base is the answer to the question the next save asks: which block each
-// paragraph of the text it just sent now stands in, and at which version. One
-// per paragraph, in the order of the text, whatever happened to it: a block
-// nothing was written to at the version it holds, a block written to at its new
-// version, a block made for it at the version it was made with, and a block in
-// conflict at the version somebody else left it at. Sending the same text again
-// under it writes nothing; sending it again with a paragraph changed writes that
-// paragraph, over somebody else's words where they are in the way, because the
-// version named is theirs. Blocks the text does not stand for are not in it.
+// paragraph of the text it just sent stands in, and at which version. One per
+// paragraph, in the order of the text, whatever happened to it: a block written
+// to at its new version, a block made for it at the version it was made with,
+// and a block in conflict at the version somebody else left it at, so that
+// sending the same text again writes this text's paragraph over theirs. A
+// paragraph this save had nothing to say about is the exception and is named at
+// the version the text was written from, which kept says why. Sending the same
+// text again under this base writes nothing. Blocks the text does not stand for
+// are not in it.
 //
 // Merged is the blocks that took somebody else's words in on the way: what is
 // stored there is neither what the text sent nor what they wrote but both, so

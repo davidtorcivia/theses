@@ -467,9 +467,11 @@ func (s *Service) applyItems(ctx context.Context, a core.Actor, document int64, 
 		// none of this item's, which is reported as a conflict and not as a
 		// merge.
 		done = append(done, applied{Ref: BlockRef{ID: current.ID, Version: current.Version}})
-		// A block carried as it already reads is nothing to do, and cutting it
-		// into paragraphs first would take a block somebody is in the middle of
-		// typing, which holds whatever they typed, and split it under them.
+		// An item carrying the block's own text is nothing to do, and saying so
+		// here rather than after the cut is what keeps a block whose text
+		// Paragraphs would cut, which is what a save made while somebody is
+		// typing leaves behind, from being cut by a save that had nothing to
+		// say about it.
 		if item.Text == current.Text {
 			continue
 		}

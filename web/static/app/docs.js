@@ -9,7 +9,7 @@
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit } from './state.js';
-import { send, live, where, onCarets, Conflict, Offline } from './net.js';
+import { send, live, where, onCarets, newKey, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { rebase, enter, chunks, carry, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
@@ -661,7 +661,7 @@ async function writeSource(doc) {
   // sending it again under the same key is how the server says which; anything
   // it does answer, refusal included, leaves nothing applied that a fresh key
   // would apply twice.
-  src.key = src.key || crypto.randomUUID();
+  src.key = src.key || newKey();
   let answer;
   try {
     answer = await replace(`/documents/${doc.id}/source`, { base: src.base, text: src.text },

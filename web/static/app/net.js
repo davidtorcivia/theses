@@ -40,7 +40,7 @@ function undraw(n, detail) {
 // in, including localhost. The fallback is for one served over plain http on
 // another host, which the plan does not describe but a person reading the
 // README might try.
-function newKey() {
+export function newKey() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return [...crypto.getRandomValues(new Uint8Array(16))]
     .map((b) => b.toString(16).padStart(2, '0')).join('');
