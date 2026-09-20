@@ -311,8 +311,9 @@ about a document that is not there. The blocks and the revisions go with it.
 Scope `read`. The snapshots kept of one document, newest first, fifty at most,
 each the whole document as markdown. `reason` is `manual` for one somebody
 asked for, `periodic` for the ten minute timer that runs while a document is
-being edited, and `pre-import` for the one the markdown watcher takes before it
-applies a hand edit.
+being edited, and `pre-import` for the one taken before markdown for the whole
+document is read back in, whether the markdown watcher found it in a file or
+`PUT /api/v1/documents/{id}/source` sent it.
 
 ```json
 {"revisions": [
@@ -326,6 +327,69 @@ Scope `write`. Keeps one now. A revision asked for over the API is `manual`,
 which is what an empty `reason` means and the only one the body may name.
 `periodic` belongs to the ten minute timer and `pre-import` to the markdown
 watcher, so naming either here is `422`.
+
+## `PUT /api/v1/documents/{id}/source`
+
+Scope `write`. Replaces a whole document with markdown, keeping the blocks
+whose paragraphs did not change. The body is the markdown and the blocks it was
+written from:
+
+```json
+{"base": [{"id": 31, "version": 4}, {"id": 32, "version": 1}],
+ "text": "## Cold open
+
+Tape first.
+
+Then the claim."}
+```
+
+The text is cut into paragraphs the way everything else is: at blank lines and
+headings, except inside a fenced code block. Those paragraphs are lined up
+against the text each base block held at the version named, and the difference
+is written. A paragraph nobody touched keeps its block and is not written at
+all, so its version does not move. A paragraph that changed is a set on the
+block it came from, with the base version, so somebody else's change to that
+block in the meantime is merged exactly as `PUT /api/v1/blocks/{id}` merges
+one. A paragraph left over is a new block where it stands. A block left over is
+deleted.
+
+`base` is optional. Left out altogether it is the document as it stands when
+the request runs, which is what an agent replacing a document it has just read
+wants: keep the blocks whose paragraphs did not change and write the rest. An
+empty list is a document that had no blocks, so the two are not the same thing.
+
+The answer is the paragraphs that did not go in, which is empty when all of
+them did:
+
+```json
+{"conflicts": [{"block": 32, "version": 7, "current": "Then the counterclaim."}]}
+```
+
+A block is in there when somebody else changed it while the markdown was being
+written and the two changes cannot be put together, or when the markdown takes
+a paragraph out of a block somebody else has written in since. Either way that
+block is left exactly as this server holds it and `current` is what it holds,
+while the rest of the save goes in. Nothing is half applied: the whole thing is
+one transaction, and a revision with reason `pre-import` is kept first, so a
+save that went wrong is one restore away. A save that would change nothing
+writes nothing and keeps no revision.
+
+A block somebody else added while the markdown was being written is not in
+`base`, so the save says nothing about it and it stays where it is. A block
+somebody else deleted keeps an unchanged paragraph out, so that saving an edit
+made elsewhere does not put their deletion back, and puts a changed one in as a
+new block where it stood.
+
+`409` with no `conflict` object is a `base` naming a version whose text this
+server no longer holds. The last twenty versions of every block are kept; past
+that there is nothing to line the paragraphs up against, and lining them up
+wrongly would move paragraphs between blocks, so the whole save is refused and
+nothing changes. Read the document again and edit that.
+
+`Idempotency-Key` is honored: a request sent twice because the answer never
+arrived is answered rather than applied again. The answer to the second is the
+same status with an empty `conflicts` list, because the list the first one
+built is not kept anywhere.
 
 ## `POST /api/v1/documents/{id}/blocks`
 
@@ -1040,6 +1104,7 @@ one endpoint serves every tool.
 | `append_block` | `write` | Adds a paragraph at the end of a document, unlike `POST /api/v1/documents/{id}/blocks` with no `after`, which puts one at the head. |
 | `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
 | `replace_block` | `write` | Replaces the text of one block. |
+| `write_document` | `write` | Replaces a whole document with markdown, keeping the blocks whose paragraphs did not change: `PUT /api/v1/documents/{id}/source` with `base` optional in the same way. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
 | `annotate_link` | `write` | Changes a saved link's note, kind and question. |

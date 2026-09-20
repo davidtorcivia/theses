@@ -198,6 +198,45 @@ func (a *API) deleteBlock(w http.ResponseWriter, r *http.Request, p Principal) {
 	})
 }
 
+// sourceBody is a whole document as markdown, with the blocks it was written
+// from. A base left out altogether means the document as it stands, which is
+// what an agent replacing a document it has just read sends; an empty list is a
+// document that had no blocks, so the two are told apart rather than folded
+// together.
+type sourceBody struct {
+	Text string          `json:"text"`
+	Base []docs.BlockRef `json:"base"`
+}
+
+// writeSource replaces a document from its markdown. It answers with the blocks
+// the save could not take rather than with an event, because it is many
+// commands in one transaction and the caller's next move is about the ones that
+// did not go in. It is mounted under both prefixes, so this is the browser's
+// source view as well as the API's.
+func (a *API) writeSource(w http.ResponseWriter, r *http.Request, who core.Actor) {
+	id, ok := a.pathID(w, r, "document")
+	if !ok {
+		return
+	}
+	var body sourceBody
+	if !a.decode(w, r, &body) {
+		return
+	}
+	if a.Docs == nil {
+		a.fail(w, http.StatusNotFound, "no such document")
+		return
+	}
+	conflicts, err := a.Docs.WriteSource(r.Context(), who, id, body.Base, body.Text)
+	if err != nil {
+		a.refuse(w, r, err)
+		return
+	}
+	if conflicts == nil {
+		conflicts = []docs.SourceConflict{}
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
+}
+
 // actorOf is how a call with this token is recorded: the person who owns it,
 // with the token's name as via.
 func actorOf(p Principal) core.Actor {

@@ -176,6 +176,7 @@ func TestDocumentRoutesRefuseSomebodyWhoIsNotAMember(t *testing.T) {
 		{"move", "POST", fmt.Sprintf("/api/v1/blocks/%d/move", blocks[0].ID), `{"after":0}`},
 		{"delete", "DELETE", fmt.Sprintf("/api/v1/blocks/%d", blocks[0].ID), ""},
 		{"rename", "PATCH", fmt.Sprintf("/api/v1/documents/%d", document.EntityID), `{"name":"Mine"}`},
+		{"source", "PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), `{"text":"Mine."}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := h.do(tc.method, tc.target, clear, tc.body)
@@ -241,4 +242,68 @@ func TestDocumentRoutesRefuseNonsense(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Writing a document from its markdown: the paragraphs nobody changed keep
+// their blocks, the new one is a new block, and a base naming a version the
+// database cannot produce the text of is refused with 409.
+func TestWriteDocumentSource(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	write := h.token(auth.ScopeWrite)
+	who := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	prop := h.proposition()
+	document, err := h.docs.CreateDocument(ctx, who, prop, "Research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.docs.InsertBlock(ctx, who, document.EntityID, 0, "The sea is a battery.", false); err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := docs.Blocks(ctx, h.db, document.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := json.Marshal(blocks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The blocks marshal with more fields than base takes, and the extra ones
+	// are ignored, which is what a client sending the rows back does.
+	body := fmt.Sprintf(`{"base":%s,"text":%q}`, base,
+		"The sea is a battery.\n\n"+strings.Join(textsAfter(blocks[1:]), "\n\n")+"\n\nAnd a flywheel.")
+
+	w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("the save answered %d: %s", w.Code, w.Body)
+	}
+	if conflicts := decode(t, w)["conflicts"].([]any); len(conflicts) != 0 {
+		t.Fatalf("the save reported %v", conflicts)
+	}
+	after, err := docs.Blocks(ctx, h.db, document.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(blocks)+1 || after[0].ID != blocks[0].ID {
+		t.Fatalf("the document is %+v", after)
+	}
+	if after[len(after)-1].Text != "And a flywheel." {
+		t.Fatalf("the last paragraph is %q", after[len(after)-1].Text)
+	}
+
+	// The same base again, now that the document has moved on, still lines up:
+	// the versions it names are on record. A base naming a version that is not
+	// is refused outright.
+	stale := fmt.Sprintf(`{"base":[{"id":%d,"version":999}],"text":"Nothing."}`, blocks[0].ID)
+	if w := h.do("PUT", fmt.Sprintf("/api/v1/documents/%d/source", document.EntityID), write, stale); w.Code != http.StatusConflict {
+		t.Fatalf("an unrecoverable base answered %d: %s", w.Code, w.Body)
+	}
+}
+
+func textsAfter(blocks []docs.Block) []string {
+	out := make([]string, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, b.Text)
+	}
+	return out
 }

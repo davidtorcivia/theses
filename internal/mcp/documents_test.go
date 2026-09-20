@@ -210,6 +210,7 @@ func TestDocumentToolsRefuseSomebodyWhoIsNotAMember(t *testing.T) {
 		{"append_block", appendBlockArgs{Document: document.EntityID, Text: "Mine."}},
 		{"replace_block", replaceBlockArgs{Block: blocks[0].ID, Text: "Mine.", BaseVersion: blocks[0].Version}},
 		{"create_document", createDocumentArgs{Proposition: prop, Name: "Mine"}},
+		{"write_document", writeDocumentArgs{Document: document.EntityID, Text: "Mine."}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if res := h.call(cs, tc.name, tc.args, nil); !res.IsError {
@@ -226,5 +227,58 @@ func TestDocumentToolsRefuseSomebodyWhoIsNotAMember(t *testing.T) {
 	}
 	if list, err := docs.ListDocuments(ctx, h.db, prop); err != nil || len(list) != 1 {
 		t.Fatalf("a non-member created a document: %v %v", list, err)
+	}
+}
+
+// write_document replaces a document with markdown, keeping the blocks whose
+// paragraphs did not change, and reports the ones somebody else has written in
+// since rather than writing over them.
+func TestWriteDocumentTool(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	cs := h.connect(auth.ScopeRead, auth.ScopeWrite)
+	prop := h.proposition()
+
+	var made writeOut
+	h.call(cs, "create_document", createDocumentArgs{Proposition: prop, Name: "Research"}, &made)
+	h.call(cs, "append_block", appendBlockArgs{Document: made.ID, Text: "The sea is a battery."}, &writeOut{})
+
+	var read readDocumentOut
+	h.call(cs, "read_document", readDocumentArgs{Document: made.ID}, &read)
+	base := make([]sourceBlock, 0, len(read.Blocks))
+	for _, b := range read.Blocks {
+		base = append(base, sourceBlock{ID: b.ID, Version: b.Version})
+	}
+	last := read.Blocks[len(read.Blocks)-1]
+
+	// Somebody else writes in the last block while the markdown is being
+	// written, and this text changes it too, in a way that cannot be merged.
+	if _, err := h.srv.api.Docs.SetBlock(ctx, h.owner(), last.ID, last.Version, "The sea is a furnace.", false); err != nil {
+		t.Fatal(err)
+	}
+	text := read.Markdown[:len(read.Markdown)-len(last.Text)] + "The sea is a flywheel.\n\nAnd a battery."
+
+	var wrote writeDocumentOut
+	h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: text, Base: base}, &wrote)
+	if len(wrote.Conflicts) != 1 || wrote.Conflicts[0].Block != last.ID ||
+		wrote.Conflicts[0].Current != "The sea is a furnace." {
+		t.Fatalf("write_document reported %+v", wrote.Conflicts)
+	}
+	blocks, err := docs.Blocks(ctx, h.db, made.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The block in conflict still holds what they wrote, and the paragraph
+	// added after it went in.
+	if blocks[len(blocks)-2].Text != "The sea is a furnace." || blocks[len(blocks)-1].Text != "And a battery." {
+		t.Fatalf("the document reads %+v", blocks)
+	}
+
+	// A base naming a version the database cannot produce the text of is
+	// refused outright, with a reason the caller can act on.
+	res := h.call(cs, "write_document", writeDocumentArgs{Document: made.ID, Text: "Nothing.",
+		Base: []sourceBlock{{ID: last.ID, Version: 999}}}, nil)
+	if !res.IsError || !strings.Contains(say(res), "no longer on record") {
+		t.Fatalf("an unrecoverable base answered %v: %s", res.IsError, say(res))
 	}
 }
