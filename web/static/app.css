@@ -404,8 +404,9 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
    pointer or has the focus, like the + above. It refuses touch action of its
    own, which is what lets a finger on it start a drag at once rather than
    having to hold still first, and it is the only part of a block that is not
-   selectable, because dragging the text is still selecting it. */
-.blk .grip{position:absolute;left:calc(-1 * var(--gut));top:.15em;width:1.4rem;text-align:center;color:rgba(0,0,0,.45);cursor:grab;opacity:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+   selectable, because dragging the text is still selecting it. It is a finger's
+   target as well as a pointer's, so it is twenty four pixels each way. */
+.blk .grip{position:absolute;left:calc(-1 * var(--gut));top:.15em;width:1.5rem;text-align:center;color:rgba(0,0,0,.45);cursor:grab;opacity:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .blk:hover .grip,.blk:focus-visible .grip{opacity:1}
 .blk.dragging{opacity:.35}
 /* The ghost is a copy of the block standing on the page rather than in it, so

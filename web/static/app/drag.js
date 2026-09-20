@@ -81,11 +81,9 @@ const debug = () => {
 // handle is a selector inside the row, and with one given a press anywhere else
 // on the row is left alone: a document block is dragged by a grip in its margin
 // because pressing the text of one has to go on meaning what it means, which is
-// click to write and drag to select. press is whether a finger has to hold
-// still before it is carrying the row rather than scrolling the page, which is
-// the question a whole card asks and a handle does not.
+// click to write and drag to select.
 export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '',
-  over = '', handle = '', press = true, drop }) {
+  over = '', handle = '', drop }) {
   // Dragging a row is not selecting the text on it, and the row left behind is
   // never what the pointer is over. A row with a handle keeps both: the rule
   // belongs on the handle, and the text of a block stays selectable.
@@ -108,8 +106,9 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
     const mouse = e.pointerType === 'mouse';
     // Only a finger that might be scrolling the page instead has to hold still
     // first. A finger that landed on a handle is not one of those: the handle
-    // refuses touch action, so there is nothing else its press could mean.
-    const holds = press && !mouse;
+    // is for nothing else and refuses touch action, so nothing is scrolling
+    // under it.
+    const holds = !handle && !mouse;
     const began = Date.now();
     const from = { x: e.clientX, y: e.clientY };
     let at = { ...from };

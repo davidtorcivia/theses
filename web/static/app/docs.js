@@ -774,8 +774,12 @@ function blockNode(b) {
   if (canEdit()) {
     node.addEventListener('click', (e) => {
       // The pointer that has just carried the block ends in a click as well,
-      // and that one finishes the drag rather than asking to write in it.
-      if (!carrying() && !onLink(e)) startEditing(b.id);
+      // and that one finishes the drag rather than asking to write in it. A
+      // press on the handle that moved too little to carry anything ends in one
+      // too, and the handle is a control for moving the block: it says grab and
+      // it is not where anybody asks to write. A finger says the same, because
+      // the handle answers its press itself.
+      if (!carrying() && !onGrip(e) && !onLink(e)) startEditing(b.id);
     });
     node.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !onLink(e)) { e.preventDefault(); startEditing(b.id); }
@@ -799,6 +803,8 @@ function blockNode(b) {
 // block opens on a click wherever it is clicked, as it did.
 const onLink = (e) => !!e.target.closest('a');
 
+const onGrip = (e) => !!e.target.closest('.grip');
+
 // grip is the handle a block is carried by, in the margin beside it, and the
 // drag it starts. Only the handle carries the block: pressing the text of one
 // has to go on meaning what it already means, which is click to write in it,
@@ -807,15 +813,16 @@ const onLink = (e) => !!e.target.closest('a');
 // Alt and an arrow, which is what the title says; this is the pointer's way,
 // and the only one a phone has.
 function grip(node, id) {
-  // A block the server has not got yet has no id to be moved by, so it is given
-  // no handle rather than one that would ask for nothing anybody can answer.
+  // Only a block the server has can be named in a command, so only one with a
+  // block id of its own is given a handle at all, rather than one that would
+  // ask for something nobody could answer.
   if (id <= 0) return;
   node.append(el('span', {
     class: 'grip', 'aria-hidden': 'true', text: '≡',
     title: 'Drag to move this block. Alt with an arrow key moves it too.',
   }));
   movable(node, {
-    zone: '#docwrap', list: (z) => $('#doc', z), rows: '.blk', handle: '.grip', press: false,
+    zone: '#docwrap', list: (z) => $('#doc', z), rows: '.blk', handle: '.grip',
     drop: () => {
       const list = neighbours();
       const at = list.findIndex((b) => b.id === id);
@@ -823,9 +830,9 @@ function grip(node, id) {
       // left to move and nothing to move it among.
       if (at < 0) return;
       // Where it was, by the same rule the page is read by below: the nearest
-      // block above it that the server has. It is read out of the state rather
-      // than off the page, because a move by somebody else arriving mid drag is
-      // held off the page until the drop and is still where this one started.
+      // block above it the server has. It is read out of the state rather than
+      // off the page, because a move by somebody else arriving mid drag is held
+      // off the page until the drop and is still where this one started.
       let was = 0;
       for (let i = at - 1; i >= 0 && !was; i--) if (list[i].id > 0) was = list[i].id;
       const after = previousBlock(node);
@@ -836,11 +843,11 @@ function grip(node, id) {
   });
 }
 
-// previousBlock is what a drop landed behind: the nearest block above it on the
-// page that the server has, or nought for the head of the document. The rest of
-// what stands among the blocks is none of those. The button that adds a block
-// and the editor drawn where a split is going carry no block id at all, and a
-// block drawn before the server has answered for it carries a negative one.
+// previousBlock is what a drop landed behind: the nearest row above it on the
+// page carrying the id of a block the server has, or nought for the head of the
+// document. A row without one is not somewhere a block can be put after, and
+// the list holds two of those: the button that adds a block, and the editor
+// drawn where a split is going before the block it stands for exists.
 function previousBlock(node) {
   for (let at = node.previousElementSibling; at; at = at.previousElementSibling) {
     const id = Number(at.dataset.b);

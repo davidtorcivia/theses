@@ -448,18 +448,21 @@ const optimistic = {
 const seconds = () => Math.floor(Date.now() / 1000);
 
 // behind is a position key that sorts just after the row the drop landed on, a
-// card in a column or a block in a document. Keys are base 62, so a tilde is
-// above every character one can end in, and an empty key is above nothing,
-// which is where a drop at the head of a list lands.
+// card in a column or a block in a document. The server never writes a key that
+// ends in a zero, so that every fraction has one spelling and there is always
+// room directly below one; a zero on the end of the row it landed on is
+// therefore above that row and below every key the server can write above it,
+// wherever the neighbor above turns out to lie. A drop at the head of a list is
+// the empty key, which is below every key there can be.
 //
-// ponytail: it is a guess, not the key the server will allocate, and a row
-// dropped above a neighbor whose key runs deeper than one character can land a
-// place out until the echo arrives with the real one. The upgrade is the
-// server's fractional key generator in the browser as well.
+// ponytail: two rows dropped into one gap before either is acked are drawn on
+// the same key, and which of them is above the other is settled only when the
+// acks arrive. The upgrade is the server's own key generator here, so that the
+// second guess is made between the first one and the row below it.
 function behind(entity, after, row) {
   if (!after) return '';
   const previous = rowOf(entity, after);
-  return previous ? previous.position + '~' : row.position;
+  return previous ? previous.position + '0' : row.position;
 }
 
 function rowOf(entity, id) {
