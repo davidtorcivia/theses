@@ -1,3 +1,4 @@
+import { boardControls, saveFilters } from './boardcontrols.js';
 import { connectedSection } from './connected.js';
 // The workspace: the head with the number, title, statement, status, episode
 // and members, the four tabs, and the panes under them.
@@ -153,12 +154,13 @@ function pane(p) {
     return files;
   }
 
+  const controls = boardControls();
   const filters = el('div', { id: 'bfilter', class: 'facets' });
   for (const [id, label] of [['all', 'All'], ['mine', 'Mine'], ['open', 'Open']]) {
     filters.append(el('button', {
       type: 'button', 'data-f': id, text: label,
       class: state.boardFilter === id ? 'on' : '',
-      onclick: () => { state.boardFilter = id; emit(); },
+      onclick: () => { state.boardFilter = id; saveFilters(); emit(); },
     }));
   }
 
@@ -174,10 +176,10 @@ function pane(p) {
     filters,
     // Both are drawn and the stylesheet shows the one that is true for the
     // reader, because a phone is told to press rather than to drag.
-    el('span', { class: 'hint mono', text: 'Drag cards between columns. Click a name to rename a column. + on a card assigns.' }),
-    el('span', { class: 'hint press mono', text: 'Press and hold a card to move it.' }),
+    el('span', { class: 'hint mono', text: 'Open a card to move it, or drag between columns. + assigns.' }),
+    el('span', { class: 'hint press mono', text: 'Open a card to choose its column, or press and hold to drag.' }),
   ]);
   renderBoard(board);
-  children(boardPane, [ph, board, renderDocument()]);
+  children(boardPane, [ph, controls, board, renderDocument()]);
   return boardPane;
 }

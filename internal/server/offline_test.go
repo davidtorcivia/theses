@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -387,5 +388,51 @@ func TestPaletteSearchIsMembershipAndSessionBound(t *testing.T) {
 	res2, _ := h.get("/app/search?q=tide")
 	if res2.StatusCode != http.StatusSeeOther {
 		t.Errorf("the palette answered a signed out browser: %d", res2.StatusCode)
+	}
+}
+
+func TestActivityHistoryPagesAndFiltersWithoutDuplicates(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	ctx := context.Background()
+	p, err := h.srv.board.CreateProposition(ctx, h.owner(), "History")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 61; i++ {
+		if _, err := h.db.ExecContext(ctx, `INSERT INTO activity(proposition_id,actor_kind,actor_id,entity,entity_id,action,created_at) VALUES(?,'user','1','card','1','done',1)`, p.EntityID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(extra string) struct {
+		Activity []activityRow `json:"activity"`
+		More     bool          `json:"more"`
+		Before   int64         `json:"before"`
+	} {
+		t.Helper()
+		_, body := h.get("/app/activity?proposition=" + strconv.FormatInt(p.EntityID, 10) + extra)
+		var out struct {
+			Activity []activityRow `json:"activity"`
+			More     bool          `json:"more"`
+			Before   int64         `json:"before"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	first := read("&entity=card")
+	if len(first.Activity) != 50 || !first.More {
+		t.Fatalf("first page: %+v", first)
+	}
+	next := read("&entity=card&before=" + strconv.FormatInt(first.Before, 10))
+	if len(next.Activity) != 11 || next.More {
+		t.Fatalf("second page: %+v", next)
+	}
+	if next.Activity[0].Seq >= first.Before {
+		t.Fatal("duplicate boundary")
+	}
+	if len(read("&entity=file").Activity) != 0 {
+		t.Fatal("entity filter ignored")
 	}
 }

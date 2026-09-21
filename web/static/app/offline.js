@@ -11,7 +11,7 @@ const DB = 'theses-offline';
 
 // The version is bumped whenever a store is added, because that is what makes
 // the browser run the upgrade on a database that already exists.
-const VERSION = 3;
+const VERSION = 4;
 
 const STORES = {
   outbox: { keyPath: 'n', autoIncrement: true },
@@ -24,6 +24,7 @@ const STORES = {
   material: { keyPath: 'proposition' },
   uploads: { keyPath: 'file' },
   drafts: { keyPath: 'id' },
+  preferences: { keyPath: 'id' },
 };
 
 function open() {
@@ -461,3 +462,6 @@ export const forgetSourceDraft = (id, expected) => leaving ? Promise.resolve({ r
     };
     return result;
   });
+
+export const boardPreferences = (id) => withStore('preferences', 'readonly', (store) => store.get(id));
+export const keepBoardPreferences = (id, value) => withStore('preferences', 'readwrite', (store) => store.put({ id, value }));

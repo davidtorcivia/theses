@@ -1,3 +1,4 @@
+import { matchesCard } from './filters.js';
 // The board: columns that wrap, cards that drag between and within them, the
 // inline form that assigns by account name, and the All, Mine and Open filter.
 
@@ -43,9 +44,7 @@ function today() {
 }
 
 function visible(card) {
-  if (state.boardFilter === 'mine') return (card.assignees || []).includes(state.me);
-  if (state.boardFilter === 'open') return !card.done_at;
-  return true;
+  return matchesCard(card, { ...state.boardOptions, status: state.boardFilter }, state.me, today());
 }
 
 function meta(card) {
@@ -256,6 +255,7 @@ function inlineAdd(column, cards) {
 }
 
 export function renderBoard(into) {
+  into.classList.toggle('list-view', state.boardOptions.view === 'list');
   // Every card's node is asked for before any column is swept, because a card
   // that moved to another column is still wanted: taking it out of the column
   // it was in before its new one has claimed it would drop it out of the page,
@@ -290,7 +290,7 @@ function addColumn() {
 
 export function boardSummary() {
   const cards = [...state.cards.values()];
-  return `${cards.filter((c) => c.done_at).length} of ${cards.length} done`;
+  return `${cards.filter(visible).length} shown · ${cards.filter((c) => c.done_at).length} of ${cards.length} done`;
 }
 
 function addPropositionCard(column) {

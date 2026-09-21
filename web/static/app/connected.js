@@ -1,3 +1,4 @@
+import { calendarDay } from './filters.js';
 import { el, clear, inline } from './dom.js';
 import { state, byHandle, proposition } from './state.js';
 import * as api from './api.js';
@@ -27,7 +28,13 @@ export function connectedSection(title, path) {
       const items = (answer.items || []).filter((item) => proposition(item.proposition_id));
       body.append(el('button', { class: 'lnk', type: 'button', text: 'Refresh', onclick: refresh }));
       if (!items.length) body.append(el('p', { class: 'dim', text: 'Nothing here yet.' }));
+      const today = calendarDay(state.timezone);
+      let group = '';
       for (const item of items) {
+        if (path === '/my-work') {
+          const next = !item.due_date ? 'No deadline' : item.due_date < today ? 'Overdue' : item.due_date === today ? 'Due today' : 'Upcoming';
+          if (group !== next) { group = next; body.append(el('h3', { text: group })); }
+        }
         const p = proposition(item.proposition_id);
         const label = el('span', {}, inline(item.title, byHandle, proposition), ' ', el('a', { href: item.url, text: 'Open ' + item.kind, onclick: (e) => {
           if (item.proposition_id === state.open && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && e.button === 0) {

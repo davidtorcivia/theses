@@ -18,12 +18,13 @@ export function openPanel() {
   }
   state.panel = true;
   state.openCard = state.openLink = state.openFile = null;
-  seen = -1;
+  seen = -1; expanded = false;
   emit();
   return true;
 }
 
 export function closePanel() {
+  clearTimeout(timer); timer = 0;
   state.panel = false;
   // The settings page's Activity tab links to this hash. Left on the address
   // after the panel has been closed, pressing that tab again is a link to the
@@ -39,23 +40,37 @@ export function closePanel() {
 // also how an undo row appears without this having to guess what undo did.
 let seen = -1;
 let timer = 0;
+let filter = '', before = 0, more = false, expanded = false, loading = false, failure = '';
+let generation = 0;
 
 function refresh() {
-  if (seen === state.seq || timer || !state.open) return;
-  timer = setTimeout(async () => {
-    timer = 0;
-    const at = state.seq;
-    try {
-      const body = await api.get('/activity?proposition=' + state.open);
-      seen = at;
-      state.activity = body.activity || [];
-      emit();
-    } catch {
-      // Offline, or a proposition this person may no longer read. The refused
-      // rows above are the part that matters with no server, and they are
-      // already here.
-    }
-  }, 300);
+  if (seen === state.seq || timer || loading || !state.open || expanded) return;
+  timer = setTimeout(() => { timer = 0; readActivity(false); }, 300);
+}
+
+async function readActivity(older) {
+  if (older && loading) return;
+  clearTimeout(timer); timer = 0;
+  if (!older) { before = 0; more = false; }
+  const request = ++generation;
+  const at = state.seq, proposition = state.open;
+  loading = true; failure = '';
+  emit();
+  try {
+    const body = await api.get('/activity?proposition=' + proposition + '&entity=' + encodeURIComponent(filter) + (older ? '&before=' + before : ''));
+    if (request !== generation || proposition !== state.open) return;
+    const rows = body.activity || [];
+    state.activity = older ? [...state.activity, ...rows.filter((r) => !state.activity.some((old) => old.seq === r.seq))] : rows;
+    before = body.before || 0; more = Boolean(body.more);
+    expanded = older;
+    if (!older) seen = at;
+  } catch {
+    if (request !== generation) return;
+    failure = 'Could not load activity. Retry when connected.';
+    seen = at;
+  } finally {
+    if (request === generation) { loading = false; emit(); }
+  }
 }
 
 export function renderPanel(drawer) {
@@ -71,7 +86,14 @@ export function renderPanel(drawer) {
     drawer.append(list);
   }
 
-  drawer.append(el('h4', { text: 'Recent' }));
+  const select = el('select', { 'aria-label': 'Activity type', 'data-k': 'activity-filter', onchange: (e) => {
+    filter = e.target.value; expanded = false; state.activity = []; readActivity(false);
+  } }, ['', 'card', 'block', 'document', 'file', 'link', 'comment', 'proposition'].map((kind) =>
+    el('option', { value: kind, selected: filter === kind, text: kind || 'All activity' })));
+  drawer.append(select);
+  if (failure) drawer.append(el('p', { role: 'status', text: failure }), el('button', { class: 'lnk', type: 'button', text: 'Retry', 'data-k': 'activity-retry', onclick: () => readActivity(false) }));
+  if (expanded && seen !== state.seq) drawer.append(el('button', { class: 'lnk', type: 'button', text: 'Load new activity', 'data-k': 'activity-new', onclick: () => readActivity(false) }));
+  drawer.append(el('h4', { text: loading ? 'Loading…' : 'History' }));
   const list = el('ol', { class: 'comments' });
   if (!state.activity.length) {
     list.append(el('li', { class: 'dim', text: state.fromCache
@@ -84,8 +106,10 @@ export function renderPanel(drawer) {
   // start, and taking it back would restore a text from the middle of somebody
   // typing. It costs the bottom line of the panel its control and nothing else.
   const groups = grouped(state.activity);
-  groups.forEach((group, i) => list.append(activityRow(group, i === groups.length - 1)));
+  groups.forEach((group, i) => list.append(activityRow(group, more && i === groups.length - 1)));
   drawer.append(list);
+  if (more) drawer.append(el('button', { class: 'lnk', type: 'button', text: loading ? 'Loading…' : 'Load older activity', 'data-k': 'activity-more', disabled: loading,
+    onclick: () => readActivity(true) }));
 }
 
 // grouped folds a run of saves by one person on one block into a single line.

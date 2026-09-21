@@ -373,7 +373,7 @@ function props(card) {
   });
 
   const columns = el('select', {
-    disabled: !canEdit(), 'data-k': 'column',
+    disabled: !canEdit(), 'data-k': 'column', 'aria-label': 'Move to column',
     onchange: (e) => send('card.move', { card: card.id, column: Number(e.target.value), after: 0 })
       .catch((x) => say(x.message)),
   });
@@ -385,7 +385,7 @@ function props(card) {
     el('dt', { text: 'Assigned' }), who,
     el('dt', { text: 'Due' }), el('dd', {}, due),
     el('dt', { text: 'Question' }), el('dd', {}, question),
-    el('dt', { text: 'Column' }), el('dd', {}, columns),
+    el('dt', { text: 'Move to column' }), el('dd', {}, columns),
     el('dt', { text: 'State' }), el('dd', {}, canEdit()
       ? el('button', {
         class: 'lnk plain', type: 'button', 'data-k': 'state',
