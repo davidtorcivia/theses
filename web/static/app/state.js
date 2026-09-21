@@ -687,7 +687,13 @@ export function localOf(key) {
 // block it names already drawn.
 export async function drawQueued() {
   if (!state.open) return;
-  const rows = (await offline.queued()) || [];
+  // A read that did not happen is not an outbox with nothing in it. Taken as
+  // one, the walk at the foot of this function undraws every block this device
+  // has promised and not sent, on the grounds that it found no command for any
+  // of them, and the paragraphs leave the page while their commands sit in a
+  // store nobody could open.
+  const rows = await offline.queued();
+  if (!rows) return;
   const mine = new Map();
   for (const doc of state.documents) {
     for (const b of doc.blocks || []) if (b.id < 0 && b.key) mine.set(b.key, b);

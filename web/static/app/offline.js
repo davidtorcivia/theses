@@ -151,8 +151,14 @@ export async function queue(row, key) {
   return filed ? filed.n : 0;
 }
 
-export async function queued() {
-  return (await withStore('outbox', 'readonly', (store) => store.getAll())) || [];
+// queued is every row the outbox holds, or null when it could not be read: a
+// database another connection has taken to a later version, one a tab that has
+// not closed is blocking, a transaction that was aborted. A read that did not
+// happen is not an empty outbox, and the difference decides whether a command
+// nobody has answered still exists, so it is the caller's to make rather than
+// this one's to flatten.
+export function queued() {
+  return withStore('outbox', 'readonly', (store) => store.getAll());
 }
 
 export const drop = (n) => withStore('outbox', 'readwrite', (store) => store.delete(n));
@@ -285,6 +291,56 @@ export function refuse(n, at, why, detail) {
     };
     return null;
   });
+}
+
+// file is a command the server has already refused, put in the outbox as
+// refused rather than queued. A conflict or a refusal answered on the block
+// itself is a question held in one tab, and a tab is a thing that closes; filed
+// here it is the same row a refusal during the drain makes, so it survives a
+// reload, the panel offers it, and one answer settles both.
+//
+// A refusal already filed under the same name is written over rather than
+// joined: one block has one unanswered question, and the newest words are the
+// ones worth keeping. It answers the key the row is filed under, or zero when
+// there was no storage to file it in, because the caller has to know whether
+// the question outlived the tab before it promises that it did.
+//
+// It writes over a refusal and over nothing else. A refusal is an answer, so it
+// cannot be about a command that is still waiting to go or one the drain has
+// taken and may already have had applied: those are answered by the drain, in
+// refuse above. The row goes in unmarked for the same reason, since the drain
+// leaves a refused row alone and never takes it.
+//
+// ponytail: the same scan queue and named make, with the same ceiling and the
+// same reason it is fine at the few rows a person makes by hand.
+export async function file(row, key, why, detail) {
+  const filed = await withStore('outbox', 'readwrite', (store) => {
+    const out = { n: 0 };
+    const all = store.getAll();
+    all.onsuccess = () => {
+      // By name, and by the name the command itself goes up under: an insert
+      // has no key to fold on, because nothing folds two inserts together, so
+      // its idem is the only thing that says two refusals are about one block.
+      // Without this a refusal the drain made and one filed here would be two
+      // rows for one insert, the panel would ask twice, and a discard that
+      // dropped one of them would leave the other to draw the paragraph again.
+      //
+      // A name is only a match when there is one. Rows with no name are the
+      // inserts the ordinary path queued, and taking the absence of a name as
+      // something two rows have in common would write one question over the
+      // first other unnamed one in the store, which is somebody's words.
+      const found = all.result.find((r) => r.refused
+        && ((key && r.key === key) || (row.idem && r.idem === row.idem)));
+      // The time is the row's own, after the spread, so a row read out of the
+      // store and filed again is stamped now rather than keeping the moment it
+      // first went in: refuse and dropIfUnchanged both answer to that stamp.
+      const put = store.put({ ...row, key, sending: false, at: Date.now(),
+        refused: why, detail: detail || null, ...(found ? { n: found.n } : {}) });
+      put.onsuccess = () => { out.n = put.result; };
+    };
+    return out;
+  });
+  return filed ? filed.n : 0;
 }
 
 // retry clears a refusal so the row goes up again, which is what the panel's

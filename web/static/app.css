@@ -631,6 +631,11 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
 .tabs .tab.on i{color:var(--k)}
 .list .row.pending{cursor:default;color:var(--dim)}
 #drawer .linked li p{margin:.15rem 0}
+/* The words of a save whose block has been deleted, which the row is the last
+   copy of: all of them, scrolling on their own so a long one does not push the
+   answer off the bottom, and selectable so they can be taken somewhere else. */
+#drawer .linked li .kept{display:block;max-height:12rem;overflow:auto;resize:vertical;
+  color:var(--dim);border:1px solid var(--hair);padding:.3rem;margin:.15rem 0}
 
 /* The palette shows what the server found, so a row
    carries a snippet beside its title and a bare URL can arrive as one; and a

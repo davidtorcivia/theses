@@ -8,6 +8,7 @@
 import { el, initials, say } from './dom.js';
 import { state, user, emit, canEdit } from './state.js';
 import { send, again, letGo, resend, Conflict } from './net.js';
+import { gone } from './docs.js';
 import * as api from './api.js';
 
 export function openPanel() {
@@ -220,30 +221,52 @@ const clip = (text) => (text.length > 80 ? text.slice(0, 79) + '…' : text);
 // editor started from: without it a choice made an hour later is made blind.
 function refusedRow(row) {
   const li = el('li', {});
-  const detail = row.detail;
+  // A save whose block has been deleted since has nowhere to go back to, so the
+  // only honest answer is to say so and keep the words here to be copied out of
+  // until somebody lets them go. Sending it again would be refused, and this
+  // row is the last place what they wrote still exists.
+  const lost = row.cmd === 'block.set' && gone(row.args.block);
+  const detail = lost ? null : row.detail;
   const mine = row.args.text ?? row.args.title ?? '';
   li.append(el('p', { text: `${row.cmd} was not taken: ${row.refused}` }));
+  if (lost) li.append(el('p', { class: 'dim', text: 'That block has since been deleted.' }));
   if (row.base_text) {
     li.append(el('p', { class: 'mono dim', text: 'You started from: ' + clip(row.base_text) }));
   }
-  if (mine) li.append(el('p', { class: 'mono dim', text: 'Yours: ' + clip(String(mine)) }));
+  // Clipped, except when this row is the last copy there is. A block somebody
+  // deleted takes the save that was refused with it, so the words in the row
+  // are the only ones left and the person is being asked to let them go: they
+  // have to be able to read all of them and take them out of here first.
+  if (mine && lost) li.append(whole(String(mine)));
+  else if (mine) li.append(el('p', { class: 'mono dim', text: 'Yours: ' + clip(String(mine)) }));
   if (detail) {
     li.append(el('p', { class: 'mono dim', text: 'Theirs: ' + clip(detail.current || '(nothing)') }));
     li.append(el('button', {
       class: 'lnk', type: 'button', text: 'Keep mine',
       onclick: () => resolve(row, { ...row.args, base: detail.version }),
     }), ' ');
-  } else {
+  } else if (!lost) {
     // A refusal with nothing to compare is the server saying no rather than
     // somebody else saying something different, and some of those are worth one
     // more go: a moment when it was busy, a fault it has since recovered from.
-    li.append(el('button', { class: 'lnk', type: 'button', text: 'Try it again', onclick: () => again(row.n) }), ' ');
+    li.append(el('button', { class: 'lnk', type: 'button', text: 'Try it again', onclick: () => again(row) }), ' ');
   }
   li.append(el('button', {
     class: 'lnk plain', type: 'button', text: detail ? 'Take theirs' : 'Let it go',
     onclick: () => resolve(row, null),
   }));
   return li;
+}
+
+// whole is the text itself rather than the beginning of it, in a textarea so
+// that it scrolls, wraps and can be selected and copied out. Read only: this is
+// the record of something that was not saved, and editing it here would write
+// nowhere and read as though it had.
+function whole(text) {
+  const area = el('textarea', { class: 'mono kept', readonly: true, spellcheck: 'false',
+    'aria-label': 'What you wrote, which was not saved' });
+  area.value = text;
+  return el('div', {}, el('p', { class: 'mono dim', text: 'Yours, in full:' }), area);
 }
 
 // resolve is what the choice comes to: send it again as it now has to be sent,
