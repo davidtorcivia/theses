@@ -75,6 +75,16 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if email != u.Email {
+		if err := s.reauthenticate(r, u); err != nil {
+			if errors.Is(err, auth.ErrBadCredentials) {
+				s.back(w, r, "/profile#you", map[string]any{"Error": "The current password or authenticator code did not match."})
+			} else {
+				s.fail(w, r, err)
+			}
+			return
+		}
+	}
 	if err := s.write(r, "user", itoa(u.ID), "update", u.Handle, handle, func(q store.Querier) error {
 		return store.UpdateProfile(r.Context(), q, u.ID, handle, name, initials, colour, email)
 	}); err != nil {
@@ -94,6 +104,18 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, profileTo("you", true), http.StatusSeeOther)
+}
+
+// reauthenticate checks the credentials needed immediately before a signed-in
+// person changes an account-recovery credential.
+func (s *Server) reauthenticate(r *http.Request, u *store.User) error {
+	if !auth.CheckPassword(u.PasswordHash, r.PostFormValue("current")) {
+		return auth.ErrBadCredentials
+	}
+	if u.TOTPSecret != "" {
+		return s.auth.CheckTOTP(r.Context(), u, r.PostFormValue("code"))
+	}
+	return nil
 }
 
 func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +149,14 @@ func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 // does not replace the old one until a code from it comes back.
 func (s *Server) postReenrol(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
+	if err := s.reauthenticate(r, u); err != nil {
+		if errors.Is(err, auth.ErrBadCredentials) {
+			s.back(w, r, "/profile#security", map[string]any{"Error": "The current password or authenticator code did not match."})
+		} else {
+			s.fail(w, r, err)
+		}
+		return
+	}
 	e, err := auth.Enrol(u.Handle)
 	if err != nil {
 		s.fail(w, r, err)

@@ -347,6 +347,49 @@ func TestChecklistAssigneesAndNotes(t *testing.T) {
 	}
 }
 
+func TestCardAssigneesHaveToBeAbleToReadTheProposition(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+
+	_, err := f.CreateCard(ctx, f.who["editor"], f.cols[0].ID, "Call the engineer",
+		[]int64{f.who["editor"].ID, f.who["outsider"].ID})
+	if !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("an assignee outside the proposition gave %v, want ErrNotFound", err)
+	}
+	var cards int
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM cards WHERE title = 'Call the engineer'`).Scan(&cards); err != nil {
+		t.Fatal(err)
+	}
+	if cards != 0 {
+		t.Fatal("the card was kept after one assignee was refused")
+	}
+
+	e, err := f.CreateCard(ctx, f.who["editor"], f.cols[0].ID, "Draft the opening",
+		[]int64{f.who["editor"].ID, f.who["editor"].ID})
+	if err != nil {
+		t.Fatalf("a repeated assignee was refused: %v", err)
+	}
+	card, err := GetCard(ctx, f.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(card.Assignees) != 1 || card.Assignees[0] != f.who["editor"].ID {
+		t.Fatalf("repeated assignees were kept as %v", card.Assignees)
+	}
+
+	if _, err := f.AssignCard(ctx, f.who["editor"], card.ID, 999999); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("an unknown assignee gave %v, want ErrNotFound", err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE users SET role = 'owner' WHERE id = ?`,
+		f.who["outsider"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.AssignCard(ctx, f.who["editor"], card.ID, f.who["outsider"].ID); err != nil {
+		t.Fatalf("an owner without membership could not be assigned: %v", err)
+	}
+}
+
 // Deleting a proposition files its activity row with no proposition, because a
 // row pointing at the proposition would cascade away with it.
 func TestDeletingAPropositionKeepsTheRecordOfIt(t *testing.T) {
@@ -939,6 +982,47 @@ func TestSetCardDueTakesOnlyACalendarDay(t *testing.T) {
 			}
 			if got != tc.kept {
 				t.Fatalf("%q was kept as %q", tc.due, got)
+			}
+		})
+	}
+}
+
+func TestScheduleTakesOnlyACalendarDay(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+
+	for _, tc := range []struct {
+		date  string
+		kept  string
+		wrong bool
+	}{
+		{date: "2026-09-24", kept: "2026-09-24"},
+		{date: " 2026-09-24 ", kept: "2026-09-24"},
+		{date: "", kept: ""},
+		{date: "2026-02-31", wrong: true},
+		{date: "24 Sep", wrong: true},
+	} {
+		t.Run(tc.date, func(t *testing.T) {
+			_, err := f.Schedule(ctx, f.who["owner"], f.prop, "", tc.date)
+			if tc.wrong {
+				if !errors.Is(err, ErrDueDate) {
+					t.Fatalf("%q gave %v", tc.date, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%q gave %v", tc.date, err)
+			}
+			proposition, err := GetProposition(ctx, f.db, f.prop)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if proposition.TargetDate != nil {
+				got = *proposition.TargetDate
+			}
+			if got != tc.kept {
+				t.Fatalf("%q was kept as %q", tc.date, got)
 			}
 		})
 	}

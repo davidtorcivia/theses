@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,30 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
+
+func TestAWSStorageOriginIsInTheCSP(t *testing.T) {
+	for _, tc := range []struct{ region, origin string }{
+		{"us-east-1", "https://s3.us-east-1.amazonaws.com"},
+		{"cn-north-1", "https://s3.cn-north-1.amazonaws.com.cn"},
+		{"us-gov-west-1", "https://s3.us-gov-west-1.amazonaws.com"},
+	} {
+		t.Run(tc.region, func(t *testing.T) {
+			h := newHarness(t)
+			for key, value := range map[string]string{
+				"storage.primary.provider": "s3",
+				"storage.primary.region":   tc.region,
+				"storage.primary.bucket":   "theses",
+			} {
+				if err := h.srv.settings.Set(context.Background(), key, []string{value}, 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if policy := h.srv.policy(); !strings.Contains(policy, "connect-src 'self' "+tc.origin+";") {
+				t.Errorf("policy does not allow the S3 origin:\n%s", policy)
+			}
+		})
+	}
+}
 
 // fakeBucket starts gofakes3 in process with one bucket and returns its URL.
 func fakeBucket(t *testing.T, name string) string { return fakeCORSBucket(t, name, nil) }

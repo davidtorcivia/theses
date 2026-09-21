@@ -223,7 +223,7 @@ const configContext = "notification_channels.config_json"
 //
 // The config is encrypted at rest with the settings key: a user key, an ntfy
 // token and a webhook secret are secrets, and the plan says so.
-func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Channel) (Channel, error) {
+func SaveChannel(ctx context.Context, q store.Querier, set *settings.Settings, c Channel) (Channel, error) {
 	if err := c.Validate(); err != nil {
 		return Channel{}, err
 	}
@@ -251,7 +251,7 @@ func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Ch
 		verified = c.VerifiedAt
 	}
 	if c.ID == 0 {
-		res, err := db.ExecContext(ctx, `INSERT INTO notification_channels
+		res, err := q.ExecContext(ctx, `INSERT INTO notification_channels
 			(user_id, kind, config_json, quiet_from, quiet_to, digest, created_at, verified_at)
 			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?)`,
 			owner, c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified)
@@ -263,7 +263,7 @@ func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Ch
 		}
 		return c, nil
 	}
-	res, err := db.ExecContext(ctx, `UPDATE notification_channels
+	res, err := q.ExecContext(ctx, `UPDATE notification_channels
 		SET kind = ?, config_json = ?, quiet_from = ?, quiet_to = ?, digest = ?, verified_at = ?
 		WHERE id = ? AND coalesce(user_id, 0) = ?`,
 		c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified, c.ID, c.UserID)
@@ -278,8 +278,8 @@ func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Ch
 
 // DeleteChannel removes one channel, and with it every rule and every queued
 // message pointing at it.
-func DeleteChannel(ctx context.Context, db *store.DB, id, user int64) error {
-	res, err := db.ExecContext(ctx,
+func DeleteChannel(ctx context.Context, q store.Querier, id, user int64) error {
+	res, err := q.ExecContext(ctx,
 		`DELETE FROM notification_channels WHERE id = ? AND coalesce(user_id, 0) = ?`, id, user)
 	if err != nil {
 		return fmt.Errorf("%w: delete channel: %w", ErrStorage, err)
@@ -440,7 +440,24 @@ func Rules(ctx context.Context, q store.Querier, user int64) (map[string][]int64
 // for an event that is not in the table, or a channel that is not this
 // account's, are refused rather than stored: the matrix is the contract.
 func SetRules(ctx context.Context, db *store.DB, set *settings.Settings, user int64, ticked map[string][]int64) error {
-	channels, err := ListChannels(ctx, db, set, user)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("%w: rules: %w", ErrStorage, err)
+	}
+	defer tx.Rollback()
+	if err := SetRulesTx(ctx, tx, set, user, ticked); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: rules: %w", ErrStorage, err)
+	}
+	return nil
+}
+
+// SetRulesTx is SetRules inside a transaction the caller already owns. It is
+// used when replacing channels and their matrix has to be one atomic PUT.
+func SetRulesTx(ctx context.Context, tx *sql.Tx, set *settings.Settings, user int64, ticked map[string][]int64) error {
+	channels, err := ListChannels(ctx, tx, set, user)
 	if err != nil {
 		return err
 	}
@@ -448,11 +465,6 @@ func SetRules(ctx context.Context, db *store.DB, set *settings.Settings, user in
 	for _, c := range channels {
 		mine[c.ID] = true
 	}
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("%w: rules: %w", ErrStorage, err)
-	}
-	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM notification_rules WHERE user_id = ?`, user); err != nil {
 		return fmt.Errorf("%w: clear rules: %w", ErrStorage, err)
 	}
@@ -469,9 +481,6 @@ func SetRules(ctx context.Context, db *store.DB, set *settings.Settings, user in
 				return fmt.Errorf("%w: save rules: %w", ErrStorage, err)
 			}
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("%w: rules: %w", ErrStorage, err)
 	}
 	return nil
 }

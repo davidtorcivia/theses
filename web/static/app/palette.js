@@ -23,12 +23,14 @@ const perKind = 5;
 // because two queries in flight come back in whatever order they like.
 let asked = 0;
 let timer = 0;
+let returnTo = null;
 
 export function openPalette() {
   // A reply to whatever was typed the last time it was open belongs to nobody.
   clearTimeout(timer);
   asked++;
   const palette = $('#palette');
+  if (palette.hidden) returnTo = document.activeElement;
   palette.hidden = false;
   const field = palette.querySelector('input');
   field.value = '';
@@ -40,6 +42,9 @@ export function closePalette() {
   clearTimeout(timer);
   asked++;
   $('#palette').hidden = true;
+  const back = returnTo;
+  returnTo = null;
+  if (back && back.isConnected) back.focus();
 }
 
 // The rows this tab can offer without asking anybody: the propositions it knows
@@ -71,7 +76,9 @@ function newProposition() {
   closePalette();
   const button = $('#newprop');
   if (!button) { location.href = '/'; return; }
-  document.body.classList.add('rail-open');
+  if (matchMedia('(max-width: 900px)').matches && !document.body.classList.contains('rail-open')) {
+    $('#railtoggle')?.click();
+  }
   button.click();
 }
 
@@ -217,6 +224,19 @@ function search(query) {
 $('#palette input').addEventListener('input', (e) => search(e.target.value));
 $('#palette').addEventListener('click', (e) => {
   if (e.target.id === 'palette') closePalette();
+});
+$('#palette').addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+  const stops = [$('#palette input'), ...$$('#palette ul a')];
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
 });
 $('#palette input').addEventListener('keydown', (e) => {
   const lines = $$('#palette ul a');

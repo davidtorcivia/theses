@@ -33,7 +33,7 @@ textarea{resize:vertical}
 .ws .t{min-width:0;line-height:1.2}
 .ws .t[contenteditable=true]{outline:0}
 .ws .more{position:absolute;right:.4rem;top:50%;transform:translateY(-50%);opacity:0;padding:0 .3em}
-.ws:hover .more,.ws.on .more{opacity:1}
+.ws:hover .more,.ws:focus-within .more,.ws.on .more{opacity:1}
 .ws .menu{position:absolute;right:.4rem;top:100%;z-index:5;display:flex;flex-direction:column;min-width:9em}
 .ws.dragging{opacity:.4}
 .ws.gone{opacity:0;transition:opacity .3s}
@@ -314,14 +314,14 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .card .cw{display:flex;flex-direction:column;gap:2px;padding-top:.1rem}
 .card .cw .u{cursor:pointer}
 .card .asg{width:1.9em;height:1.9em;display:inline-flex;align-items:center;justify-content:center;border:1px dashed var(--hair);color:var(--dim);font-size:12px;opacity:0}
-.card:hover .asg{opacity:1}
+.card:hover .asg,.card:focus-within .asg{opacity:1}
 .card .asg:hover{border-color:var(--y);color:var(--y)}
 .card .ct{font-weight:600;font-size:14.5px;line-height:1.25;letter-spacing:-.005em}
 .card .cm{margin-top:.3rem;font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:500;color:var(--dim);font-stretch:85%}
 .card .cm .due.late{color:#ff5a3c}
 .card .cm .q{color:var(--y)}
 .card .cm .tick{margin-left:auto;color:var(--dim);opacity:0}
-.card:hover .cm .tick{opacity:1}
+.card:hover .cm .tick,.card:focus-within .cm .tick{opacity:1}
 .card:hover{background:rgba(244,241,234,.04)}
 .card.mine{box-shadow:inset 3px 0 0 var(--y);padding-left:.6rem}
 .card.done .ct{color:var(--dim);text-decoration:line-through;text-decoration-color:rgba(244,241,234,.4)}
@@ -485,13 +485,14 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #drawer .props .rm:hover .u{outline:2px solid #ff5a3c}
 #drawer .props input.inline{border:1px solid var(--y);padding:.1rem .4rem}
 #drawer .desc{margin:0;line-height:1.45}
+#drawer .desc[contenteditable=true]:focus{white-space:pre-wrap}
 #drawer .check li{padding:.3rem 0;border-bottom:1px solid var(--hair);display:flex;align-items:baseline;gap:.8rem}
 #drawer .check label{flex:1}
 #drawer .check li.d label{color:var(--dim);text-decoration:line-through}
 #drawer .check li .lnk{opacity:0}
 #drawer .check li:hover .lnk,#drawer .check li:focus-within .lnk{opacity:1}
 #drawer .comments .when+.lnk{opacity:0;margin-left:.6rem}
-#drawer .comments li:hover .lnk{opacity:1}
+#drawer .comments li:hover .lnk,#drawer .comments li:focus-within .lnk{opacity:1}
 #drawer .check input{accent-color:var(--y)}
 #drawer .newitem{color:var(--y);font-weight:600}
 #drawer .linked li{padding:.3rem 0;border-bottom:1px solid var(--hair)}
@@ -507,7 +508,7 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #netbar{background:var(--y);color:var(--k);font-weight:600;font-size:14px}
 #picker .pt{padding:.35rem .8rem;color:var(--dim);border-bottom:1px solid var(--hair)}
 #picker button{padding:.4rem .8rem;font-weight:600}
-#picker button:hover{background:rgba(255,212,0,.12)}
+#picker button:hover,#picker button.active{background:rgba(255,212,0,.12)}
 #picker button.on{color:var(--y)}
 #picker .role{color:var(--dim)}
 .preview{border:1px solid var(--hair);padding:.8rem;margin:.6rem 0 1rem}

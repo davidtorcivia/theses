@@ -12,6 +12,7 @@ import { state, apply, emit, predict, baseText, target, retryMaterial, unmakeLoc
 import { parseWhere } from './blocktext.js';
 import * as offline from './offline.js';
 import * as api from './api.js';
+import { isJSON, sessionEnded } from './response.js';
 
 let socket = null;
 let next = 1;
@@ -805,7 +806,12 @@ export async function catchUp(wait = false) {
       const res = await fetch(`/api/events?proposition=${proposition}&since=${since}&wait=${wait ? 1 : 0}`, {
         headers: { Accept: 'application/json' }, signal,
       });
-      if (!res.ok || state.open !== proposition) return false;
+      if (!res.ok) return false;
+      if (sessionEnded(res, location.href)) {
+        await offline.signedOut();
+        return false;
+      }
+      if ((res.headers && !isJSON(res)) || state.open !== proposition) return false;
       const body = await res.json();
       const events = body.events || [];
       let next = since;

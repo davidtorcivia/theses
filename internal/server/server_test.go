@@ -584,6 +584,43 @@ func TestProfileChangesAndSignOutEverywhere(t *testing.T) {
 	}
 }
 
+func TestRecoveryEmailChangeRequiresReauthentication(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	password, secret := h.setupOwner()
+
+	res, _ := h.post("/profile", url.Values{
+		"csrf": {h.csrf("/profile")}, "handle": {"ada"}, "name": {"Ada Lovelace"},
+		"initials": {"AL"}, "colour": {Palette[1]}, "email": {""},
+	})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/profile#you" {
+		t.Fatalf("unauthenticated email removal gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	u, err := store.UserByHandle(ctx, h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "ada@example.com" {
+		t.Errorf("email changed without reauthentication to %q", u.Email)
+	}
+
+	res, _ = h.post("/profile", url.Values{
+		"csrf": {h.csrf("/profile")}, "handle": {"ada"}, "name": {"Ada Lovelace"},
+		"initials": {"AL"}, "colour": {Palette[1]}, "email": {"new@example.com"},
+		"current": {password}, "code": {code(t, secret)},
+	})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/profile?saved=you#you" {
+		t.Fatalf("authenticated email change gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	u, err = store.UserByHandle(ctx, h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "new@example.com" {
+		t.Errorf("authenticated email change saved %q", u.Email)
+	}
+}
+
 func TestProfileRejectsAnEmailThatOnlyDiffersByCase(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -618,12 +655,25 @@ func TestProfileRejectsAnEmailThatOnlyDiffersByCase(t *testing.T) {
 func TestTwoProfilesMayBothHaveNoEmail(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
-	h.setupOwner()
+	password, secret := h.setupOwner()
 	other := h.as("mara", "Mara Okafor", auth.RoleEditor)
+	otherPassword := "another long password"
+	otherHash, err := auth.HashPassword(otherPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherUser, err := store.UserByHandle(ctx, h.db, "mara")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPasswordHash(ctx, h.db, otherUser.ID, otherHash); err != nil {
+		t.Fatal(err)
+	}
 
 	res, _ := h.post("/profile", url.Values{
 		"csrf": {h.csrf("/profile")}, "handle": {"ada"}, "name": {"Ada Lovelace"},
 		"initials": {"AL"}, "colour": {Palette[1]}, "email": {""},
+		"current": {password}, "code": {code(t, secret)},
 	})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("first blank email gave %d", res.StatusCode)
@@ -642,6 +692,7 @@ func TestTwoProfilesMayBothHaveNoEmail(t *testing.T) {
 	res, err = other.PostForm(h.http.URL+"/profile", url.Values{
 		"csrf": {string(match[1])}, "handle": {"mara"}, "name": {"Mara Okafor"},
 		"initials": {"MO"}, "colour": {Palette[2]}, "email": {""},
+		"current": {otherPassword},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -723,9 +774,23 @@ func TestServerErrorFallsBackWhenTemplatesAreBroken(t *testing.T) {
 
 func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
 	h := newHarness(t)
-	h.setupOwner()
+	password, oldSecret := h.setupOwner()
 
 	res, _ := h.post("/profile/totp", url.Values{"csrf": {h.csrf("/profile")}})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/profile#security" {
+		t.Fatalf("re-enroll without credentials gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	owner, err := store.UserByHandle(context.Background(), h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.TOTPSecret != oldSecret {
+		t.Error("re-enroll without credentials replaced the authenticator")
+	}
+
+	res, _ = h.post("/profile/totp", url.Values{
+		"csrf": {h.csrf("/profile")}, "current": {password}, "code": {code(t, oldSecret)},
+	})
 	if res.Header.Get("Location") != "/profile/authenticator" {
 		t.Fatalf("re-enroll gave %d %s", res.StatusCode, res.Header.Get("Location"))
 	}
@@ -754,12 +819,45 @@ func TestReenrolmentBelongsToTheSignedInPerson(t *testing.T) {
 	if res.StatusCode != http.StatusForbidden {
 		t.Errorf("a stale enrollment cookie gave %d, want 403", res.StatusCode)
 	}
-	owner, err := store.UserByHandle(context.Background(), h.db, "ada")
+	owner, err = store.UserByHandle(context.Background(), h.db, "ada")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if owner.TOTPSecret == secret {
 		t.Error("the owner's authenticator was replaced from another person's session")
+	}
+}
+
+func TestReenrolmentRollsBackWhenTheAuditWriteFails(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	password, oldSecret := h.setupOwner()
+	res, _ := h.post("/profile/totp", url.Values{
+		"csrf": {h.csrf("/profile")}, "current": {password}, "code": {code(t, oldSecret)},
+	})
+	if res.Header.Get("Location") != "/profile/authenticator" {
+		t.Fatalf("re-enroll gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	_, body := h.get("/profile/authenticator")
+	newSecret := secretRe.FindStringSubmatch(body)[1]
+	if _, err := h.db.ExecContext(ctx, `CREATE TRIGGER fail_totp_activity
+		BEFORE INSERT ON activity WHEN NEW.action = 'totp'
+		BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ = h.post("/profile/authenticator", url.Values{
+		"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "code": {code(t, newSecret)},
+	})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("re-enroll with a failed audit write gave %d", res.StatusCode)
+	}
+	u, err := store.UserByHandle(ctx, h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.TOTPSecret != oldSecret {
+		t.Error("the authenticator changed despite the rolled-back audit write")
 	}
 }
 

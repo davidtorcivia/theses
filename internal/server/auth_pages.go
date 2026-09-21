@@ -373,11 +373,9 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			s.errorPage(w, r, http.StatusForbidden)
 			return
 		}
-		if err := s.activity(r.Context(), p.UserID, "user", itoa(p.UserID), "totp", "", ""); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		if err := store.SetTOTPSecret(r.Context(), s.db, p.UserID, p.Secret); err != nil {
+		if err := s.write(r, "user", itoa(p.UserID), "totp", "", "", func(q store.Querier) error {
+			return store.SetTOTPSecret(r.Context(), q, p.UserID, p.Secret)
+		}); err != nil {
 			s.fail(w, r, err)
 			return
 		}

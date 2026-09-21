@@ -46,8 +46,8 @@ export function renderFiles(pane) {
       el('div', { class: 'main' }, el('span', { class: 't', text: held.name })),
       el('span', { class: 'when mono', text: held.reselect
         ? 'choose the original file to continue'
-        : 'goes up when the connection is back' }),
-      held.reselect ? chooseUpload(held) : null));
+        : held.error || 'goes up when the connection is back' }),
+      held.reselect ? chooseUpload(held) : held.error ? retryUpload() : null));
   }
   if (!rows.length) {
     // A read that failed is not the same as there being none, and saying the
@@ -149,7 +149,10 @@ async function run(file, folder, replace, queued = null) {
     emit();
   } catch (err) {
     say(err.message);
-    if (id) state.uploads.set(id, { name: file.name, at: 0, error: err.message });
+    state.uploads.set(id || queued.file, {
+      name: file.name, at: 0, error: err.message,
+      queued: !id, row: !id ? queued : undefined,
+    });
     emit();
   }
 }
@@ -275,7 +278,7 @@ function row(file) {
       ? el('a', { class: 'dl', href: '#', title: 'Download', text: '↓',
           onclick: (e) => { e.preventDefault(); e.stopPropagation(); download(file); } })
       : el('span', { class: 'dl mono', text: busy ? Math.round(busy.at * 100) + '%' : '…' }),
-    busy && busy.reselect ? chooseUpload(busy) : null);
+    busy && busy.reselect ? chooseUpload(busy) : busy && busy.error ? retryUpload() : null);
   li.addEventListener('click', () => openFile(file.id));
   activate(li, () => openFile(file.id));
   return li;
@@ -303,6 +306,17 @@ function chooseUpload(held) {
     }
   });
   return el('span', { class: 'resume' }, button, picker);
+}
+
+function retryUpload() {
+  return el('button', {
+    class: 'lnk', type: 'button', text: 'Retry',
+    onclick: async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await resumeWhatIsLeft();
+    },
+  });
 }
 
 function second(file, busy) {

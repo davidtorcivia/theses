@@ -33,7 +33,7 @@
           <div class="row3">
             <label class="f"><span class="l">Status</span><select name="status"{{if not .CanEdit}} disabled{{end}}>{{range .Statuses}}<option value="{{.Value}}"{{if .On}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
             <label class="f"><span class="l">Episode</span><input name="episode" value="{{.Episode}}" placeholder="—"{{if not .CanEdit}} readonly{{end}}></label>
-            <label class="f"><span class="l">Target release</span><input name="target" value="{{.Target}}" placeholder="—"{{if not .CanEdit}} readonly{{end}}></label>
+            <label class="f"><span class="l">Target release</span><input type="date" name="target" value="{{.Target}}"{{if not .CanEdit}} readonly{{end}}></label>
           </div>
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
@@ -73,18 +73,10 @@
       </section>
     </form>
 
-    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
-      <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="document">
-      <section class="fs">
-        <div class="fsh"><h3>Document</h3><p>The shared file under the board.</p></div>
-        <div class="fsb">
-          <label class="chk"><input type="checkbox" name="open_editing" value="1"{{if .Doc.OpenEditing}} checked{{end}}{{if not .CanEdit}} disabled{{end}}><span>Anyone in the workspace can edit</span></label>
-          <label class="chk"><input type="checkbox" name="history" value="1"{{if .Doc.History}} checked{{end}}{{if not .CanEdit}} disabled{{end}}><span>Keep version history<small>90 days, then weekly snapshots</small></span></label>
-          <label class="chk"><input type="checkbox" name="publish" value="1"{{if .Doc.Publish}} checked{{end}}{{if not .CanEdit}} disabled{{end}}><span>Publish the document as the episode’s reading page when released</span></label>
-          {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
-        </div>
-      </section>
-    </form>
+    <section class="fs">
+      <div class="fsh"><h3>Documents</h3><p>The shared documents under the board.</p></div>
+      <div class="fsb"><p>Editing follows proposition membership and workspace roles. Version history is kept until the document is deleted. Documents are private to this workspace.</p></div>
+    </section>
 
     <form class="form" method="post" action="/p/{{.P.ID}}/publish" id="publish">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -131,7 +123,7 @@
     </dialog>{{end}}
   </section>
 </main>
-<div id="palette" hidden><div class="pal">
+<div id="palette" role="dialog" aria-modal="true" aria-label="Search this workspace" hidden><div class="pal">
   <input type="search" placeholder="Search, jump, do…" spellcheck="false" aria-label="Search this workspace">
   <ul></ul>
 </div></div>

@@ -76,8 +76,15 @@ func (s *Server) bucketFor(ctx context.Context, folder string) (*blob.Client, er
 func (s *Server) storageOrigins() []string {
 	var out []string
 	for _, prefix := range []string{"storage.primary", "storage.recordings"} {
-		for _, key := range []string{".endpoint", ".public_base_url"} {
-			if o := originOf(settings.Get[string](s.settings, prefix+key)); o != "" && !contains(out, o) {
+		endpoint := settings.Get[string](s.settings, prefix+".endpoint")
+		if endpoint == "" && settings.Get[string](s.settings, prefix+".provider") == "s3" {
+			endpoint, _ = blob.AWSOrigin(
+				settings.Get[string](s.settings, prefix+".region"),
+				settings.Get[string](s.settings, prefix+".bucket"),
+			)
+		}
+		for _, raw := range []string{endpoint, settings.Get[string](s.settings, prefix+".public_base_url")} {
+			if o := originOf(raw); o != "" && !contains(out, o) {
 				out = append(out, o)
 			}
 		}

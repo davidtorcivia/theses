@@ -50,6 +50,9 @@ func Load(lookup func(string) (string, bool)) (*Config, error) {
 	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, fmt.Errorf("THESES_BASE_URL must be an absolute http or https URL, got %q", base)
 	}
+	if u.Hostname() == "" || u.User != nil || strings.Trim(u.EscapedPath(), "/") != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, fmt.Errorf("THESES_BASE_URL must name only the origin, without credentials, a path, query, or fragment")
+	}
 	c.BaseURL = strings.TrimRight(base, "/")
 	c.CookieSecure = u.Scheme == "https"
 

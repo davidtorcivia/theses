@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/davidtorcivia/theses/internal/board"
 )
 
 // mirrorFixture is one fixture with the mirror on and its file already written.
@@ -25,6 +27,43 @@ func mirrorFixture(t *testing.T) (*fixture, string) {
 		t.Fatal(err)
 	}
 	return f, path
+}
+
+func TestImportRollsBackEveryBlockOnFailure(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	before := f.blocks(t)
+	document, err := GetDocument(ctx, f.db, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := append([]Block(nil), before...)
+	edited[0].Text = "A valid first edit."
+	edited[1].Text = strings.Repeat("x", board.MaxBody+1)
+	content := string(render(document, edited, nil))
+	save(t, path, content)
+	if err := f.Import(ctx, path); !errors.Is(err, board.ErrTooLong) {
+		t.Fatalf("import oversized block: %v", err)
+	}
+	after := f.blocks(t)
+	for i, b := range before {
+		if after[i].Text != b.Text || after[i].Version != b.Version {
+			t.Fatalf("block %d changed despite failed import", b.ID)
+		}
+	}
+	var revisions int
+	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM document_revisions WHERE document_id = ?`, f.doc).Scan(&revisions); err != nil {
+		t.Fatal(err)
+	}
+	if revisions != 0 {
+		t.Fatalf("failed import left %d revisions", revisions)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, path) != content {
+		t.Fatal("failed hand edit was overwritten")
+	}
 }
 
 // save writes a file the way an editor that renames into place does. A truncate

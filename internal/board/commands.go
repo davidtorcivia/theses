@@ -3,10 +3,8 @@ package board
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -328,6 +326,11 @@ func (s *Service) Schedule(ctx context.Context, a core.Actor, id int64, episode,
 	if targetDate, err = Field(targetDate, MaxWord); err != nil {
 		return core.Event{}, err
 	}
+	if targetDate != "" {
+		if _, err := time.Parse("2006-01-02", targetDate); err != nil {
+			return core.Event{}, ErrDueDate
+		}
+	}
 	return s.proposition(ctx, a, id, auth.CanEdit, "schedule", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
 		_, err := tx.ExecContext(ctx, `UPDATE propositions SET episode = ?, target_date = ? WHERE id = ?`,
 			value(episode), value(targetDate), id)
@@ -565,9 +568,7 @@ func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, ti
 			return core.Change{}, err
 		}
 		for _, u := range assignees {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO card_assignees (card_id, user_id)
-				 SELECT ?, id FROM users WHERE id = ?`, id, u); err != nil {
+			if err := assignCard(ctx, tx, id, proposition, u); err != nil {
 				return core.Change{}, err
 			}
 		}
@@ -667,25 +668,37 @@ func (s *Service) MoveCard(ctx context.Context, a core.Actor, id, column, after 
 }
 
 func (s *Service) AssignCard(ctx context.Context, a core.Actor, id, user int64) (core.Event, error) {
-	return s.card(ctx, a, id, auth.CanEdit, "assign", func(ctx context.Context, tx *sql.Tx, _ Card) error {
-		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO card_assignees (card_id, user_id)
-			SELECT ?, id FROM users WHERE id = ?`, id, user)
-		if err != nil {
+	return s.card(ctx, a, id, auth.CanEdit, "assign", func(ctx context.Context, tx *sql.Tx, card Card) error {
+		return assignCard(ctx, tx, id, card.Proposition, user)
+	})
+}
+
+// Owners can read every proposition; other assignees must be members.
+// Repeated assignments remain idempotent.
+func assignCard(ctx context.Context, tx *sql.Tx, card, proposition, user int64) error {
+	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO card_assignees (card_id, user_id)
+		SELECT ?, id FROM users WHERE id = ? AND (role = 'owner' OR EXISTS (
+			SELECT 1 FROM proposition_members
+			WHERE proposition_id = ? AND user_id = users.id))`, card, user, proposition)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		// Either the user cannot read the proposition or they are already on the
+		// card; only the first is worth refusing.
+		var readable int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users
+			WHERE id = ? AND (role = 'owner' OR EXISTS (
+				SELECT 1 FROM proposition_members
+				WHERE proposition_id = ? AND user_id = users.id))`,
+			user, proposition).Scan(&readable); err != nil {
 			return err
 		}
-		if n, err := res.RowsAffected(); err == nil && n == 0 {
-			// Either the user does not exist or they are already on the card;
-			// only the first is worth refusing.
-			var exists int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE id = ?`, user).Scan(&exists); err != nil {
-				return err
-			}
-			if exists == 0 {
-				return core.ErrNotFound
-			}
+		if readable == 0 {
+			return core.ErrNotFound
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 func (s *Service) UnassignCard(ctx context.Context, a core.Actor, id, user int64) (core.Event, error) {
@@ -898,54 +911,5 @@ func (s *Service) DeleteComment(ctx context.Context, a core.Actor, id int64) (co
 			return core.Change{}, err
 		}
 		return core.Change{Entity: "comment", EntityID: id, Action: "delete", Before: was}, nil
-	})
-}
-
-// Document settings.
-
-// DocumentSettings are the three switches the per proposition settings page
-// keeps for the document under the board. They live in the settings table
-// rather than a column because nothing else reads them yet and the document
-// itself lands in the next step.
-type DocumentSettings struct {
-	OpenEditing bool `json:"open_editing"`
-	History     bool `json:"history"`
-	Publish     bool `json:"publish"`
-}
-
-func documentKey(proposition int64) string {
-	return "proposition." + strconv.FormatInt(proposition, 10) + ".document"
-}
-
-// GetDocumentSettings reads them, or the defaults the mockup draws checked.
-func GetDocumentSettings(ctx context.Context, q store.Querier, proposition int64) (DocumentSettings, error) {
-	d := DocumentSettings{OpenEditing: true, History: true}
-	row, err := store.GetSetting(ctx, q, documentKey(proposition))
-	if errors.Is(err, store.ErrNotFound) {
-		return d, nil
-	}
-	if err != nil {
-		return d, err
-	}
-	return d, json.Unmarshal([]byte(row.ValueJSON), &d)
-}
-
-func (s *Service) SetDocumentSettings(ctx context.Context, a core.Actor, proposition int64, d DocumentSettings) (core.Event, error) {
-	return s.do(ctx, a, proposition, auth.CanEdit, "document_settings", "edit", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
-		was, err := GetDocumentSettings(ctx, tx, proposition)
-		if err != nil {
-			return core.Change{}, err
-		}
-		value, err := json.Marshal(d)
-		if err != nil {
-			return core.Change{}, err
-		}
-		if err := store.PutSetting(ctx, tx, documentKey(proposition), string(value), false, a.ID); err != nil {
-			return core.Change{}, err
-		}
-		// The entity is its own kind, not "proposition", so that undo does not
-		// try to write these three switches into columns of that name.
-		return core.Change{Entity: "document_settings", EntityID: proposition,
-			Action: "edit", Before: was, After: d}, nil
 	})
 }

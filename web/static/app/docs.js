@@ -11,10 +11,12 @@ import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
 import { send, newKey, where, onCarets, onAnswer, caughtUp, catchUp, count, chosen, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
-import { retext, unqueue, file } from './offline.js';
+import { retext, unqueue, file, signedOut } from './offline.js';
+import { isJSON, sessionEnded } from './response.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
 import { retainReplay } from './source.js';
+import { diff } from './diff.js';
 import * as undo from './undo.js';
 import { movable, carrying } from './drag.js';
 
@@ -2493,7 +2495,11 @@ async function openHistory(doc) {
   let revisions = [];
   try {
     const res = await fetch(`/documents/${doc.id}/revisions`, { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error('That history could not be read.');
+    if (sessionEnded(res, location.href)) {
+      signedOut();
+      return;
+    }
+    if (!res.ok || !isJSON(res)) throw new Error('That history could not be read.');
     revisions = (await res.json()).revisions || [];
   } catch (err) {
     say(err.message);
@@ -2549,30 +2555,4 @@ function showDiff(pane, older, newer) {
     else pane.append(el('div', { class: mark === '+' ? 'in' : 'out', text: mark + ' ' + line }));
   }
   if (!pane.firstChild) pane.append(el('div', { class: 'same', text: 'Nothing changed.' }));
-}
-
-// diff is a line level longest common subsequence, which is all a document of
-// this size needs to show what a version changed.
-//
-// ponytail: it is O(n²) in lines and builds the whole table, which is nothing
-// at a few hundred lines and would want the linear space form at a few
-// thousand.
-function diff(a, b) {
-  const lcs = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
-  }
-  const out = [];
-  let i = 0;
-  let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) { out.push([' ', a[i]]); i++; j++; }
-    else if (lcs[i + 1][j] >= lcs[i][j + 1]) { out.push(['-', a[i]]); i++; }
-    else { out.push(['+', b[j]]); j++; }
-  }
-  while (i < a.length) out.push(['-', a[i++]]);
-  while (j < b.length) out.push(['+', b[j++]]);
-  return out;
 }

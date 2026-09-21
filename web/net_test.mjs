@@ -5,8 +5,10 @@ globalThis.requestAnimationFrame = () => 1;
 globalThis.BroadcastChannel = undefined;
 globalThis.navigator ||= {};
 Object.defineProperty(globalThis.navigator, 'onLine', { value: true, configurable: true });
+globalThis.location = { href: 'https://example.com/p/1', origin: 'https://example.com' };
 const { state, boot, apply } = await import('./static/app/state.js');
 const { catchUp, fallbackOnce, send } = await import('./static/app/net.js');
+const { sessionEnded } = await import('./static/app/response.js');
 boot({ me: 1, open: 1, propositions: [{ id: 1, position: 'V' }], board: { seq: 5, cards: [] } });
 const event = (seq, id = seq, title = String(seq)) => ({ seq, proposition: 1, entity: 'card', entity_id: id, action: 'create', after: { id, title } });
 const cursors = [];
@@ -68,5 +70,17 @@ globalThis.fetch = async (url, options = {}) => {
 assert.equal(await fallbackOnce(), true, 'an authenticated read enables fallback in an empty workspace');
 await send('proposition.create', { title: 'First proposition' });
 assert.equal(state.props[0].title, 'First proposition');
+
+const login = {
+  ok: true, status: 200, url: 'https://example.com/login',
+  headers: { get: () => 'text/html; charset=utf-8' },
+};
+assert.equal(sessionEnded(login, location.href), true, 'only the same-origin login page means the session ended');
+assert.equal(sessionEnded({ ...login, url: 'https://captive.example/login' }, location.href), false,
+  'an unrelated login page does not discard cached work');
+boot({ me: 1, open: 1, propositions: [{ id: 1, position: 'V' }], board: { seq: 0, cards: [] } });
+globalThis.fetch = async () => login;
+assert.equal(await catchUp(), false, 'an expired poll does not become a live fallback');
+assert.equal(location.href, '/login', 'an expired poll clears the device state and returns to sign in');
 
 console.log('stream pagination and concurrent catch-up cases pass');

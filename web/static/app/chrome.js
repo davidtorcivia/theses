@@ -55,7 +55,24 @@ export function start(renderRest) {
   register();
 
   $('#top .search').addEventListener('click', openPalette);
-  $('#railtoggle').addEventListener('click', () => document.body.classList.toggle('rail-open'));
+  const rail = $('#rail');
+  const railToggle = $('#railtoggle');
+  const narrow = matchMedia('(max-width: 900px)');
+  const syncRail = () => {
+    const open = narrow.matches && document.body.classList.contains('rail-open');
+    if (narrow.matches && !open && rail.contains(document.activeElement)) railToggle.focus();
+    rail.inert = narrow.matches && !open;
+    railToggle.setAttribute('aria-expanded', String(open));
+  };
+  railToggle.addEventListener('click', () => {
+    document.body.classList.toggle('rail-open');
+    syncRail();
+  });
+  narrow.addEventListener('change', () => {
+    if (!narrow.matches) document.body.classList.remove('rail-open');
+    syncRail();
+  });
+  syncRail();
 
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -66,6 +83,12 @@ export function start(renderRest) {
     if (e.key !== 'Escape') return;
     if ($('#picker')) { closePicker(); return; }
     if (!$('#palette').hidden) { closePalette(); return; }
+    if (document.body.classList.contains('rail-open')) {
+      document.body.classList.remove('rail-open');
+      syncRail();
+      railToggle.focus();
+      return;
+    }
     if (state.openCard || state.openLink || state.openFile || state.panel) closeDrawer();
   });
 

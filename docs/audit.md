@@ -1,5 +1,8 @@
 # Application audit, 2026-09-20
 
+See the [follow-up audit](audit-followup.md) for additional fixes and rendered
+desktop/mobile verification.
+
 The audit covered the Go services, SQLite schema and migrations, HTTP and MCP
 surfaces, browser state and offline recovery, uploads, notifications, document
 mirrors, authentication, and keyboard interaction. The fixes retain the existing

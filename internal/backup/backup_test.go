@@ -431,6 +431,40 @@ func TestRestoreRefusesATamperedArchiveBeforeAnythingChanges(t *testing.T) {
 	}
 }
 
+func TestRestoreValidatesTheDatabaseBeforeReplacingLiveData(t *testing.T) {
+	for _, tc := range []struct {
+		name, damage, repair, want string
+	}{
+		{"no owner", `UPDATE users SET role = 'editor'`, `UPDATE users SET role = 'owner'`, "no owner"},
+		{"broken reference", `PRAGMA foreign_keys = OFF;
+			INSERT INTO proposition_members (proposition_id, user_id) VALUES (999, 999);
+			PRAGMA foreign_keys = ON`, `DELETE FROM proposition_members`, "foreign key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFake(t)
+			f.save("workspace.name", "before")
+			if _, err := f.db.ExecContext(ctx, tc.damage); err != nil {
+				t.Fatal(err)
+			}
+			m, err := f.b.Run(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.db.ExecContext(ctx, tc.repair); err != nil {
+				t.Fatal(err)
+			}
+			f.save("workspace.name", "after")
+			if err := f.b.Restore(ctx, m.Name, 0); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("restore invalid database: %v", err)
+			}
+			if got := f.workspaceName(); got != `"after"` || f.b.Frozen() {
+				t.Fatalf("live data changed or writes remained frozen: %s", got)
+			}
+		})
+	}
+}
+
 func TestRestoreRefusesAnArchiveThatDoesNotMatchItsManifest(t *testing.T) {
 	ctx := context.Background()
 	f := newFake(t)

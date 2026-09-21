@@ -8,6 +8,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/settings"
+	"github.com/davidtorcivia/theses/internal/store"
 )
 
 // tickActor is who the daily pass is. It is not a person, so nobody is left out
@@ -37,20 +38,39 @@ func (s *Service) Tick(ctx context.Context) error {
 	if settings.Get[int](s.set, "notify.last_tick") >= today {
 		return nil
 	}
-	// Recorded before the work rather than after it, so a failure part way
-	// through does not put the whole pass through again on the next poll.
-	if err := s.set.SetAs(ctx, "notify.last_tick", []string{strconv.Itoa(today)}, settings.System()); err != nil {
-		return err
-	}
-
 	matches, err := s.dated(ctx, now, loc)
 	if err != nil {
 		return err
 	}
-	if len(matches) == 0 {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var last int
+	if err := tx.QueryRowContext(ctx, `SELECT coalesce(
+		(SELECT CAST(value_json AS INTEGER) FROM settings WHERE key = 'notify.last_tick'), 0)`).Scan(&last); err != nil {
+		return err
+	}
+	// The durable marker and all notices commit together, including concurrent ticks.
+	if last >= today {
 		return nil
 	}
-	return s.queue(ctx, tickActor, matches)
+	if err := s.queueTx(ctx, tx, tickActor, matches); err != nil {
+		return err
+	}
+	if err := store.PutSetting(ctx, tx, "notify.last_tick", strconv.Itoa(today), false, 0); err != nil {
+		return err
+	}
+	if err := store.InsertActivity(ctx, tx, "system", "", "", "setting", "notify.last_tick", "set",
+		strconv.Itoa(last), strconv.Itoa(today)); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.Nudge()
+	return s.set.Reload(ctx)
 }
 
 // day is a date as the number the last run is remembered by.

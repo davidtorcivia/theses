@@ -430,53 +430,38 @@ func (s *Service) Import(ctx context.Context, path string) error {
 		return nil
 	}
 
-	// The blocks are read before the revision is, which is the safer of the two
-	// orders: a block inserted in the browser between the two reads is missing
-	// from this snapshot but has already moved the revision, so the file reads
-	// as stale and the block stays, where the other order could find it missing
-	// from a file whose revision still matched and delete it.
-	blocks, err := Blocks(ctx, s.DB, was.document)
-	if err != nil {
-		return err
-	}
-	document, err := GetDocument(ctx, s.DB, file.Document)
-	if err != nil {
-		return err
-	}
-	items := file.items()
-	if sameAs(items, blocks) {
-		// Whitespace, a reordered comment, an editor's newline at the end.
-		// Nothing is applied, but the file is still rewritten, because that is
-		// what puts the hash this process remembers back in step with what is
-		// on disk. The markers the file already carries go back on it: after a
-		// restart the file is the only thing that remembers them, and dropping
-		// them here would take away the one notice the person at the terminal
-		// has that a block of theirs never went in.
-		return s.Mirror(ctx, document.ID, markedIn(file), true)
-	}
-
-	// A bad hand edit is one restore away.
-	if _, err := s.CreateRevision(ctx, fileActor, document.ID, ReasonPreImport); err != nil {
-		return err
-	}
-
-	// A block the file no longer has was either deleted at the terminal or
-	// added in the browser after the file was written. Those look the same from
-	// here, so the database only gives one up when the file was written against
-	// the revision the database still holds; otherwise the block stays and the
-	// file comes back with a marker on it. Deleting it again against the fresh
-	// file goes through.
-	fresh := file.Revision == document.Revision
-	conflicted, _, _, err := s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
-		if fresh {
-			return dropMissing
+	var conflicted map[int64]bool
+	err = s.Together(ctx, func(ctx context.Context) error {
+		blocks, err := Blocks(ctx, s.DB, was.document)
+		if err != nil {
+			return err
 		}
-		return markMissing
+		document, err := GetDocument(ctx, s.DB, file.Document)
+		if err != nil {
+			return err
+		}
+		items := file.items()
+		if sameAs(items, blocks) {
+			conflicted = markedIn(file)
+			return nil
+		}
+		if _, err := s.CreateRevision(ctx, fileActor, document.ID, ReasonPreImport); err != nil {
+			return err
+		}
+		// Missing blocks are deletions only when the file saw this exact revision.
+		fresh := file.Revision == document.Revision
+		conflicted, _, _, err = s.applyItems(ctx, fileActor, document.ID, items, blocks, func(Block) missing {
+			if fresh {
+				return dropMissing
+			}
+			return markMissing
+		})
+		return err
 	})
 	if err != nil {
 		return err
 	}
-	return s.Mirror(ctx, document.ID, conflicted, true)
+	return s.Mirror(ctx, file.Document, conflicted, true)
 }
 
 // An item is one paragraph as a save says the document should read: the block
@@ -520,10 +505,8 @@ const (
 // list and in what they make of a block the list does not name, which is what
 // gone answers.
 //
-// blocks is the document as it stands, read by the caller, and live is built
-// from it. A save that is refused partway through leaves what it has already
-// written, which for an import is a file and for a source save is a
-// transaction that rolls the lot back.
+// Both callers hold one transaction over the snapshot and every command, so a
+// refusal rolls the entire save back.
 //
 // wrote says whether any command ran, which is how a source save tells a list
 // that changed nothing from one that changed something: a set whose text the
