@@ -78,6 +78,13 @@ try {
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.goBack(); await page.locator('#drawer h2').waitFor();
   await page.goForward(); await page.locator('#drawer').waitFor({ state: 'hidden' });
+  await linked.click(); await page.locator('#activitytab').click();
+  await page.waitForFunction(() => location.hash === '#activity' && document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.locator('#drawer').waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => document.activeElement?.id === 'activitytab');
+  await page.reload(); await page.locator('#board').waitFor();
+  await page.locator('#drawer').waitFor({ state: 'hidden' });
   await page.locator('#filter-view').selectOption('list');
   await page.locator('#filter-query').fill('Plan');
   await page.waitForTimeout(300); await page.reload();
@@ -139,6 +146,8 @@ try {
   const anonymous = await browser.newContext();
   const denied = await anonymous.newPage(); await denied.goto(fileURL);
   assert.match(denied.url(), /\/login/); await anonymous.close();
+  await page.locator('#activitytab').click();
+  await page.waitForFunction(() => location.hash === '#activity' && document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await visit('/show'); await page.locator('#board').waitFor();
   await page.evaluate(() => navigator.serviceWorker.ready);
