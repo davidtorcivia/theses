@@ -20,9 +20,11 @@ import (
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
+	"github.com/davidtorcivia/theses/internal/workflow"
 )
 
 type API struct {
+	Workflow    *workflow.Service
 	Diagnostics func(context.Context) (map[string]any, error)
 	db          *store.DB
 	auth        *auth.Auth

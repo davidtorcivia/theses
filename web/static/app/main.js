@@ -1,3 +1,4 @@
+import { openEvidence } from './workflow.js';
 // The board page.
 
 import { state, emit, material, unresolvedCard } from './state.js';
@@ -67,6 +68,7 @@ async function routeTarget() {
   if (location.hash === '#activity') { openPanel(); return; }
   if (!target) { state.openCard = state.openFile = state.openLink = null; emit(); return; }
   const { kind, id } = target;
+ if(kind==='evidence'){state.tab='board';emit();await openEvidence(id);return;}
   if (kind === 'file' || kind === 'link') {
     state.tab = kind === 'file' ? 'files' : 'links';
     try { await material(); } catch { say('Could not load this item. Retry when connected.'); return; }

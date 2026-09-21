@@ -15,6 +15,7 @@ import (
 const MinKeyLen = 32
 
 type Config struct {
+	WhisperURL string
 	Bind       string
 	DataDir    string
 	BaseURL    string
@@ -38,10 +39,17 @@ func Load(lookup func(string) (string, bool)) (*Config, error) {
 	}
 
 	c := &Config{
-		Bind:    get("THESES_BIND", ":8080"),
-		DataDir: get("THESES_DATA_DIR", "data"),
+		Bind:       get("THESES_BIND", ":8080"),
+		WhisperURL: get("THESES_WHISPER_URL", ""),
+		DataDir:    get("THESES_DATA_DIR", "data"),
 	}
 
+	if c.WhisperURL != "" {
+		u, err := url.Parse(c.WhisperURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+			return nil, fmt.Errorf("THESES_WHISPER_URL must be an http or https inference endpoint without credentials or a fragment")
+		}
+	}
 	base := get("THESES_BASE_URL", "")
 	if base == "" {
 		return nil, fmt.Errorf("THESES_BASE_URL is required: the absolute public URL of this install, for example https://theses.example.com")

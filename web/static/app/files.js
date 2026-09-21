@@ -1,3 +1,5 @@
+import { transcriptSection } from './transcripts.js';
+import { reviewTarget } from './workflow.js';
 import { editFileNotes, recordingComments } from './filenotes.js';
 import { targetURL, rememberTarget, copyTarget } from './anchors.js';
 // The files pane and the file drawer: drop a file and it goes straight to the
@@ -424,7 +426,7 @@ export function renderFileDrawer(drawer) {
   drawer.append(props(file));
   drawer.append(el('h4', { text: 'Notes and tags' }), el('p', { text: file.note_md || 'No notes yet.' }), el('p', { class: 'mono', text: file.tags || 'No tags' }));
   if (canEdit()) drawer.append(el('button', { type: 'button', class: 'lnk', text: 'Edit notes and tags', onclick: () => editFileNotes(file) }));
-  if (file.folder === 'Recordings' && file.state === 'ready') drawer.append(recordingComments(file));
+  if (file.folder === 'Recordings' && file.state === 'ready') drawer.append(el('button',{class:'lnk',type:'button',text:'Review this audio version',onclick:()=>reviewTarget('file',file.id)}),recordingComments(file),transcriptSection(file));
 
   drawer.append(el('h4', { text: 'Versions' }));
   drawer.append(versions(file));

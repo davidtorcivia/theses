@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { parseTarget, targetURL } from './static/app/anchors.js';
-for (const kind of ['card','file','link','document','block','comment']) {
+for (const kind of ['card','file','link','document','block','comment','evidence']) {
  assert.deepEqual(parseTarget('#'+kind+'-42'), {kind,id:42});
  assert.equal(targetURL(7,kind,42), '/p/7#'+kind+'-42');
 }

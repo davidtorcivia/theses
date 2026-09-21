@@ -1,3 +1,4 @@
+import { recordingView, reviewTarget } from './workflow.js';
 import { copyTarget } from './anchors.js';
 // The document under the board: the tabs, the blocks, the source view, the
 // history with its diff, and the one choice a conflict asks for.
@@ -427,6 +428,8 @@ export function renderDocument() {
     // the space between them and put History in the middle of the row.
     const links = el('div', { class: 'dlinks' },
       copyTarget(state.open, 'document', doc.id),
+ el('button',{class:'lnk',type:'button',text:'Recording view',onclick:()=>recordingView(doc)}),
+ el('button',{class:'lnk',type:'button',text:'Review',onclick:()=>reviewTarget('document',doc.id)}),
       el('button', {
         class: 'lnk', type: 'button', id: 'dhistory', text: 'History',
         onclick: () => openHistory(doc),

@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/store"
 )
 
 func (s *Service) ProductionTemplate(ctx context.Context, a core.Actor, proposition int64) (core.Event, error) {
@@ -71,4 +73,74 @@ func (s *Service) ProductionTemplate(ctx context.Context, a core.Actor, proposit
 		return existingEvent, nil
 	}
 	return event, err
+}
+
+type ProductionPlan struct {
+	Proposition int64  `json:"proposition_id"`
+	Owner       *int64 `json:"owner_id"`
+	NextAction  string `json:"next_action"`
+	Blocker     string `json:"blocker"`
+	RecordDate  string `json:"record_date"`
+	EditDate    string `json:"edit_date"`
+	Version     int64  `json:"version"`
+}
+
+func GetProductionPlan(ctx context.Context, q store.Querier, id int64) (ProductionPlan, error) {
+	p := ProductionPlan{Proposition: id}
+	err := q.QueryRowContext(ctx, `SELECT owner_id,next_action,blocker,record_date,edit_date,version FROM production_plans WHERE proposition_id=?`, id).Scan(&p.Owner, &p.NextAction, &p.Blocker, &p.RecordDate, &p.EditDate, &p.Version)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return p, err
+}
+
+func (s *Service) SaveProductionPlan(ctx context.Context, a core.Actor, id int64, in ProductionPlan) (core.Event, error) {
+	return s.do(ctx, a, id, auth.CanEdit, "production_plan", "edit", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+		p, err := GetProposition(ctx, tx, id)
+		if err != nil {
+			return core.Change{}, err
+		}
+		if p.Kind == "show" {
+			return core.Change{}, ErrShow
+		}
+		before, err := GetProductionPlan(ctx, tx, id)
+		if err != nil {
+			return core.Change{}, err
+		}
+		if before.Version != in.Version {
+			return core.Change{}, &core.ConflictError{Entity: "production_plan", EntityID: id, Field: "version", Version: before.Version, Current: "The production plan changed. Reload before saving."}
+		}
+		in.NextAction, err = Field(in.NextAction, MaxLine)
+		if err != nil {
+			return core.Change{}, err
+		}
+		in.Blocker, err = Field(in.Blocker, MaxLine)
+		if err != nil {
+			return core.Change{}, err
+		}
+		for _, d := range []string{in.RecordDate, in.EditDate} {
+			if d != "" {
+				if _, err := time.Parse("2006-01-02", d); err != nil {
+					return core.Change{}, ErrDueDate
+				}
+			}
+		}
+		if in.Owner != nil {
+			u, err := store.UserByID(ctx, tx, *in.Owner)
+			if err != nil {
+				return core.Change{}, core.ErrNotFound
+			}
+			ok, err := Readable(ctx, tx, u, id)
+			if err != nil {
+				return core.Change{}, err
+			}
+			if !ok {
+				return core.Change{}, core.ErrNotFound
+			}
+		}
+		in.Proposition = id
+		in.Version++
+		_, err = tx.ExecContext(ctx, `INSERT INTO production_plans(proposition_id,owner_id,next_action,blocker,record_date,edit_date,version) VALUES(?,?,?,?,?,?,?) ON CONFLICT(proposition_id) DO UPDATE SET owner_id=excluded.owner_id,next_action=excluded.next_action,blocker=excluded.blocker,record_date=excluded.record_date,edit_date=excluded.edit_date,version=excluded.version`, id, in.Owner, in.NextAction, in.Blocker, in.RecordDate, in.EditDate, in.Version)
+		return core.Change{Entity: "production_plan", EntityID: id, Action: "edit", Before: before, After: in}, err
+	})
 }

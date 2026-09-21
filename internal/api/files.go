@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -61,6 +62,9 @@ func SessionHandler(a *API, svc *files.Service, user func(*http.Request) *store.
 
 func mount(mux *http.ServeMux, prefix string, a *API, svc *files.Service, wrap wrapper) {
 	f := &fileAPI{API: a, svc: svc}
+	a.workflowRoutes(mux, prefix, wrap)
+	a.transcriptRoutes(mux, prefix, wrap)
+	mux.HandleFunc("PUT "+prefix+"/propositions/{id}/production-plan", wrap(auth.ScopeWrite, f.saveProductionPlan))
 	mux.HandleFunc("GET "+prefix+"/diagnostics", wrap(auth.ScopeAdmin, f.diagnostics))
 	mux.HandleFunc("GET "+prefix+"/storage/orphans", wrap(auth.ScopeAdmin, f.orphans))
 	mux.HandleFunc("POST "+prefix+"/storage/cleanup", wrap(auth.ScopeAdmin, f.cleanup))
@@ -350,4 +354,17 @@ func (f *fileAPI) cleanup(w http.ResponseWriter, r *http.Request, a core.Actor) 
 		return
 	}
 	f.writeJSON(w, http.StatusOK, map[string]any{"event": e})
+}
+
+func (f *fileAPI) saveProductionPlan(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	var in board.ProductionPlan
+	if !f.read(w, r, &in) {
+		return
+	}
+	e, err := f.Board.SaveProductionPlan(r.Context(), a, path(r, "id"), in)
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"plan": e.After, "event": e})
 }

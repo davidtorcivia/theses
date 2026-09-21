@@ -372,36 +372,24 @@ func TestPublishRefusals(t *testing.T) {
 	})
 }
 
-// The section is drawn with no Transistor connected, saying why and with
-// nothing in it that can be pressed. A section that vanished left somebody
-// looking for a feature the page never mentions.
-func TestPublishSectionSaysWhyWhenTransistorIsNotConnected(t *testing.T) {
+func TestPublishSectionUsesPinecastWhenTransistorIsNotConnected(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	at := strconv.FormatInt(h.proposition("Tidal Power"), 10)
 	_, page := h.get("/p/" + at + "/settings")
-	for _, want := range []string{"Publish</h3>", "Transistor is not connected",
-		`<select name="document" disabled>`, `value="publish" disabled>`} {
+	for _, want := range []string{"Publish on Pinecast", "https://pinecast.com/login", "does not automatically publish"} {
 		if !strings.Contains(page, want) {
-			t.Fatalf("the Publish section has no %q", want)
+			t.Fatalf("missing %q", want)
 		}
 	}
-	// Neither button works, and neither is a fault of the server: both are
-	// drawn refused and both are refused again if a post arrives anyway.
+	if strings.Contains(page, `name="document"`) || strings.Contains(page, `value="publish"`) {
+		t.Fatal("inactive host controls are exposed")
+	}
 	for _, do := range []string{"publish", "save"} {
-		res, body := h.post("/p/"+at+"/publish", url.Values{
-			"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {do}})
+		res, _ := h.post("/p/"+at+"/publish", url.Values{"csrf": {h.csrf("/p/" + at + "/settings")}, "do": {do}})
 		if res.StatusCode != http.StatusUnprocessableEntity {
-			t.Fatalf("%s with nothing connected gave %d", do, res.StatusCode)
+			t.Fatalf("inactive host returned %d", res.StatusCode)
 		}
-		if !strings.Contains(body, "Transistor is not connected") {
-			t.Fatalf("%s did not say why: %s", do, firstNotice(body))
-		}
-	}
-	// The two selects have nothing to offer, and an empty select box says
-	// nothing at all to the person looking at it.
-	if strings.Count(page, "Nothing to choose yet") != 2 {
-		t.Error("the empty selects do not say they are empty")
 	}
 }
 

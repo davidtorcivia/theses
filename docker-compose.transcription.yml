@@ -1,0 +1,29 @@
+# Optional local transcription. Build deploy/whisper.Dockerfile first.
+services:
+  theses:
+    tmpfs:
+      - /tmp:uid=65532,gid=65532,mode=700,size=1342177280
+    environment:
+      THESES_WHISPER_URL: http://theses-whisper:8910/inference
+  theses-whisper:
+    image: ${THESES_WHISPER_IMAGE:-theses-whisper:local}
+    restart: unless-stopped
+    command: ["-m", "/models/ggml-large-v3-turbo-q5_0.bin", "--host", "0.0.0.0", "--port", "8910", "-l", "en", "-t", "4", "--convert"]
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${THESES_RENDER_GID:?set the render device group id}"
+    volumes:
+      - ${THESES_WHISPER_MODELS:?set the existing Whisper models directory}:/models:ro
+    tmpfs:
+      - /podcast:uid=65532,gid=65532,mode=700,size=4294967296
+      - /tmp:uid=65532,gid=65532,mode=700,size=1073741824
+    environment:
+      SYCL_CACHE_PERSISTENT: "0"
+    mem_limit: 8g
+    cpus: 4
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

@@ -55,6 +55,14 @@ func TestBrowserWorkflow(t *testing.T) {
 	if _, err := h.db.ExecContext(ctx, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<500) INSERT INTO cards(proposition_id,column_id,position,title,created_at) SELECT ?,?,printf('%06d',x),'Research task '||x,1 FROM n`, large, largeCols[0].ID); err != nil {
 		t.Fatal(err)
 	}
+	recording, err := h.db.ExecContext(ctx, `INSERT INTO files(proposition_id,name,folder,kind,size,object_key,state,duration_ms,created_at) VALUES(?,'Studio recording.wav','Recordings','audio',4,'browser-recording','ready',10000,unixepoch())`, proposition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordingID, err := recording.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var workerRevision atomic.Uint64
 	browserServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/__smoke/upgrade" {
@@ -76,7 +84,7 @@ func TestBrowserWorkflow(t *testing.T) {
 	for _, cookie := range h.client.Jar.Cookies(origin) {
 		cookies = append(cookies, map[string]any{"name": cookie.Name, "value": cookie.Value, "url": browserServer.URL})
 	}
-	fixture := map[string]any{"url": browserServer.URL, "cookies": cookies, "proposition": proposition, "large": large, "card": card.EntityID, "owner": owner.ID}
+	fixture := map[string]any{"url": browserServer.URL, "cookies": cookies, "proposition": proposition, "large": large, "card": card.EntityID, "owner": owner.ID, "recording": recordingID}
 	raw, err := json.Marshal(fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +95,11 @@ func TestBrowserWorkflow(t *testing.T) {
 	}
 	run, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(run, "node", "../../web/browser_smoke.mjs", path)
+	script := os.Getenv("THESES_BROWSER_SCRIPT")
+	if script == "" {
+		script = "../../web/browser_smoke.mjs"
+	}
+	cmd := exec.CommandContext(run, "node", script, path)
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
 	t.Log(string(output))

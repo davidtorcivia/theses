@@ -1,3 +1,4 @@
+import { researchSection } from './workflow.js';
 import { productionCalendar, productionReadiness } from './production.js';
 import { boardControls, saveFilters } from './boardcontrols.js';
 import { connectedSection } from './connected.js';
@@ -50,7 +51,7 @@ export function renderWork() {
     return;
   }
   document.title = (p.kind === 'show' ? p.title : `${num(p.number)} ${p.title}`) + ' · THESES';
-  children(work, [head(p), connectedSection('My work', '/my-work'), p.kind === 'show' ? productionCalendar() : productionReadiness(p), pane(p), connectedSection('Referenced here', '/backlinks?proposition=' + p.id)]);
+  children(work, [head(p), connectedSection('My work', '/my-work'), p.kind === 'show' ? productionCalendar() : productionReadiness(p), pane(p), researchSection(p), connectedSection('Referenced here', '/backlinks?proposition=' + p.id)]);
   if (back) {
     const node = $(back);
     if (node) node.focus();

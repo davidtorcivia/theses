@@ -102,7 +102,7 @@ function remote(hit) {
     closePalette();
     const path = pathFor(proposition, false, hit.proposition_id || hit.id);
     if (hit.proposition_id === state.open && hit.kind !== 'proposition' && $('#drawer')) {
-      location.hash = hit.kind + '-' + hit.id;
+      location.hash = hit.url ? new URL(hit.url, location.origin).hash : hit.kind + '-' + hit.id;
     } else location.href = hit.url || (hit.kind === 'proposition' ? path : path + '#' + hit.kind + '-' + hit.id);
   };
   return row;

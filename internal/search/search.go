@@ -103,6 +103,8 @@ var searches = []struct {
 		SELECT f.id, f.proposition_id, f.name, snippet(files_fts, -1, ` + snippetArgs + `)
 		FROM files_fts JOIN files f ON f.id = files_fts.rowid
 		WHERE files_fts MATCH ? AND f.state = 'ready' {member} ORDER BY files_fts.rank LIMIT ?`},
+	{kind: "transcript", prop: "f.proposition_id", query: `SELECT f.id,f.proposition_id,f.name,snippet(transcripts_fts,-1,` + snippetArgs + `) FROM transcripts_fts JOIN files f ON f.id=transcripts_fts.rowid WHERE transcripts_fts MATCH ? AND f.state='ready' {member} ORDER BY transcripts_fts.rank LIMIT ?`},
+	{kind: "evidence", prop: "e.proposition_id", query: `SELECT e.id,e.proposition_id,e.title,snippet(evidence_fts,-1,` + snippetArgs + `) FROM evidence_fts JOIN evidence e ON e.id=evidence_fts.rowid WHERE evidence_fts MATCH ? {member} ORDER BY evidence_fts.rank LIMIT ?`},
 	{kind: KindComment, prop: "c.proposition_id", query: `
 		SELECT m.id, c.proposition_id, c.title, snippet(comments_fts, -1, ` + snippetArgs + `)
 		FROM comments_fts JOIN comments m ON m.id = comments_fts.rowid
@@ -168,7 +170,11 @@ func run(ctx context.Context, q store.Querier, kind, query string, args ...any) 
 		if h.PropositionID > 0 {
 			h.URL = fmt.Sprintf("/p/%d", h.PropositionID)
 			if kind != KindProposition {
-				h.URL += fmt.Sprintf("#%s-%d", kind, h.ID)
+				anchor := kind
+				if kind == "transcript" {
+					anchor = "file"
+				}
+				h.URL += fmt.Sprintf("#%s-%d", anchor, h.ID)
 			}
 		}
 		hits = append(hits, h)

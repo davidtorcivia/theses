@@ -80,6 +80,7 @@
 
     <form class="form" method="post" action="{{$path}}/publish" id="publish">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
+      {{if .Publish.On}}
       <section class="fs">
         <div class="fsh"><h3>Publish</h3><p>Send this proposition to Transistor as an episode: the title and blurb above, the show notes rendered from a document, and one recording as the audio. Publishing again updates the same episode rather than making another.</p></div>
         <div class="fsb">
@@ -98,6 +99,15 @@
           </div>{{end}}
         </div>
       </section>
+      {{else}}
+      <section class="fs">
+        <div class="fsh"><h3>Publish on Pinecast</h3><p>Prepare the episode here, then upload the final audio and show notes in your Pinecast dashboard.</p></div>
+        <div class="fsb"><p>Download the approved recording from Files. Export references from Research &amp; references and the transcript from the recording drawer.</p>
+          <a class="act" href="https://pinecast.com/login" target="_blank" rel="noopener noreferrer">Open Pinecast</a>
+          <p class="dim">Publishing and scheduling are completed in Pinecast. This workspace does not automatically publish an episode.</p>
+        </div>
+      </section>
+      {{end}}
     </form>
 
     <section class="fs last">
