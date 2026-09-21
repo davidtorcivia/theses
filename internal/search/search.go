@@ -26,6 +26,7 @@ const (
 // A Hit is one row. Title is what to show; Snippet is the matching text around
 // the query, plain text with an ellipsis where it was cut.
 type Hit struct {
+	URL           string `json:"url,omitempty"`
 	Kind          string `json:"kind"`
 	ID            int64  `json:"id"`
 	Title         string `json:"title"`
@@ -163,6 +164,12 @@ func run(ctx context.Context, q store.Querier, kind, query string, args ...any) 
 		h := Hit{Kind: kind}
 		if err := rows.Scan(&h.ID, &h.PropositionID, &h.Title, &h.Snippet); err != nil {
 			return nil, err
+		}
+		if h.PropositionID > 0 {
+			h.URL = fmt.Sprintf("/p/%d", h.PropositionID)
+			if kind != KindProposition {
+				h.URL += fmt.Sprintf("#%s-%d", kind, h.ID)
+			}
 		}
 		hits = append(hits, h)
 	}

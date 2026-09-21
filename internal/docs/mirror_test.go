@@ -826,6 +826,10 @@ func TestDeletingAPropositionRemovesItsMirrorsBeforeADocumentIDIsReused(t *testi
 	if replacement.EntityID == f.prop {
 		t.Fatalf("replacement reused proposition id %d", f.prop)
 	}
+	// Simulate a restored legacy database that can reuse document identities.
+	if _, err := f.db.ExecContext(ctx, `UPDATE sqlite_sequence SET seq=? WHERE name='documents'`, f.doc-1); err != nil {
+		t.Fatal(err)
+	}
 	document, err := f.CreateDocument(ctx, f.who["owner"], replacement.EntityID, "Research")
 	if err != nil {
 		t.Fatal(err)
@@ -919,6 +923,10 @@ func TestDroppedDeleteDoesNotAttachAHandEditToAnIdenticalPathReplacement(t *test
 	}
 	replacement, err := f.board.CreateProposition(ctx, f.who["owner"], "Tidal Power")
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a restored legacy database that can reuse document identities.
+	if _, err := f.db.ExecContext(ctx, `UPDATE sqlite_sequence SET seq=? WHERE name='documents'`, f.doc-1); err != nil {
 		t.Fatal(err)
 	}
 	document, err := f.CreateDocument(ctx, f.who["owner"], replacement.EntityID, "Research")

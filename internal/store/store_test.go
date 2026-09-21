@@ -473,3 +473,125 @@ func TestOrderingKeysStayText(t *testing.T) {
 		t.Errorf("ordered %v, want %v", got, want)
 	}
 }
+
+func TestPermanentLinkIDsAreNeverReused(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "links.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	setup := `INSERT INTO propositions(id,number,title,status,position,created_at) VALUES(1,1,'P','Research','a',1);
+ INSERT INTO columns(id,proposition_id,name,position) VALUES(1,1,'Inbox','a');
+ INSERT INTO documents(id,proposition_id,name,slug,position,created_at) VALUES(1,1,'Notes','notes',1,1);`
+	if _, err := db.ExecContext(ctx, setup); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ table, insert string }{
+		{"cards", `INSERT INTO cards(proposition_id,column_id,position,title,created_at) VALUES(1,1,'a','searchable',1)`},
+		{"blocks", `INSERT INTO blocks(document_id,position,text,updated_at) VALUES(1,'a','searchable',1)`},
+		{"links", `INSERT INTO links(proposition_id,url,title,created_at) VALUES(1,'https://example.com','searchable',1)`},
+		{"files", `INSERT INTO files(proposition_id,name,folder,object_key,state,created_at) VALUES(1,'searchable','Documents','key','ready',1)`},
+		{"documents", `INSERT INTO documents(proposition_id,name,slug,position,created_at) VALUES(1,'Other','other',2,1)`},
+	} {
+		first, err := db.ExecContext(ctx, tc.insert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := first.LastInsertId()
+		if _, err := db.ExecContext(ctx, "DELETE FROM "+tc.table+" WHERE id=?", id); err != nil {
+			t.Fatal(err)
+		}
+		next, err := db.ExecContext(ctx, tc.insert)
+		if err != nil {
+			t.Fatal(err)
+		}
+		newID, _ := next.LastInsertId()
+		if newID <= id {
+			t.Fatalf("%s reused %d", tc.table, id)
+		}
+	}
+	var bad int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_foreign_key_check`).Scan(&bad); err != nil || bad != 0 {
+		t.Fatalf("foreign keys %d %v", bad, err)
+	}
+	for _, table := range []string{"cards_fts", "blocks_fts", "links_fts", "files_fts"} {
+		var hits int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE "+table+" MATCH 'searchable'").Scan(&hits); err != nil || hits != 1 {
+			t.Fatalf("%s: %d %v", table, hits, err)
+		}
+	}
+}
+
+func TestStableLinkMigrationPreservesExistingRowsAndRelations(t *testing.T) {
+	ctx := context.Background()
+	db := openBeforeEmailMigration(t)
+	insertOldUser(t, db, 1, "owner", "owner@example.com")
+	seed := `INSERT INTO propositions(id,number,title,status,position,created_at) VALUES(17,1,'P','Research','a',1);
+ INSERT INTO proposition_members(proposition_id,user_id) VALUES(17,1);
+ INSERT INTO columns(id,proposition_id,name,position) VALUES(18,17,'Inbox','a');
+ INSERT INTO cards(id,proposition_id,column_id,position,title,created_at) VALUES(19,17,18,'a','searchable',1);
+ INSERT INTO card_assignees(card_id,user_id) VALUES(19,1);
+ INSERT INTO comments(id,card_id,user_id,body_md,created_at) VALUES(20,19,1,'searchable',1);
+ INSERT INTO documents(id,proposition_id,name,slug,position,created_at) VALUES(21,17,'Notes','notes',1,1);
+ INSERT INTO blocks(id,document_id,position,text,updated_at) VALUES(22,21,'a','searchable',1);
+ INSERT INTO links(id,proposition_id,url,title,created_at) VALUES(23,17,'https://example.com','searchable',1);
+ INSERT INTO files(id,proposition_id,name,folder,object_key,state,created_at) VALUES(24,17,'searchable','Documents','old','ready',1);
+ INSERT INTO files(id,proposition_id,name,folder,object_key,state,version_of,created_at) VALUES(25,17,'version','Documents','new','ready',24,1);
+ INSERT INTO checklist_items(card_id,text,position) VALUES(19,'Check','a');
+ INSERT INTO document_revisions(document_id,markdown,created_at,reason) VALUES(21,'Before',1,'manual');
+ INSERT INTO uploads(file_id,multipart_id,created_at,expires_at) VALUES(25,'upload',1,99);
+ INSERT INTO card_links(card_id,link_id) VALUES(19,23);
+ INSERT INTO card_files(card_id,file_id) VALUES(19,25);`
+	if _, err := db.ExecContext(ctx, seed); err != nil {
+		t.Fatal(err)
+	}
+	for _, entity := range []string{"card", "comment", "document", "block", "link", "file"} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO activity(proposition_id,actor_kind,actor_id,entity,entity_id,action,created_at) VALUES(17,'user','1',?,'900','delete',1)`, entity); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"cards", "comments", "documents", "blocks", "links", "files"} {
+		var seq int64
+		if err := db.QueryRowContext(ctx, `SELECT seq FROM sqlite_sequence WHERE name=?`, table).Scan(&seq); err != nil || seq < 900 {
+			t.Fatalf("%s sequence: %d %v", table, seq, err)
+		}
+	}
+	for _, query := range []string{
+		`SELECT count(*) FROM cards c JOIN card_assignees a ON a.card_id=c.id JOIN comments m ON m.card_id=c.id WHERE c.id=19 AND m.id=20 AND a.user_id=1`,
+		`SELECT count(*) FROM blocks b JOIN documents d ON d.id=b.document_id WHERE b.id=22 AND d.id=21 AND d.revision=1`,
+		`SELECT count(*) FROM files f JOIN files parent ON parent.id=f.version_of WHERE f.id=25 AND parent.id=24`,
+		`SELECT count(*) FROM proposition_members WHERE proposition_id=17 AND user_id=1`,
+		`SELECT count(*) FROM checklist_items WHERE card_id=19`,
+		`SELECT count(*) FROM document_revisions WHERE document_id=21 AND markdown='Before'`,
+		`SELECT count(*) FROM uploads WHERE file_id=25 AND multipart_id='upload'`,
+		`SELECT count(*) FROM card_links WHERE card_id=19 AND link_id=23`,
+		`SELECT count(*) FROM card_files WHERE card_id=19 AND file_id=25`,
+		`SELECT count(*) FROM block_texts WHERE block_id=22 AND version=1 AND text='searchable'`,
+	} {
+		var count int
+		if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s: %d %v", query, count, err)
+		}
+	}
+	for _, table := range []string{"cards_fts", "blocks_fts", "comments_fts", "links_fts", "files_fts"} {
+		var hits int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table+" WHERE "+table+" MATCH 'searchable'").Scan(&hits); err != nil || hits != 1 {
+			t.Fatalf("%s: %d %v", table, hits, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE blocks SET text='changed',version=2 WHERE id=22`); err != nil {
+		t.Fatal(err)
+	}
+	var versions int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM block_texts WHERE block_id=22 AND version=2 AND text='changed'`).Scan(&versions); err != nil || versions != 1 {
+		t.Fatalf("history trigger: %d %v", versions, err)
+	}
+	var revision int
+	if err := db.QueryRowContext(ctx, `SELECT revision FROM documents WHERE id=21`).Scan(&revision); err != nil || revision != 2 {
+		t.Fatalf("revision trigger: %d %v", revision, err)
+	}
+}

@@ -140,8 +140,10 @@ export function inline(text, lookup, lookupProposition = () => null) {
       }
       const p = lookupProposition(Number(g.proposition));
       out.push(p
-        ? el('a', { class: 'proposition-ref', href: propositionURL(p), text: propositionLabel(p),
-          title: p.archived_at ? 'Archived' : p.status })
+        ? el('a', { class: 'proposition-ref reference-preview', href: propositionURL(p), text: propositionLabel(p),
+            title: p.archived_at ? 'Archived' : p.status,
+            'aria-label': propositionLabel(p) + ' · ' + (p.archived_at ? 'Archived' : p.status) + (p.statement ? ' · ' + p.statement : '') },
+          el('span', { class: 'reference-context', 'aria-hidden': 'true', text: (p.archived_at ? 'Archived' : p.status) + (p.statement ? ' · ' + p.statement : '') }))
         : el('span', { class: 'proposition-ref unavailable', text: 'Unavailable proposition' }));
     } else {
       const person = lookup(g.handle);

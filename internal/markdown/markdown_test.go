@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -315,5 +316,12 @@ func TestMentions(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestReferencesIgnoreCodeAndEscapes(t *testing.T) {
+	got := References("@[p:42] `@[p:43]` \\@[p:44]\n\n```\n@[p:45]\n```\n\n@[p:42] @[p:46]")
+	if fmt.Sprint(got) != "[42 46]" {
+		t.Fatalf("references: %v", got)
 	}
 }

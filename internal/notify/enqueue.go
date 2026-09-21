@@ -172,7 +172,7 @@ func (s *Service) schedule(c Channel, m Notice, now int64, loc *time.Location) (
 // would be marked sent without ever going out.
 func (s *Service) write(ctx context.Context, tx *sql.Tx, channelID int64, m Notice,
 	actor core.Actor, at int64, collapse string, now int64) error {
-	line := item{Text: m.Text, URL: s.link(m.Proposition)}
+	line := item{Text: m.Text, URL: s.noticeLink(m)}
 	if collapse != "" {
 		var id int64
 		var stored string

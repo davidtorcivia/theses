@@ -347,6 +347,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /shell", s.offlineShell)
 	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
 	mux.HandleFunc("GET /app/search", s.requireUser(s.getSearch))
+	mux.HandleFunc("GET /app/my-work", s.requireUser(s.getMyWork))
+	mux.HandleFunc("GET /app/backlinks", s.requireUser(s.getBacklinks))
 
 	// Integrations. Enrollment on the way in, for an account the
 	// workspace requires an authenticator of and has none.

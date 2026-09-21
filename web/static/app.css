@@ -749,3 +749,11 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
   .ph .hint{display:none}
   .ph .hint.press{display:inline}
 }
+
+.connected { margin: 1rem 0; border-top: 1px solid var(--hair); padding: .75rem 0; }
+.connected summary { cursor: pointer; padding: .5rem 0; }
+.connected article { padding: .5rem 0; overflow-wrap: anywhere; }
+.reference-preview { position: relative; }
+.reference-context { display: none; position: absolute; left: 0; top: 100%; z-index: 5; min-width: 12rem; max-width: min(24rem, 70vw); padding: .65rem; background: var(--k); color: var(--p); border: 1px solid currentColor; white-space: normal; font-size: .85rem; }
+.reference-preview:hover .reference-context, .reference-preview:focus-within .reference-context { display: block; }
+.blk > .lnk { font-size: .7rem; margin-top: .3rem; }

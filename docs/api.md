@@ -1295,3 +1295,10 @@ belongs to, with `mcp:<client>` in the log's `via` field.
 
 Adding a file from Drive and publishing to Transistor are browser routes only.
 Neither has an API or MCP surface yet.
+
+Workspace item links use `/p/{proposition}#card-{id}`, `#file-{id}`,
+`#link-{id}`, `#document-{id}`, `#block-{id}`, and `#comment-{id}`.
+Search results include a relative `url` for each workspace hit, including
+API and MCP search responses. Opening a link requires the same membership as
+opening its proposition; deleted or inaccessible targets expose no metadata.
+File drawers distinguish permanent workspace links from temporary download URLs.
