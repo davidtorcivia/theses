@@ -822,3 +822,5 @@ button:disabled{opacity:.5;cursor:wait}
 
 .calendar-agenda{display:none}.calendar-agenda section{padding:.75rem 0;border-top:1px solid var(--hair)}.calendar-agenda time{display:block;font:11px var(--monof);color:var(--dim);margin-bottom:.5rem}.calendar-agenda .calendar-event{display:block;border-left:2px solid var(--milestone);padding:.65rem;background:color-mix(in srgb,var(--milestone) 10%,var(--k));margin-top:.4rem;font-size:14px}
 @media(max-width:650px){.calendar-scroll{display:none}.calendar-agenda{display:block}}
+
+.calendar-agenda .calendar-event,.attention-item{overflow-wrap:anywhere}

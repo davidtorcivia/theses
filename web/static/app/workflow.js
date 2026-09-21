@@ -55,9 +55,9 @@ export async function recordingView(doc) {
       };
       size.value=readingSize;stage.className='recording-stage size-'+readingSize;run.textContent=start?'Pause timer':elapsed?'Resume timer':'Start timer';updateClock();
       choose.onchange=show;pace.oninput=()=>{readingPace=Number(pace.value)||150;show();};
-      body.append(el('details',{class:'recording-pin'},el('summary',{text:'Pin a script for this session'}),el('p',{text:'Pin uses the last server-saved script. Finish syncing edits first. Pinned text and cues stay fixed when the document changes.'}),notes,canEdit()?pin:null),
+      body.append(canEdit()?el('details',{class:'recording-pin'},el('summary',{text:'Pin a script for this session'}),el('p',{text:'Pin uses the last server-saved script. Finish syncing edits first. Pinned text and cues stay fixed when the document changes.'}),notes,pin):null,
         el('div',{class:'recording-controls'},choose,size,el('label',{},'Words/min ',pace),estimate,clock,run),outline,stage);
-      if(!snapshots.length)stage.append(el('p',{text:'Pin the saved script to prepare your recording session.'}));else show();
+      if(!snapshots.length)stage.append(el('p',{text:canEdit()?'Pin the saved script to prepare your recording session.':'No pinned scripts yet. An editor can pin a script for the recording session.'}));else show();
     }catch(err){clear(body).append(el('p',{role:'status',text:err.message}),el('button',{type:'button',class:'lnk',text:'Retry',onclick:draw}));}
   };await draw();
 }
