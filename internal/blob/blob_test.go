@@ -147,6 +147,33 @@ func TestNewRejectsBadConfig(t *testing.T) {
 	}
 }
 
+func TestAWSOriginMatchesPresignedURL(t *testing.T) {
+	for _, region := range []string{"us-east-1", "cn-north-1", "us-gov-west-1"} {
+		t.Run(region, func(t *testing.T) {
+			cfg := Config{Provider: "s3", Region: region, Bucket: "theses", AccessKey: "key", SecretKey: "secret"}
+			client, err := New(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signed, _, err := client.PresignPut(context.Background(), "k", "text/plain", 1, ttl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := url.Parse(signed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := AWSOrigin(region, cfg.Bucket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := u.Scheme + "://" + u.Host; got != want {
+				t.Errorf("AWSOrigin = %q, presigned URL uses %q", got, want)
+			}
+		})
+	}
+}
+
 func TestPresignPutThenGet(t *testing.T) {
 	c := fake(t)
 	ctx := context.Background()

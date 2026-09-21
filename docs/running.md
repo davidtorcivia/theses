@@ -10,7 +10,7 @@ list with the reasoning beside each one.
 | --- | --- |
 | `THESES_BIND` | Address the binary listens on. Inside the container leave it as `:8080`; the published port is what keeps it on loopback. |
 | `THESES_DATA_DIR` | Where `theses.db` and the markdown mirror under `docs/` live. Thumbnails are written beside their originals in the bucket, not here. |
-| `THESES_BASE_URL` | The absolute public URL, no trailing slash. Links in mail use it, and an `http` URL turns the `Secure` flag on cookies off so local development works. |
+| `THESES_BASE_URL` | The absolute public origin, without a path, credentials, query, or fragment. Links in mail use it, and an `http` URL turns the `Secure` flag on cookies off so local development works. |
 | `THESES_SECRET_KEY` | Encrypts settings secrets at rest with AES-GCM. At least 32 bytes. Losing it means losing every stored secret; it cannot be changed without re-entering them. |
 | `THESES_SESSION_KEY` | Signs session cookies, CSRF tokens, and session and API token lookups. At least 32 bytes. Changing it signs everyone out. |
 | `THESES_TRUST_PROXY` | Take the client address from the rightmost `X-Forwarded-For` entry rather than from the connection. |

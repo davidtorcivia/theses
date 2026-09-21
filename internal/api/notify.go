@@ -123,17 +123,27 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 		return
 	}
 
+	tx, err := a.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		a.serverError(w, r, err)
+		return
+	}
+	defer tx.Rollback()
 	if body.Channels != nil {
-		if err := a.saveChannels(r, p, *body.Channels); err != nil {
+		if err := a.saveChannels(r, p, tx, *body.Channels); err != nil {
 			a.refuse(w, r, err)
 			return
 		}
 	}
 	if body.Rules != nil {
-		if err := notify.SetRules(r.Context(), a.db, a.set, p.User.ID, *body.Rules); err != nil {
+		if err := notify.SetRulesTx(r.Context(), tx, a.set, p.User.ID, *body.Rules); err != nil {
 			a.refuse(w, r, err)
 			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		a.serverError(w, r, err)
+		return
 	}
 	view, err := a.notificationsFor(r, p)
 	if err != nil {
@@ -143,8 +153,8 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 	a.writeJSON(w, http.StatusOK, view)
 }
 
-func (a *API) saveChannels(r *http.Request, p Principal, list []channelIn) error {
-	existing, err := notify.ListChannels(r.Context(), a.db, a.set, p.User.ID)
+func (a *API) saveChannels(r *http.Request, p Principal, q store.Querier, list []channelIn) error {
+	existing, err := notify.ListChannels(r.Context(), q, a.set, p.User.ID)
 	if err != nil {
 		return err
 	}
@@ -188,13 +198,13 @@ func (a *API) saveChannels(r *http.Request, p Principal, list []channelIn) error
 		if in.ID != 0 && !c.Config.SameDestination(was[in.ID].Config) {
 			c.VerifiedAt = 0
 		}
-		if _, err := notify.SaveChannel(r.Context(), a.db, a.set, c); err != nil {
+		if _, err := notify.SaveChannel(r.Context(), q, a.set, c); err != nil {
 			return err
 		}
 	}
 	for _, c := range existing {
 		if !kept[c.ID] {
-			if err := notify.DeleteChannel(r.Context(), a.db, c.ID, p.User.ID); err != nil {
+			if err := notify.DeleteChannel(r.Context(), q, c.ID, p.User.ID); err != nil {
 				return err
 			}
 		}

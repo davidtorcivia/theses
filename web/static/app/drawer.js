@@ -388,7 +388,7 @@ function props(card) {
 function description(card) {
   const node = el('p', {
     class: 'desc', 'data-ph': 'Add a description. @ mentions notify people.', 'data-k': 'desc',
-    contenteditable: canEdit() ? 'true' : null, spellcheck: 'false',
+    contenteditable: canEdit() ? 'plaintext-only' : null, spellcheck: 'false',
   });
   add(node, [rendered(card.description_md || '')]);
   if (!canEdit()) return node;

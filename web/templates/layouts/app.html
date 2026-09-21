@@ -6,7 +6,7 @@
 <meta name="csrf" content="{{.CSRF}}">
 </head><body class="dirB{{if .Plain}} plain{{end}}">
 <header id="top">
-  {{if not .Plain}}<button id="railtoggle" aria-label="Propositions">≡</button>{{end}}
+  {{if not .Plain}}<button id="railtoggle" type="button" aria-label="Propositions" aria-controls="rail" aria-expanded="false">≡</button>{{end}}
   <a class="brand" href="/">THESES</a><span class="show">{{.Workspace}}</span>
   {{if not .Plain}}<button class="search" type="button"><span>Search, jump, do…</span><kbd>⌘K</kbd></button>
   <div class="presence"></div>{{end}}

@@ -24,8 +24,8 @@ func fakeSender(t *testing.T, fail func(int) error) *[]sent {
 	t.Helper()
 	var calls []sent
 	was := send
-	send = func(_ context.Context, _ *Service, c Channel, _ string, n channel.Note) error {
-		calls = append(calls, sent{channel: c.ID, note: n})
+	send = func(_ context.Context, _ *Service, c Channel, _ string, p payload) error {
+		calls = append(calls, sent{channel: c.ID, note: note(p)})
 		if fail != nil {
 			return fail(len(calls))
 		}
@@ -215,11 +215,11 @@ func TestUnsendableMailDoesNotBlockTheQueue(t *testing.T) {
 	// webhook behind them still goes out.
 	calls := fakeSender(t, func(int) error { return nil })
 	was := send
-	send = func(ctx context.Context, s *Service, c Channel, email string, n channel.Note) error {
+	send = func(ctx context.Context, s *Service, c Channel, email string, p payload) error {
 		if c.Kind == KindEmail {
 			return mail.ErrNotConfigured
 		}
-		return was(ctx, s, c, email, n)
+		return was(ctx, s, c, email, p)
 	}
 
 	for range 3 {
@@ -317,13 +317,27 @@ func TestTemplateChoosesTheMailForTheEvent(t *testing.T) {
 	} {
 		n := channel.Note{Event: tt.event, Actor: "Ada Lovelace", Entity: "comment",
 			Title: "Assigned to you: Fix the intro", Body: "something happened"}
-		msg, ok := template("grace@example.com", n, "Workspace")
+		msg, ok := template("grace@example.com", n, nil, "Workspace")
 		if ok != tt.want {
 			t.Errorf("%s has a template = %v, want %v", tt.event, ok, tt.want)
 			continue
 		}
 		if ok && msg.Subject != tt.subject {
 			t.Errorf("%s subject = %q, want %q", tt.event, msg.Subject, tt.subject)
+		}
+	}
+
+	digest := payload{Event: digestEvent, Title: "THESES daily digest", Items: []item{
+		{Text: "one", URL: "https://example.com/p/1"},
+		{Text: "two", URL: "https://example.com/p/2"},
+	}}
+	msg, ok := template("grace@example.com", note(digest), digest.Items, "Workspace")
+	if !ok {
+		t.Fatal("a digest did not choose its mail template")
+	}
+	for _, url := range []string{"https://example.com/p/1", "https://example.com/p/2"} {
+		if strings.Count(msg.Text, url) != 1 || strings.Count(msg.HTML, url) != 2 {
+			t.Errorf("digest did not keep one item URL: %q / %q", msg.Text, msg.HTML)
 		}
 	}
 }

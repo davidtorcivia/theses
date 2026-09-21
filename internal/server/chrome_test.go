@@ -55,6 +55,21 @@ func TestTheLayoutFlagDropsTheRailAndTheSearchBox(t *testing.T) {
 	}
 }
 
+func TestTheRailAndPaletteExposeTheirState(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+
+	_, body := h.get("/")
+	for _, mark := range []string{
+		`id="railtoggle" type="button" aria-label="Propositions" aria-controls="rail" aria-expanded="false"`,
+		`id="palette" role="dialog" aria-modal="true" aria-label="Search this workspace" hidden`,
+	} {
+		if !strings.Contains(body, mark) {
+			t.Errorf("the workspace is missing %s", mark)
+		}
+	}
+}
+
 // The only route to the workspace settings was typing the address.
 func TestTheSettingsLinkIsThereForOwnersOnly(t *testing.T) {
 	h := newHarness(t)

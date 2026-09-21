@@ -87,6 +87,10 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	if err != nil {
 		return fmt.Errorf("the archive does not hold a database this version can open: %w", err)
 	}
+	if err := validateRestore(ctx, check); err != nil {
+		check.Close()
+		return err
+	}
 	if err := check.Close(); err != nil {
 		return err
 	}
@@ -106,6 +110,35 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 		return fmt.Errorf("%w: %w", ErrPartial, err)
 	}
 	b.log.Warn("restored from a backup", "key", key, "aside", aside)
+	return nil
+}
+
+func validateRestore(ctx context.Context, db *store.DB) error {
+	var result string
+	if err := db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&result); err != nil {
+		return fmt.Errorf("check restored database: %w", err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("the restored database failed its integrity check: %s", result)
+	}
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return errors.New("the restored database has broken foreign key references")
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var owners int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE role = 'owner'`).Scan(&owners); err != nil {
+		return err
+	}
+	if owners == 0 {
+		return errors.New("the restored database has no owner account")
+	}
 	return nil
 }
 

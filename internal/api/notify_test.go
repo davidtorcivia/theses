@@ -126,6 +126,75 @@ func TestAnEmailChannelIsVerifiedWhereverItIsCreated(t *testing.T) {
 	}
 }
 
+func TestNotificationPUTRollsBackTheWholeReplacement(t *testing.T) {
+	ctx := context.Background()
+	t.Run("invalid later channel", func(t *testing.T) {
+		h := newHarness(t)
+		w := h.do("PUT", "/api/v1/me/notifications", h.token(auth.ScopeRead, auth.ScopeWrite),
+			`{"channels":[{"kind":"email"},{"kind":"ntfy"}]}`)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+		}
+		channels, err := notify.ListChannels(ctx, h.db, h.set, h.user.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(channels) != 0 {
+			t.Fatalf("the valid prefix was kept: %+v", channels)
+		}
+	})
+
+	t.Run("invalid rules after channels", func(t *testing.T) {
+		h := newHarness(t)
+		kept, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{
+			UserID: h.user.ID, Kind: notify.KindEmail,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := notify.SetRules(ctx, h.db, h.set, h.user.ID,
+			map[string][]int64{"mentioned": {kept.ID}}); err != nil {
+			t.Fatal(err)
+		}
+		w := h.do("PUT", "/api/v1/me/notifications", h.token(auth.ScopeRead, auth.ScopeWrite),
+			`{"channels":[],"rules":{"nonsense":[]}}`)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+		}
+		if _, err := notify.GetChannel(ctx, h.db, h.set, kept.ID); err != nil {
+			t.Fatalf("the old channel was deleted before the rules were refused: %v", err)
+		}
+		rules, err := notify.Rules(ctx, h.db, h.user.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rules["mentioned"]) != 1 || rules["mentioned"][0] != kept.ID {
+			t.Fatalf("the old rules changed before the replacement was refused: %v", rules)
+		}
+	})
+
+	t.Run("storage failure", func(t *testing.T) {
+		h := newHarness(t)
+		if _, err := h.db.ExecContext(ctx, `CREATE TRIGGER fail_second_channel
+			BEFORE INSERT ON notification_channels WHEN NEW.kind = 'ntfy'
+			BEGIN SELECT RAISE(ABORT, 'injected channel failure'); END`); err != nil {
+			t.Fatal(err)
+		}
+		w := h.do("PUT", "/api/v1/me/notifications", h.token(auth.ScopeRead, auth.ScopeWrite),
+			`{"channels":[{"kind":"email"},{"kind":"ntfy","topic":"alerts"}]}`)
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT gave %d: %s", w.Code, w.Body)
+		}
+		channels, err := notify.ListChannels(ctx, h.db, h.set, h.user.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(channels) != 0 {
+			t.Fatalf("a failed replacement kept its valid prefix: %+v", channels)
+		}
+	})
+}
+
 func TestTestingSomebodyElsesChannelIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)

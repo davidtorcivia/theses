@@ -15,7 +15,11 @@
             <label class="f"><span class="l">Name</span><input name="name" value="{{.User.Name}}"></label>
             <label class="f"><span class="l">Initials</span><input name="initials" value="{{.User.Initials}}" maxlength="2"></label>
           </div>
-          <label class="f"><span class="l">Email</span><input type="email" name="email" value="{{.User.Email}}"><small>For mail and recovery, not for signing in.</small></label>
+          <div class="row3">
+            <label class="f"><span class="l">Email</span><input type="email" name="email" value="{{.User.Email}}"><small>For mail and recovery, not for signing in.</small></label>
+            <label class="f"><span class="l">Current password</span><input type="password" name="current" autocomplete="current-password"><small>Required only when changing recovery email.</small></label>
+            {{if .User.TOTPSecret}}<label class="f"><span class="l">Authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"><small>Required only when changing recovery email.</small></label>{{end}}
+          </div>
           <div class="f"><span class="l">Color</span>{{template "swatches" .Swatches}}</div>
           <button class="save" type="submit">Save</button>
         </div>
@@ -39,8 +43,14 @@
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <div class="row3">
             <label class="f"><span class="l">Two-factor</span><span class="mono {{if .User.TOTPSecret}}ok{{else}}dim{{end}}">{{if .User.TOTPSecret}}On · authenticator app{{else}}Not enrolled{{end}}</span></label>
+            <label class="f"><span class="l">Current password</span><input type="password" name="current" autocomplete="current-password" required></label>
+            {{if .User.TOTPSecret}}<label class="f"><span class="l">Current authenticator code</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>{{end}}
           </div>
           <button class="lnk" type="submit">{{if .User.TOTPSecret}}Enroll a new authenticator{{else}}Enroll an authenticator{{end}}</button>
+        </form>
+        <form method="post" action="/logout">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <button class="lnk" type="submit">Sign out this browser</button>
         </form>
         <button class="lnk" type="button" data-dialog="signout-all">Sign out everywhere</button>
       </div>

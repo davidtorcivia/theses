@@ -10,6 +10,7 @@ import { openCard } from './drawer.js';
 import { openLink } from './links.js';
 import { openFile } from './files.js';
 import * as api from './api.js';
+import { redrawFocus } from './palettefocus.js';
 
 // How long a key press waits for the next one. Long enough that typing a word
 // is one query rather than five, short enough that the list is there by the
@@ -23,12 +24,14 @@ const perKind = 5;
 // because two queries in flight come back in whatever order they like.
 let asked = 0;
 let timer = 0;
+let returnTo = null;
 
 export function openPalette() {
   // A reply to whatever was typed the last time it was open belongs to nobody.
   clearTimeout(timer);
   asked++;
   const palette = $('#palette');
+  if (palette.hidden) returnTo = document.activeElement;
   palette.hidden = false;
   const field = palette.querySelector('input');
   field.value = '';
@@ -40,6 +43,9 @@ export function closePalette() {
   clearTimeout(timer);
   asked++;
   $('#palette').hidden = true;
+  const back = returnTo;
+  returnTo = null;
+  if (back && back.isConnected) back.focus();
 }
 
 // The rows this tab can offer without asking anybody: the propositions it knows
@@ -71,7 +77,9 @@ function newProposition() {
   closePalette();
   const button = $('#newprop');
   if (!button) { location.href = '/'; return; }
-  document.body.classList.add('rail-open');
+  if (matchMedia('(max-width: 900px)').matches && !document.body.classList.contains('rail-open')) {
+    $('#railtoggle')?.click();
+  }
   button.click();
 }
 
@@ -150,7 +158,8 @@ function openBlock(id, proposition) {
 // new list starts at the top: opening the palette, and each key press, which is
 // a different set of rows even when it has the same number of them.
 function list(query, groups, keep = false) {
-  const was = keep ? $$('#palette ul a').findIndex((a) => a.classList.contains('on')) : 0;
+  const old = $$('#palette ul a');
+  const focus = redrawFocus(old, document.activeElement, keep);
   const q = query.toLowerCase();
   // A proposition this tab already lists is not offered twice.
   const known = new Set(state.props.map((p) => p.id));
@@ -164,6 +173,7 @@ function list(query, groups, keep = false) {
   const results = clear($('#palette ul'));
   if (!rows.length) {
     results.append(el('li', { class: 'none', text: 'No matches.' }));
+    if (focus.restore) $('#palette input').focus();
     return;
   }
   for (const row of rows) {
@@ -181,7 +191,9 @@ function list(query, groups, keep = false) {
     results.append(el('li', { class: row.go ? null : 'flat' }, line));
   }
   const lines = $$('#palette ul a');
-  select(lines[Math.min(Math.max(was, 0), lines.length - 1)]);
+  const selected = lines[Math.min(Math.max(focus.index, 0), lines.length - 1)];
+  select(selected);
+  if (focus.restore) (selected || $('#palette input')).focus();
 }
 
 // select marks the row Enter opens, and brings it into view unless the pointer
@@ -217,6 +229,19 @@ function search(query) {
 $('#palette input').addEventListener('input', (e) => search(e.target.value));
 $('#palette').addEventListener('click', (e) => {
   if (e.target.id === 'palette') closePalette();
+});
+$('#palette').addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+  const stops = [$('#palette input'), ...$$('#palette ul a')];
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
 });
 $('#palette input').addEventListener('keydown', (e) => {
   const lines = $$('#palette ul a');

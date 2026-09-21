@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,6 +84,83 @@ func TestTickFiresDatesOnceADay(t *testing.T) {
 	}
 	if got := f.outbox(t); len(got) != 2 {
 		t.Fatalf("the pass ran twice on one day and wrote %d rows", len(got))
+	}
+}
+
+func TestTickRetriesFailuresAndCommitsOnlyOnce(t *testing.T) {
+	for _, fail := range []string{
+		`CREATE TRIGGER fail_tick BEFORE INSERT ON notification_outbox BEGIN SELECT RAISE(ABORT, 'queue failed'); END`,
+		`CREATE TRIGGER fail_tick BEFORE INSERT ON activity WHEN NEW.entity_id = 'notify.last_tick' BEGIN SELECT RAISE(ABORT, 'marker failed'); END`,
+	} {
+		t.Run(fail, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			f := newFixture(t)
+			user := f.user(t, "grace")
+			f.onCard(t, 7, user)
+			f.channel(t, Channel{UserID: user, Kind: KindNtfy, Config: Config{Topic: "t"}}, "due")
+			f.dates(t, time.Unix(now, 0).UTC().AddDate(0, 0, 1).Format("2006-01-02"), "")
+			if _, err := f.db.ExecContext(ctx, fail); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.Tick(ctx); err == nil {
+				t.Fatal("injected failure was ignored")
+			}
+			if len(f.outbox(t)) != 0 || settings.Get[int](f.set, "notify.last_tick") != 0 {
+				t.Fatal("failed tick committed notices or its marker")
+			}
+			if _, err := f.db.ExecContext(ctx, `DROP TRIGGER fail_tick`); err != nil {
+				t.Fatal(err)
+			}
+			var wg sync.WaitGroup
+			errors := make(chan error, 4)
+			for range 4 {
+				wg.Go(func() { errors <- f.s.Tick(ctx) })
+			}
+			wg.Wait()
+			close(errors)
+			for err := range errors {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := len(f.outbox(t)); got != 1 {
+				t.Fatalf("retried concurrent ticks queued %d notices, want 1", got)
+			}
+			if settings.Get[int](f.set, "notify.last_tick") != day(time.Unix(now, 0).UTC()) {
+				t.Fatal("successful retry did not publish its marker")
+			}
+		})
+	}
+}
+
+func TestDatedReadsItsTransactionSnapshot(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.onCard(t, 7)
+	tomorrow := time.Unix(now, 0).UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	tx, err := f.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE cards SET due_date = ? WHERE id = 7`, tomorrow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE propositions SET target_date = ? WHERE id = 3`, tomorrow); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := f.s.dated(ctx, tx, time.Unix(now, 0).UTC(), time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := map[string]bool{}
+	for _, match := range matches {
+		events[match.Event] = true
+	}
+	if !events["due"] || !events["release"] {
+		t.Fatalf("transaction-local dates produced events %v, want due and release", events)
 	}
 }
 

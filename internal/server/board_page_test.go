@@ -151,7 +151,7 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 		t.Fatalf("saving the proposition gave %d", res.StatusCode)
 	}
 	res, _ = h.post(path, url.Values{"csrf": {csrf}, "do": {"schedule"},
-		"status": {"researching"}, "episode": {"11"}, "target": {"24 Sep"}})
+		"status": {"researching"}, "episode": {"11"}, "target": {"2026-09-24"}})
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("saving the schedule gave %d", res.StatusCode)
 	}
@@ -165,6 +165,9 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 	}
 	if p.Episode == nil || *p.Episode != "11" {
 		t.Errorf("episode is %v", p.Episode)
+	}
+	if p.TargetDate == nil || *p.TargetDate != "2026-09-24" {
+		t.Errorf("target date is %v", p.TargetDate)
 	}
 
 	// Adding a column and then refusing to delete one that has a card.
@@ -198,17 +201,14 @@ func TestPropositionSettingsPageSavesThroughCommands(t *testing.T) {
 		t.Errorf("%d activity rows for the saves, want one each", n)
 	}
 
-	// The document switches are stored settings, read back on the next render.
+	res, body = h.get(path)
+	if res.StatusCode != http.StatusOK || strings.Contains(body, `name="open_editing"`) ||
+		strings.Contains(body, "90 days") || !strings.Contains(body, "Documents are private") {
+		t.Fatal("document section does not describe the supported behavior")
+	}
 	res, _ = h.post(path, url.Values{"csrf": {csrf}, "do": {"document"}, "publish": {"1"}})
-	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("saving the document section gave %d", res.StatusCode)
-	}
-	doc, err := board.GetDocumentSettings(ctx, h.db, e.EntityID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if doc.OpenEditing || doc.History || !doc.Publish {
-		t.Errorf("document settings are %+v", doc)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unsupported document settings accepted: %d", res.StatusCode)
 	}
 }
 

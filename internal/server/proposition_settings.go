@@ -102,12 +102,6 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 			First: i == 0, Last: i == len(cols)-1})
 	}
 
-	doc, err := board.GetDocumentSettings(ctx, s.db, id)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-
 	// The page carries the same payload the board does, so the rail beside it,
 	// the initials in the top bar and the palette are the same live ones.
 	payload, err := s.shellPayload(r, id)
@@ -131,7 +125,6 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		"Statuses": statuses,
 		"Members":  members,
 		"Columns":  rows,
-		"Doc":      doc,
 		"CanEdit":  auth.Can(me.Role, auth.CanEdit) && p.ArchivedAt == nil,
 		"CanDel":   auth.Can(me.Role, auth.CanDelete),
 		"Publish":  s.publishSection(ctx, p, me),
@@ -191,12 +184,6 @@ func (s *Server) postPropositionSettings(w http.ResponseWriter, r *http.Request)
 	case "columns":
 		refused = s.board.Together(ctx, func(ctx context.Context) error {
 			return s.saveColumns(ctx, actor, id, form)
-		})
-	case "document":
-		_, refused = s.board.SetDocumentSettings(ctx, actor, id, board.DocumentSettings{
-			OpenEditing: form.Get("open_editing") != "",
-			History:     form.Get("history") != "",
-			Publish:     form.Get("publish") != "",
 		})
 	case "archive":
 		_, refused = s.board.ArchiveProposition(ctx, actor, id)

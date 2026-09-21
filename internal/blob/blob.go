@@ -112,6 +112,18 @@ func Defaults(provider, hint string) Config {
 	return c
 }
 
+// AWSOrigin uses the presigner's path-style endpoint rules across AWS partitions.
+func AWSOrigin(region, bucket string) (string, error) {
+	pathStyle := true
+	endpoint, err := s3.NewDefaultEndpointResolverV2().ResolveEndpoint(context.Background(), s3.EndpointParameters{
+		Region: aws.String(region), Bucket: aws.String(bucket), ForcePathStyle: &pathStyle,
+	})
+	if err != nil {
+		return "", fmt.Errorf("blob: resolve S3 endpoint: %w", err)
+	}
+	return endpoint.URI.Scheme + "://" + endpoint.URI.Host, nil
+}
+
 // normalizeEndpoint turns what the owner typed into a base URL the SDK can
 // use. Both providers are named by host in their own consoles, so a bare host
 // is what most people enter; it gets https, which is the only scheme those

@@ -4,6 +4,9 @@
 // the real thing: ask for a presigned PUT, send it from this page, and say
 // which way it went.
 
+import * as offline from './offline.js';
+import { isJSON, sessionEnded } from './response.js';
+
 const result = document.getElementById('corsresult');
 const token = document.querySelector('meta[name="csrf"]')?.content || '';
 
@@ -21,7 +24,11 @@ async function ask(prefix, done) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     body,
   });
-  const payload = await res.json().catch(() => null);
+  if (sessionEnded(res, location.href)) {
+    offline.signedOut();
+    throw new Error('Your session has ended. Sign in again.');
+  }
+  const payload = isJSON(res) ? await res.json().catch(() => null) : null;
   if (!res.ok) {
     throw new Error((payload && payload.error) || 'That bucket could not be reached.');
   }

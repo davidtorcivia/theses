@@ -4,6 +4,17 @@
 // of boxes and then having to remember the button underneath them.
 
 import { $, el } from './dom.js';
+import * as offline from './offline.js';
+import { sessionEnded } from './response.js';
+
+export function notificationOutcome(res, base) {
+  if (sessionEnded(res, base)) return 'signed-out';
+  const answered = new URL(res.url || '', base);
+  const origin = new URL(base).origin;
+  if (res.ok && answered.origin === origin && answered.pathname === '/profile' &&
+      answered.searchParams.get('saved') === 'notifications') return 'saved';
+  return 'failed';
+}
 
 const form = $('form[data-notify-matrix]');
 if (form) {
@@ -32,7 +43,13 @@ if (form) {
         body: new URLSearchParams([...new FormData(form)]),
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
-      status.textContent = res.ok ? 'Saved.' : 'Not saved. Press Save.';
+      const outcome = notificationOutcome(res, location.href);
+      if (outcome === 'signed-out') {
+        again = false;
+        offline.signedOut();
+        return;
+      }
+      status.textContent = outcome === 'saved' ? 'Saved.' : 'Not saved. Press Save.';
     } catch {
       status.textContent = 'Not saved. You are offline.';
     } finally {

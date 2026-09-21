@@ -5,6 +5,7 @@ import { $, $$, el, initials } from './dom.js';
 import { state } from './state.js';
 
 let pickerAnchor = null;
+let mentionField = null;
 const outside = () => closePicker();
 
 export function closePicker(restore = false) {
@@ -13,7 +14,15 @@ export function closePicker(restore = false) {
   if (open) open.remove();
   if (pickerAnchor) pickerAnchor.setAttribute('aria-expanded', 'false');
   if (restore && pickerAnchor) pickerAnchor.focus();
+  if (mentionField) {
+    mentionField.removeAttribute('aria-activedescendant');
+    mentionField.removeAttribute('aria-autocomplete');
+    mentionField.removeAttribute('aria-controls');
+    mentionField.removeAttribute('aria-expanded');
+    mentionField.removeAttribute('aria-haspopup');
+  }
   pickerAnchor = null;
+  mentionField = null;
 }
 
 function place(picker, rect) {
@@ -56,9 +65,11 @@ export function openPicker(anchor, assigned, toggle) {
   anchor.setAttribute('aria-haspopup', 'listbox');
   anchor.setAttribute('aria-expanded', 'true');
   const on = new Set(assigned);
+  const proposition = state.props.find((item) => item.id === state.open);
   const picker = el('div', { id: 'picker', role: 'listbox', 'aria-multiselectable': 'true' },
     el('div', { class: 'pt mono', text: 'Assign · choose to toggle' }));
   for (const person of state.users.values()) {
+    if (!canAssign(person, on, proposition)) continue;
     picker.append(row(person, on.has(person.id), (p) => {
       const now = !on.has(p.id);
       if (now) on.add(p.id); else on.delete(p.id);
@@ -80,14 +91,17 @@ export function openPicker(anchor, assigned, toggle) {
   setTimeout(() => document.addEventListener('click', outside, { once: true }), 0);
 }
 
+export function canAssign(person, assigned, proposition) {
+  return person.role === 'owner' || assigned.has(person.id) || (proposition?.members || []).includes(person.id);
+}
+
 // mentionable offers the account names as somebody types @ into a field, in a
 // textarea or in a contenteditable.
 export function mentionable(field) {
   const read = () => (field.value !== undefined ? field.value : field.textContent);
   const caret = () => {
     if (field.value !== undefined) return field.selectionStart;
-    const sel = getSelection();
-    return sel.rangeCount ? sel.getRangeAt(0).startOffset : read().length;
+    return contenteditableCaret(field, getSelection());
   };
 
   field.addEventListener('input', () => {
@@ -100,7 +114,7 @@ export function mentionable(field) {
     if (!hits.length) return;
 
     const picker = el('div', { id: 'picker', role: 'listbox' }, el('div', { class: 'pt mono', text: 'Mention' }));
-    for (const person of hits) {
+    for (const [index, person] of hits.entries()) {
       const choose = () => {
         const at = caret();
         const before = read().slice(0, at).replace(/@[a-z0-9-]*$/i, '@' + person.handle + ' ');
@@ -110,34 +124,93 @@ export function mentionable(field) {
           field.focus();
           field.setSelectionRange(before.length, before.length);
         } else {
-          field.textContent = rest;
-          field.focus();
+          writeContenteditable(field, rest, before.length);
         }
         closePicker();
       };
       const button = row(person, false, choose);
+      button.id = 'mention-option-' + index;
+      button.tabIndex = -1;
       button.addEventListener('mousedown', (e) => {
         e.preventDefault();
       });
       picker.append(button);
     }
+    mentionField = field;
+    field.setAttribute('aria-haspopup', 'listbox');
+    field.setAttribute('aria-controls', 'picker');
+    field.setAttribute('aria-expanded', 'true');
+    field.setAttribute('aria-autocomplete', 'list');
     document.body.append(picker);
     place(picker, field.getBoundingClientRect());
-    keyboard(picker, false);
+    selectMention(picker, field, 0);
+    setTimeout(() => document.addEventListener('click', outside, { once: true }), 0);
   });
 
   field.addEventListener('keydown', (e) => {
     const picker = $('#picker');
-    if (!picker) return;
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault();
-      const first = picker.querySelector('button');
-      if (first) first.click();
-    }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      picker.querySelector('button')?.focus();
-    }
-    if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
+    if (!picker || mentionField !== field) return;
+    handleMentionKey(e, picker, field);
   });
+}
+
+export function contenteditableCaret(field, selection) {
+  if (!selection?.rangeCount) return field.textContent.length;
+  const live = selection.getRangeAt(0);
+  if (!field.contains(live.startContainer)) return field.textContent.length;
+  const before = live.cloneRange();
+  before.selectNodeContents(field);
+  before.setEnd(live.startContainer, live.startOffset);
+  return before.toString().length;
+}
+
+export function writeContenteditable(field, text, at) {
+  field.textContent = text;
+  field.focus();
+  const selection = getSelection();
+  if (!selection || !field.firstChild) return;
+  const range = document.createRange();
+  range.setStart(field.firstChild, at);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+export function handleMentionKey(e, picker, field) {
+  const choices = [...picker.querySelectorAll('button')];
+  const at = choices.findIndex((choice) => choice.getAttribute('aria-selected') === 'true');
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    choices[Math.max(0, at)]?.click();
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    let next = at;
+    if (e.key === 'ArrowDown') next = Math.min(choices.length - 1, at + 1);
+    if (e.key === 'ArrowUp') next = Math.max(0, at - 1);
+    if (e.key === 'Home') next = 0;
+    if (e.key === 'End') next = choices.length - 1;
+    selectMention(picker, field, next);
+    return;
+  }
+  if (e.key === 'Tab') { closePicker(); return; }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closePicker();
+  }
+}
+
+function selectMention(picker, field, index) {
+  const choices = [...picker.querySelectorAll('button')];
+  for (const [at, choice] of choices.entries()) {
+    const selected = at === index;
+    choice.classList.toggle('active', selected);
+    choice.setAttribute('aria-selected', String(selected));
+  }
+  const active = choices[index];
+  if (active) field.setAttribute('aria-activedescendant', active.id);
 }

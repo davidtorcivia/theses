@@ -51,11 +51,22 @@ func (s *Service) queue(ctx context.Context, actor core.Actor, matches []Notice)
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.queueTx(ctx, tx, actor, matches); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.Nudge()
+	return nil
+}
 
+func (s *Service) queueTx(ctx context.Context, tx *sql.Tx, actor core.Actor, matches []Notice) error {
 	now := s.Now()
 	loc := s.location()
 	for _, m := range matches {
 		if m.Proposition == 0 && m.Document != 0 {
+			var err error
 			if m.Proposition, err = propositionOfDocument(ctx, tx, m.Document); err != nil {
 				return err
 			}
@@ -73,10 +84,6 @@ func (s *Service) queue(ctx context.Context, actor core.Actor, matches []Notice)
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.Nudge()
 	return nil
 }
 

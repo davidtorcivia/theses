@@ -811,6 +811,9 @@ A channel that cannot work, quiet hours that are not two times of day, and an
 event key the matrix does not hold are `422`. An `id` this account does not own
 is `404`. The answer is what `GET` reports.
 
+Channel replacement and rule changes commit together. A validation or storage
+failure leaves both unchanged.
+
 Quiet hours hold a message until they end, and a channel set to `digest` holds
 everything until the digest time set on `/settings`. Being named is the
 exception: a mention arrives at once, on the first channel that was going to
@@ -928,6 +931,8 @@ there; a field sent empty clears it. A body that names none of them is `400`.
 /api/v1/settings` reports as `defaults.statuses`; a word that is not on the
 list is `422`, because the rail groups by status and would have nowhere to draw
 the proposition.
+`target_date` must be a calendar date in `YYYY-MM-DD` format, or empty to clear
+the date. Impossible dates are refused with `422`.
 The fields land as one transaction, so a refusal partway through leaves
 nothing behind.
 
@@ -1040,6 +1045,8 @@ Scope `read`. One card with its assignees, checklist and notes.
 ## `POST /api/v1/columns/{id}/cards`
 
 Scope `write`. Takes `title` and an optional `assignees`, a list of user ids.
+Each assignee must be a workspace owner or a member of the proposition; an
+unknown or ineligible assignee returns `404` and the card is not created.
 The card goes at the end of the column. A column that is not there, or is on a
 proposition the token's owner may not read, is `404`.
 
@@ -1092,8 +1099,9 @@ POST /api/v1/cards/7/move
 
 ## `POST /api/v1/cards/{card}/assignees/{user}`
 
-Scope `write`. Puts somebody on the card. A person who is not in the workspace
-is `404`. Assigning somebody already on it changes nothing and answers `200`.
+Scope `write`. Puts somebody on the card. The person must be a workspace owner
+or a member of the proposition; an unknown or ineligible person is `404`.
+Assigning an eligible person already on it changes nothing and answers `200`.
 
 ## `DELETE /api/v1/cards/{card}/assignees/{user}`
 

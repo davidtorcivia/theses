@@ -31,8 +31,8 @@ const sendable = `(tried_at IS NULL OR tried_at > ?)`
 
 // send is deliver, replaced in tests so the worker can be driven without a
 // network and made to fail on demand.
-var send = func(ctx context.Context, s *Service, c Channel, email string, n channel.Note) error {
-	return s.deliver(ctx, c, email, n)
+var send = func(ctx context.Context, s *Service, c Channel, email string, p payload) error {
+	return s.deliverPayload(ctx, c, email, p)
 }
 
 // Nudge asks for a batch now. The channel holds one, so a burst of enqueues
@@ -112,7 +112,7 @@ func (s *Service) once(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		err = send(ctx, s, c, email, note(q.payload))
+		err = send(ctx, s, c, email, q.payload)
 		if err == nil {
 			if err := s.markSent(ctx, q.id); err != nil {
 				return err
@@ -247,6 +247,14 @@ func note(p payload) channel.Note {
 // deliver sends one note to one channel. Mail takes the templates where there
 // is one for the event and the plain note where there is not.
 func (s *Service) deliver(ctx context.Context, c Channel, email string, n channel.Note) error {
+	return s.deliverNote(ctx, c, email, n, nil)
+}
+
+func (s *Service) deliverPayload(ctx context.Context, c Channel, email string, p payload) error {
+	return s.deliverNote(ctx, c, email, note(p), p.Items)
+}
+
+func (s *Service) deliverNote(ctx context.Context, c Channel, email string, n channel.Note, items []item) error {
 	snd, err := s.senderFor(ctx, c, email)
 	if err != nil {
 		return err
@@ -258,7 +266,7 @@ func (s *Service) deliver(ctx context.Context, c Channel, email string, n channe
 		if smtp, ok := e.Sender.(mail.SMTP); ok {
 			password = smtp.Password
 		}
-		if msg, ok := template(e.To, n, settings.Get[string](s.set, "workspace.name")); ok {
+		if msg, ok := template(e.To, n, items, settings.Get[string](s.set, "workspace.name")); ok {
 			return s.redacted(ctx, e.Sender.Send(ctx, msg), c, password)
 		}
 		return s.redacted(ctx, snd.Send(ctx, n), c, password)
@@ -268,7 +276,7 @@ func (s *Service) deliver(ctx context.Context, c Channel, email string, n channe
 
 // template is the rendered mail for the three events that have one, and false
 // for everything else, which goes out as the note.
-func template(to string, n channel.Note, workspace string) (mail.Message, bool) {
+func template(to string, n channel.Note, items []item, workspace string) (mail.Message, bool) {
 	switch n.Event {
 	case "mentioned":
 		return mail.Mention{To: to, Who: n.Actor, Where: where(n.Entity), Excerpt: n.Body, URL: n.URL}.Message(), true
@@ -276,11 +284,11 @@ func template(to string, n channel.Note, workspace string) (mail.Message, bool) 
 		return mail.Assigned{To: to, Card: strings.TrimPrefix(n.Title, "Assigned to you: "),
 			Proposition: workspace, URL: n.URL}.Message(), true
 	case digestEvent:
-		items := []mail.DigestItem{}
-		for _, line := range strings.Split(n.Body, "\n") {
-			items = append(items, mail.DigestItem{Text: line, URL: n.URL})
+		digest := make([]mail.DigestItem, 0, len(items))
+		for _, it := range items {
+			digest = append(digest, mail.DigestItem{Text: it.Text, URL: it.URL})
 		}
-		return mail.Digest{To: to, Items: items}.Message(), true
+		return mail.Digest{To: to, Items: digest}.Message(), true
 	}
 	return mail.Message{}, false
 }
