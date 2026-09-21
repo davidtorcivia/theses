@@ -101,8 +101,7 @@ export function mentionable(field) {
   const read = () => (field.value !== undefined ? field.value : field.textContent);
   const caret = () => {
     if (field.value !== undefined) return field.selectionStart;
-    const sel = getSelection();
-    return sel.rangeCount ? sel.getRangeAt(0).startOffset : read().length;
+    return contenteditableCaret(field, getSelection());
   };
 
   field.addEventListener('input', () => {
@@ -153,6 +152,16 @@ export function mentionable(field) {
     if (!picker || mentionField !== field) return;
     handleMentionKey(e, picker, field);
   });
+}
+
+export function contenteditableCaret(field, selection) {
+  if (!selection?.rangeCount) return field.textContent.length;
+  const live = selection.getRangeAt(0);
+  if (!field.contains(live.startContainer)) return field.textContent.length;
+  const before = live.cloneRange();
+  before.selectNodeContents(field);
+  before.setEnd(live.startContainer, live.startOffset);
+  return before.toString().length;
 }
 
 export function writeContenteditable(field, text, at) {

@@ -17,7 +17,7 @@ globalThis.document = {
 };
 globalThis.addEventListener = () => {};
 globalThis.getSelection = () => selection;
-const { canAssign, handleMentionKey, writeContenteditable } = await import('./static/app/picker.js');
+const { canAssign, contenteditableCaret, handleMentionKey, writeContenteditable } = await import('./static/app/picker.js');
 const proposition = { members: [2] };
 const assigned = new Set([3]);
 
@@ -64,5 +64,19 @@ assert.deepEqual(range.start, [textNode, 11], 'contenteditable caret follows the
 assert.equal(range.collapsed, true);
 assert.equal(selection.cleared, true);
 assert.equal(selection.added, range);
+
+const nested = {};
+const measure = {
+  selected: null, end: null,
+  selectNodeContents(node) { this.selected = node; },
+  setEnd(node, at) { this.end = [node, at]; },
+  toString: () => 'first\nsecond'.slice(0, 9),
+};
+const multi = { textContent: 'first\nsecond', contains: (node) => node === nested };
+const live = { startContainer: nested, startOffset: 2, cloneRange: () => measure };
+assert.equal(contenteditableCaret(multi, { rangeCount: 1, getRangeAt: () => live }), 9,
+  'a nested contenteditable caret is measured from the start of the whole field');
+assert.equal(measure.selected, multi);
+assert.deepEqual(measure.end, [nested, 2]);
 
 console.log('picker behavior passes');

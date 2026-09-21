@@ -10,6 +10,7 @@ import { openCard } from './drawer.js';
 import { openLink } from './links.js';
 import { openFile } from './files.js';
 import * as api from './api.js';
+import { redrawFocus } from './palettefocus.js';
 
 // How long a key press waits for the next one. Long enough that typing a word
 // is one query rather than five, short enough that the list is there by the
@@ -157,7 +158,8 @@ function openBlock(id, proposition) {
 // new list starts at the top: opening the palette, and each key press, which is
 // a different set of rows even when it has the same number of them.
 function list(query, groups, keep = false) {
-  const was = keep ? $$('#palette ul a').findIndex((a) => a.classList.contains('on')) : 0;
+  const old = $$('#palette ul a');
+  const focus = redrawFocus(old, document.activeElement, keep);
   const q = query.toLowerCase();
   // A proposition this tab already lists is not offered twice.
   const known = new Set(state.props.map((p) => p.id));
@@ -171,6 +173,7 @@ function list(query, groups, keep = false) {
   const results = clear($('#palette ul'));
   if (!rows.length) {
     results.append(el('li', { class: 'none', text: 'No matches.' }));
+    if (focus.restore) $('#palette input').focus();
     return;
   }
   for (const row of rows) {
@@ -188,7 +191,9 @@ function list(query, groups, keep = false) {
     results.append(el('li', { class: row.go ? null : 'flat' }, line));
   }
   const lines = $$('#palette ul a');
-  select(lines[Math.min(Math.max(was, 0), lines.length - 1)]);
+  const selected = lines[Math.min(Math.max(focus.index, 0), lines.length - 1)];
+  select(selected);
+  if (focus.restore) (selected || $('#palette input')).focus();
 }
 
 // select marks the row Enter opens, and brings it into view unless the pointer

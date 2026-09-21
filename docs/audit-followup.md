@@ -15,21 +15,21 @@ database migrations were added.
 | Storage CSP | Native AWS S3 with an empty endpoint produced URLs that the browser CSP blocked. The SDK resolves the permitted origin using the same region, bucket, and path-style addressing as the presigner. Tests include standard, China, and GovCloud regions. |
 | Bootstrap URL | Credentials, paths, queries, and fragments were accepted in a base URL even though generated routes require an origin. Startup now refuses those configurations. |
 | Restore | A manifest account count was trusted without checking the extracted database. Restores now verify database integrity, foreign keys, and an owner account before replacing live data. |
-| Daily reminders | A transient failure could record the day as finished before any reminders were queued. The outbox and daily marker now commit together; failed and concurrent ticks are covered by regression tests. |
+| Daily reminders | A transient failure could record the day as finished before any reminders were queued. Candidate reads, the outbox, and the daily marker now share one transaction; failed and concurrent ticks are covered by regression tests. |
 | Notification API | Replacing several channels and their rules could save a prefix before returning an error. The complete PUT now commits or rolls back together, including deletion and injected storage failures. |
 | Digest email | Every item linked to the first item's proposition. Each digest entry now retains its own URL. |
 | Scheduling | Invalid release dates were accepted and then silently skipped by reminders. The shared command requires a real ISO calendar date, and the settings form uses a native date input. |
 | Assignment | Unknown assignees were silently omitted during card creation, and outsiders could be assigned cards they could not read. Shared validation now requires an owner or proposition member and rolls back invalid card creation. Pickers show eligible users and retain removed members only so they can be unassigned. |
-| Markdown import | A valid first edit could commit before a later block failed validation. The revision and every imported block now share one transaction; failed imports retain both the original database content and the hand-edited file. |
+| Markdown import | A valid first edit could commit before a later block failed validation. The revision and every imported block now share one transaction; command or validation failures retain both the original database content and the hand-edited file. |
 | Document settings | Editing, retention, and public-reading-page switches were stored but never enforced. The unused controls and write path were removed. The page now states actual role-based editing, retained history, and private document access. |
-| Mention picker | Arrow navigation moved focus out of unfinished edits, Enter/Escape reached the editor's own handlers, and contenteditable selection lost its caret. Suggestions now retain editor focus, consume their own keys, and restore the insertion position. |
+| Mention picker | Arrow navigation moved focus out of unfinished edits, Enter/Escape reached the editor's own handlers, and contenteditable selection lost its caret. Suggestions now retain editor focus, consume their own keys, and restore the insertion position across text nodes. Plaintext editing preserves description newlines. |
 | Keyboard actions | Rail menus, assignment, completion, and comment-delete buttons could receive focus while invisible. They now become visible on focus within their parent. |
 | Upload recovery | A transient failure while still online had no retry action. Failed uploads now offer Retry through the existing resumable upload flow, including failures before a server file ID exists. |
 | Notification form | Redirected validation and login pages were reported as successful saves. Autosave now recognizes the actual success redirect and handles session expiry. |
 | Sign-out | There was no ordinary sign-out control. Profile now offers sign-out for this browser alongside sign-out everywhere. |
 | Revision comparison | The history dialog allocated an unbounded quadratic table. Exact comparisons are capped at 250,000 cells; larger comparisons preserve common edges and show the middle as removals and additions. |
 | Session expiry | Event polling and revision history could treat a login redirect as an offline or parsing error. They now clear cached account state and return to sign-in when the response is the application's login page. Other HTML failures retain local work. |
-| Mobile navigation | The closed rail remained keyboard-focusable off screen. It is now inert while closed on narrow screens, with expanded-state semantics and Escape focus restoration. Search has dialog semantics, contains Tab navigation, and restores focus on close. |
+| Mobile navigation | The closed rail remained keyboard-focusable off screen. It is now inert while closed on narrow screens, with expanded-state semantics and Escape focus restoration. Search has dialog semantics, contains Tab navigation, preserves focus when delayed results redraw, and restores focus on close. |
 
 ## Verification
 
@@ -65,7 +65,9 @@ Headless Chromium does not substitute for physical touch-device or screen-reader
 testing. Source drafts and the remaining offline restrictions described in the
 earlier audit still apply. Notification matching from the in-process command
 bus remains best effort; this change makes daily scheduled reminders durable,
-not the entire event subscription.
+not the entire event subscription. Markdown import commits the database before
+rewriting its mirror; a later filesystem failure can therefore leave committed
+database changes and an unreplaced mirror.
 
 Public document reading pages, automatic revision retention, and integrations
 not implemented by the application are not presented as available features.

@@ -134,6 +134,36 @@ func TestTickRetriesFailuresAndCommitsOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestDatedReadsItsTransactionSnapshot(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.onCard(t, 7)
+	tomorrow := time.Unix(now, 0).UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	tx, err := f.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE cards SET due_date = ? WHERE id = 7`, tomorrow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE propositions SET target_date = ? WHERE id = 3`, tomorrow); err != nil {
+		t.Fatal(err)
+	}
+
+	matches, err := f.s.dated(ctx, tx, time.Unix(now, 0).UTC(), time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := map[string]bool{}
+	for _, match := range matches {
+		events[match.Event] = true
+	}
+	if !events["due"] || !events["release"] {
+		t.Fatalf("transaction-local dates produced events %v, want due and release", events)
+	}
+}
+
 func TestTickFiresOverdueTheMorningAfterAndNotAgain(t *testing.T) {
 	f := newFixture(t)
 	grace := f.user(t, "grace")

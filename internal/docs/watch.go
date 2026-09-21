@@ -505,8 +505,8 @@ const (
 // list and in what they make of a block the list does not name, which is what
 // gone answers.
 //
-// Both callers hold one transaction over the snapshot and every command, so a
-// refusal rolls the entire save back.
+// Both callers hold an immediate write transaction that stabilizes snapshot
+// reads and rolls every command back on refusal.
 //
 // wrote says whether any command ran, which is how a source save tells a list
 // that changed nothing from one that changed something: a set whose text the

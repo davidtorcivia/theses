@@ -38,10 +38,6 @@ func (s *Service) Tick(ctx context.Context) error {
 	if settings.Get[int](s.set, "notify.last_tick") >= today {
 		return nil
 	}
-	matches, err := s.dated(ctx, now, loc)
-	if err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -55,6 +51,10 @@ func (s *Service) Tick(ctx context.Context) error {
 	// The durable marker and all notices commit together, including concurrent ticks.
 	if last >= today {
 		return nil
+	}
+	matches, err := s.dated(ctx, tx, now, loc)
+	if err != nil {
+		return err
 	}
 	if err := s.queueTx(ctx, tx, tickActor, matches); err != nil {
 		return err
@@ -80,12 +80,12 @@ func day(t time.Time) int {
 }
 
 // dated is every card and proposition whose date falls due now.
-func (s *Service) dated(ctx context.Context, now time.Time, loc *time.Location) ([]Notice, error) {
+func (s *Service) dated(ctx context.Context, q store.Querier, now time.Time, loc *time.Location) ([]Notice, error) {
 	tomorrow := day(now.AddDate(0, 0, 1))
 	yesterday := day(now.AddDate(0, 0, -1))
 
 	var out []Notice
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.proposition_id, c.title, c.due_date
+	rows, err := q.QueryContext(ctx, `SELECT c.id, c.proposition_id, c.title, c.due_date
 		FROM cards c JOIN propositions p ON p.id = c.proposition_id
 		WHERE c.done_at IS NULL AND c.due_date IS NOT NULL AND c.due_date <> ''
 			AND p.archived_at IS NULL`)
@@ -126,7 +126,7 @@ func (s *Service) dated(ctx context.Context, now time.Time, loc *time.Location) 
 		return nil, err
 	}
 
-	props, err := s.db.QueryContext(ctx, `SELECT id, title, target_date FROM propositions
+	props, err := q.QueryContext(ctx, `SELECT id, title, target_date FROM propositions
 		WHERE archived_at IS NULL AND target_date IS NOT NULL AND target_date <> ''`)
 	if err != nil {
 		return nil, fmt.Errorf("notify: release dates: %w", err)
