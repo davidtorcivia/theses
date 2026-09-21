@@ -5,10 +5,7 @@
 // does are listed from here, so it is never empty and never waits.
 
 import { $, $$, el, clear, num } from './dom.js';
-import { state, emit, material } from './state.js';
-import { openCard } from './drawer.js';
-import { openLink } from './links.js';
-import { openFile } from './files.js';
+import { state } from './state.js';
 import * as api from './api.js';
 import { redrawFocus } from './palettefocus.js';
 
@@ -100,35 +97,14 @@ function newProposition() {
 function remote(hit) {
   const row = { kind: hit.kind, label: hit.title, snippet: aside(hit), go: null };
   const proposition = state.props.find((p) => p.id === hit.proposition_id);
-  // A drawer to open it in is the other half of being on the right page: the
-  // per proposition settings page carries the palette and none of the panes.
-  const here = hit.proposition_id === state.open && Boolean($('#drawer'));
-  if (hit.kind === 'proposition') row.go = () => {
-    location.href = pathFor(state.props.find((p) => p.id === hit.id), false, hit.id);
-  };
-  // A person is somebody to know is here. The Team table is the only page about
-  // them and only the owner may open it, so for everybody else the row says
-  // what it found and goes nowhere.
-  else if (hit.kind === 'user') row.go = state.can.settings ? () => { location.href = '/settings'; } : null;
-  else if (hit.kind === 'block' && proposition?.kind === 'show' && !here) {
-    row.go = () => { location.href = '/show#notes'; };
-  }
-  else if (!here) row.go = () => { location.href = pathFor(proposition, false, hit.proposition_id); };
-  // A card made since this page was rendered is not in this tab's board, and
-  // the drawer clears what it cannot find, so the proposition is read again.
-  else if (hit.kind === 'card') row.go = () => {
+  if (hit.kind === 'user') row.go = state.can.settings ? () => { location.href = '/settings'; } : null;
+  else row.go = () => {
     closePalette();
-    if (state.cards.has(hit.id)) openCard(hit.id);
-    else location.href = pathFor(proposition, false, hit.proposition_id);
+    const path = pathFor(proposition, false, hit.proposition_id || hit.id);
+    if (hit.proposition_id === state.open && hit.kind !== 'proposition' && $('#drawer')) {
+      location.hash = hit.kind + '-' + hit.id;
+    } else location.href = hit.url || (hit.kind === 'proposition' ? path : path + '#' + hit.kind + '-' + hit.id);
   };
-  // The links and the files are two requests away and this tab may not have
-  // been on either pane. Opening the drawer before they are here is the drawer
-  // finding nothing and putting itself away again, so it waits for them.
-  else if (hit.kind === 'link') row.go = () => pane('links', () => openLink(hit.id));
-  else if (hit.kind === 'file') row.go = () => pane('files', () => openFile(hit.id));
-  else if (hit.kind === 'block') row.go = () => openBlock(hit.id, hit.proposition_id);
-  // A comment's card is not in the hit, so the board is as close as this gets.
-  else row.go = () => { closePalette(); location.hash = ''; };
   return row;
 }
 
@@ -144,35 +120,6 @@ function aside(hit) {
   const text = (hit.snippet || '').replace(/…/g, '').trim();
   if (text && !hit.title.includes(text)) parts.push(hit.snippet);
   return parts.join(' · ');
-}
-
-function pane(tab, open) {
-  closePalette();
-  location.hash = tab;
-  material().then(open).catch(() => {});
-}
-
-// openBlock opens the document holding a block and puts it on the screen. The
-// payload carries every document of this proposition with its blocks, so which
-// one it is in is already here.
-function openBlock(id, proposition) {
-  const doc = state.documents.find((d) => (d.blocks || []).some((b) => b.id === id));
-  const p = state.props.find((item) => item.id === proposition);
-  closePalette();
-  // A block this tab has no document for is one the page was rendered before,
-  // so the proposition is loaded again rather than the palette doing nothing.
-  if (!doc) {
-    location.href = pathFor(p) + (p?.kind === 'show' ? '#notes' : '');
-    return;
-  }
-  state.document = doc.id;
-  state.docSource = false;
-  state.tab = 'board';
-  // The document is under the board, so the pane in the address bar goes with
-  // the pane on the screen.
-  location.hash = '';
-  emit();
-  requestAnimationFrame(() => $(`#doc .blk[data-b="${id}"]`)?.scrollIntoView({ block: 'center' }));
 }
 
 // list draws the rows: what this tab knows, filtered the way it always was,

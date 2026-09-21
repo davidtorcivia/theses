@@ -1,3 +1,4 @@
+import { rememberTarget, copyTarget } from './anchors.js';
 // The links pane and the link drawer: paste a URL and the server reads the
 // page, facet by kind and by question, correct what the page got wrong, and
 // copy the citation.
@@ -203,6 +204,7 @@ export function openLink(id) {
     say('Choose keep mine or take theirs before opening a link.');
     return false;
   }
+  rememberTarget('link', id);
   state.openLink = id;
   state.openCard = null;
   state.openFile = null;
@@ -251,7 +253,7 @@ export function renderLinkDrawer(drawer) {
     heading.addEventListener('click', edit);
     activate(heading, edit);
   } else heading.tabIndex = -1;
-  drawer.append(heading);
+  drawer.append(heading, copyTarget(state.open, 'link', link.id));
   drawer.append(el('p', { class: 'src' },
     el('a', { href: link.url, target: '_blank', rel: 'noopener noreferrer', text: host(link.url) + ' ↗' })));
 
@@ -294,6 +296,7 @@ export function renderLinkDrawer(drawer) {
         try {
           await api.del('/links/' + link.id);
           state.links = state.links.filter((l) => l.id !== link.id);
+          rememberTarget('', state.tab);
           state.openLink = null;
           emit();
         } catch (err) {
@@ -311,6 +314,7 @@ export function renderLinkDrawer(drawer) {
 }
 
 function close() {
+  rememberTarget('', state.tab);
   returnTo = state.openLink;
   state.openLink = null;
   emit();

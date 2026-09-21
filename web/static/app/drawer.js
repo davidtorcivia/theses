@@ -1,3 +1,4 @@
+import { rememberTarget, copyTarget } from './anchors.js';
 // The card drawer: assignees, due, question, column, state, description,
 // checklist and the activity with its notes. Everything in it is a command, and
 // the two text fields carry the version they started from.
@@ -27,6 +28,7 @@ export function closeDrawer() {
     say('Choose keep mine or take theirs before closing this card.');
     return false;
   }
+  rememberTarget('', state.tab);
   const link = state.openLink;
   const file = state.openFile;
   const panel = state.panel;
@@ -46,11 +48,12 @@ export function closeDrawer() {
   return true;
 }
 
-export function openCard(id) {
+export function openCard(id, updateURL = true) {
   if (state.openCard !== id && unresolvedCard(state.openCard)) {
     say('Choose keep mine or take theirs before opening another card.');
     return false;
   }
+  if (updateURL) rememberTarget('card', id);
   if (state.openCard !== id) {
     state.openCard = id;
     state.conflict = {};
@@ -212,6 +215,10 @@ function isoDay(typed) {
 export function renderDrawer() {
   const drawer = $('#drawer');
   const card = state.cards.get(state.openCard);
+  if (state.openCard && !card) {
+    state.openCard = null;
+    history.replaceState(null, '', '#' + state.tab);
+  }
   // One drawer, four things it can hold. A link, a file or the activity panel
   // takes it over, which is what clicking a row or the tab does.
   if (!card && !state.openLink && !state.openFile && !state.panel) {
@@ -245,10 +252,12 @@ export function renderDrawer() {
   if (state.openLink) {
     if (renderLinkDrawer(drawer)) { drawer.scrollTop = top; return; }
     state.openLink = null;
+    history.replaceState(null, '', '#' + state.tab);
   }
   if (state.openFile) {
     if (renderFileDrawer(drawer)) { drawer.scrollTop = top; return; }
     state.openFile = null;
+    history.replaceState(null, '', '#' + state.tab);
   }
   if (!card) {
     drawer.hidden = true;
@@ -261,7 +270,7 @@ export function renderDrawer() {
   const close = el('button', { class: 'x', type: 'button', text: 'Close', 'data-k': 'close', onclick: closeDrawer });
   drawer.append(el('div', { class: 'dh' },
     el('span', { class: 'mono', text: (column ? column.name : '') + ' · ' + (card.done_at ? 'done' : 'open') }),
-    close));
+    copyTarget(state.open, 'card', card.id), close));
 
   const heading = el('h2', { spellcheck: 'false', 'data-k': 'title' }, rendered(card.title));
   if (canEdit()) {
@@ -568,7 +577,7 @@ function activity(card) {
         onclick: () => send('comment.delete', { comment: note.id }).catch((e) => say(e.message)),
       }));
     }
-    list.append(el('li', {}, initials(person), line));
+    list.append(el('li', { 'data-comment': note.id, tabindex: '-1' }, initials(person), line));
   }
   return list;
 }

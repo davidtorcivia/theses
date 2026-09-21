@@ -356,3 +356,18 @@ func Mentions(source string) []string {
 	})
 	return out
 }
+
+// References returns proposition tokens outside code and escaped text.
+func References(source string) []int64 {
+	var ids []int64
+	seen := map[int64]bool{}
+	doc := md.Parser().Parse(text.NewReader([]byte(source)))
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if p, ok := n.(*proposition); ok && entering && !seen[p.id] {
+			seen[p.id] = true
+			ids = append(ids, p.id)
+		}
+		return ast.WalkContinue, nil
+	})
+	return ids
+}

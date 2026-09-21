@@ -168,7 +168,7 @@ func TestActorIsNeverNotifiedOfTheirOwnChange(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("wrote %d rows, want 1 (Ada moved her own card)", len(got))
 	}
-	if got[0].Payload.Items[0].URL != "https://example.com/p/3" {
+	if got[0].Payload.Items[0].URL != "https://example.com/p/3#card-7" {
 		t.Errorf("link = %q", got[0].Payload.Items[0].URL)
 	}
 }

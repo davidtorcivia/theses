@@ -116,3 +116,20 @@ func TestRecoveryCommitsQueueAndCursorTogether(t *testing.T) {
 		t.Fatalf("nonmatching event: %d %v", n, err)
 	}
 }
+
+func TestNoticeLinksTargetTheChangedItem(t *testing.T) {
+	s := &Service{baseURL: "https://example.com"}
+	for _, tc := range []struct {
+		n    Notice
+		want string
+	}{
+		{Notice{Proposition: 7, Card: 12, Entity: "comment", EntityID: 20}, "https://example.com/p/7#card-12"},
+		{Notice{Proposition: 7, Entity: "block", EntityID: 20}, "https://example.com/p/7#block-20"},
+		{Notice{Proposition: 7, Entity: "file", EntityID: 9}, "https://example.com/p/7#file-9"},
+		{Notice{Proposition: 7, Entity: "proposition", EntityID: 7}, "https://example.com/p/7"},
+	} {
+		if got := s.noticeLink(tc.n); got != tc.want {
+			t.Errorf("%+v: %s", tc.n, got)
+		}
+	}
+}

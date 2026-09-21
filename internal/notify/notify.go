@@ -185,12 +185,21 @@ func (s *Service) Handle(ctx context.Context, e core.Event) error {
 }
 
 // link is the deep link a notification carries.
-//
-// ponytail: a card has no URL of its own yet, so everything points at the board
-// it is on. When the board takes a card in its path this returns that instead.
 func (s *Service) link(proposition int64) string {
 	if proposition == 0 {
 		return s.baseURL + "/"
 	}
 	return s.baseURL + "/p/" + strconv.FormatInt(proposition, 10)
+}
+
+func (s *Service) noticeLink(m Notice) string {
+	url := s.link(m.Proposition)
+	kind, id := m.Entity, m.EntityID
+	if m.Card > 0 {
+		kind, id = "card", m.Card
+	}
+	if id > 0 && (kind == "card" || kind == "file" || kind == "block") {
+		url += "#" + kind + "-" + strconv.FormatInt(id, 10)
+	}
+	return url
 }

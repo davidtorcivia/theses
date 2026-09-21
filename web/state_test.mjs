@@ -48,3 +48,24 @@ apply(removed);
 assert.ok(proposition(2), 'an owner retains the proposition after membership removal');
 assert.equal(proposition(2).members.includes(user(1).id), false, 'the owner membership row is still removed');
 console.log('state event ordering cases pass');
+
+const { material } = await import('./static/app/state.js');
+Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true });
+let release;
+const delayed = new Promise((resolve) => { release = resolve; });
+let reads = 0;
+globalThis.fetch = async () => {
+  reads++;
+  await delayed;
+  return { status: 200, ok: true, headers: new Headers({'content-type':'application/json'}), json: async () => ({ files: [{id: 8}], links: [], attachments: [] }) };
+};
+state.loaded = 0;
+const one = material();
+const two = material();
+assert.equal(one, two, 'concurrent material callers must wait for the same read');
+assert.equal(state.loaded, 0, 'loading is not loaded');
+release();
+await two;
+assert.equal(reads, 3);
+assert.equal(state.files[0].id, 8);
+assert.equal(state.loaded, state.open);

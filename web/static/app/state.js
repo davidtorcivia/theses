@@ -129,7 +129,16 @@ function loadBoard(board) {
 // is rendered into the page because that is what a reload is for; these are two
 // requests away and only the tab that shows them needs them. Events keep them
 // up to date from then on.
-export async function material() {
+let materialRead = null;
+export function material() {
+  if (materialRead?.proposition === state.open) return materialRead.promise;
+  const read = { proposition: state.open };
+  read.promise = loadMaterial().finally(() => { if (materialRead === read) materialRead = null; });
+  materialRead = read;
+  return read.promise;
+}
+
+async function loadMaterial() {
   if (!state.open || state.loaded === state.open) return;
   // With no connection there is nothing to read them from, and every render
   // would try again and say so again over whatever else is on the bar. What
@@ -150,7 +159,6 @@ export async function material() {
   lastTried = Date.now();
   const proposition = state.open;
   const since = state.seq;
-  state.loaded = proposition;
   try {
     const [links, files, attached] = await Promise.all([
       api.get('/links?proposition=' + proposition),
@@ -168,6 +176,7 @@ export async function material() {
     for (const ev of recent.values()) {
       if (ev.proposition === proposition && ev.seq > since && materialEntities.has(ev.entity)) apply({ ...ev, seq: 0 });
     }
+    state.loaded = proposition;
     state.materialFailed = false;
     // This is the only thing that knows the links and files of a proposition,
     // so it is the only thing that writes them.

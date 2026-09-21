@@ -1,3 +1,4 @@
+import { copyTarget } from './anchors.js';
 // The document under the board: the tabs, the blocks, the source view, the
 // history with its diff, and the one choice a conflict asks for.
 //
@@ -403,6 +404,7 @@ export function renderDocument() {
     // The links sit together at the right. One auto margin each would share
     // the space between them and put History in the middle of the row.
     const links = el('div', { class: 'dlinks' },
+      copyTarget(state.open, 'document', doc.id),
       el('button', {
         class: 'lnk', type: 'button', id: 'dhistory', text: 'History',
         onclick: () => openHistory(doc),
@@ -1111,6 +1113,9 @@ function blockNode(b) {
   // moment they leave.
   if (here.length) node.append(add(el('div', { class: 'src' }), raw(b.text, at)));
   else add(node, body(b.text));
+  const copy = copyTarget(state.open, 'block', b.id);
+  copy.addEventListener('keydown', (e) => e.stopPropagation());
+  node.append(copy);
   for (const p of here) {
     const person = user(p.id);
     node.append(el('span', {

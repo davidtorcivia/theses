@@ -1,3 +1,4 @@
+import { rememberTarget, copyTarget } from './anchors.js';
 // The files pane and the file drawer: drop a file and it goes straight to the
 // bucket, folders as facets, versions, and a download that is a presigned GET.
 
@@ -348,6 +349,7 @@ export function openFile(id) {
     say('Choose keep mine or take theirs before opening a file.');
     return false;
   }
+  rememberTarget('file', id);
   state.openFile = id;
   state.openCard = null;
   state.openLink = null;
@@ -407,7 +409,7 @@ export function renderFileDrawer(drawer) {
     heading.addEventListener('click', edit);
     activate(heading, edit);
   } else heading.tabIndex = -1;
-  drawer.append(heading);
+  drawer.append(heading, copyTarget(state.open, 'file', file.id));
   drawer.append(preview(file, busy));
   drawer.append(props(file));
 
@@ -424,7 +426,7 @@ export function renderFileDrawer(drawer) {
       onclick: () => download(file),
     }));
     buttons.append(el('button', {
-      class: 'lnk', type: 'button', text: 'Copy link',
+      class: 'lnk', type: 'button', text: 'Copy temporary download URL',
       onclick: async (e) => {
         const button = e.currentTarget;
         try {
@@ -445,6 +447,7 @@ export function renderFileDrawer(drawer) {
         try {
           await api.del('/files/' + file.id);
           state.files = state.files.filter((f) => f.id !== file.id);
+          rememberTarget('', state.tab);
           state.openFile = null;
           emit();
         } catch (err) {
@@ -462,6 +465,7 @@ export function renderFileDrawer(drawer) {
 }
 
 function close() {
+  rememberTarget('', state.tab);
   returnTo = state.openFile;
   state.openFile = null;
   emit();
