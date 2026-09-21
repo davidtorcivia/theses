@@ -122,7 +122,7 @@ func TestDriveImportStreamsIntoTheBucket(t *testing.T) {
 }
 
 func TestDriveImportRetryUsesOneFile(t *testing.T) {
-	h, _, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
+	h, drive, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
 	csrf := h.csrf("/profile")
 	var first int64
 	for range 2 {
@@ -149,6 +149,7 @@ func TestDriveImportRetryUsesOneFile(t *testing.T) {
 			t.Fatal("retry created another file")
 		}
 		first = answer.File.ID
+		drive.Close()
 	}
 }
 

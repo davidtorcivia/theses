@@ -26,6 +26,11 @@ const refusedKey=requests.at(-1).headers['Idempotency-Key'];
 outcome='ok';await attempt.run('PUT','/evidence',{version:2});assert.notEqual(requests.at(-1).headers['Idempotency-Key'],refusedKey);
 console.log('HTTP uncertainty, retry identity and bounded requests pass');
 
+const nativeTimeout=AbortSignal.timeout;let deadline;
+AbortSignal.timeout=ms=>{deadline=ms;return nativeTimeout(ms);};
+try{await api.post('/drive/import',{});assert.ok(deadline>6*60*60*1000,'Drive request outlasts the server copy deadline');}
+finally{AbortSignal.timeout=nativeTimeout;}
+
 const timers=new Map();let tick=0,xhr;
 const originalSetTimeout=globalThis.setTimeout,originalClearTimeout=globalThis.clearTimeout;
 globalThis.setTimeout=(fn,ms)=>{assert.equal(ms,120000);timers.set(++tick,fn);return tick;};

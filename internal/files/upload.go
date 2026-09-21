@@ -344,6 +344,9 @@ func (s *Service) abandon(ctx context.Context, row File) {
 		if current.State != stateUploading || current.ObjectKey != row.ObjectKey {
 			return ErrState
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM client_keys WHERE activity_id IN (SELECT id FROM activity WHERE entity='file' AND entity_id=? AND action='create')`, row.ID); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, row.ID)
 		return err
 	}); err != nil {

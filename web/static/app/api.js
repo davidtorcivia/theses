@@ -28,7 +28,7 @@ async function call(method, path, body, extra) {
   try {
     res = await fetch('/app' + path, {
       method,
-      signal: AbortSignal.timeout(path === '/drive/import' ? 30 * 60 * 1000 : 30000),
+      signal: AbortSignal.timeout(path === '/drive/import' ? (6 * 60 + 1) * 60 * 1000 : 30000),
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });

@@ -40,6 +40,8 @@ var ErrImportSize = fmt.Errorf("a file imported this way has to be between 1 byt
 // checks the browser path runs are run here too, on the same function.
 func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
 	name, folder string, size int64, body io.Reader) (File, error) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
 	if size <= 0 || size > maxImport {
 		return File{}, ErrImportSize
 	}

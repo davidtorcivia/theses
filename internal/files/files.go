@@ -37,6 +37,8 @@ type Service struct {
 	HTTP   *http.Client
 	// ponytail: serialize upload setup, not file bytes; use per-key locks if setup throughput matters.
 	createMu sync.Mutex
+	// ponytail: serialize server-side copies; use per-key locks if parallel imports are needed.
+	importMu sync.Mutex
 }
 
 // New registers this package's entities with core and returns the service. It
