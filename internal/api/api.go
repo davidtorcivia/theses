@@ -104,9 +104,10 @@ type MeView struct {
 }
 
 type TokenView struct {
-	ID     int64    `json:"id"`
-	Name   string   `json:"name"`
-	Scopes []string `json:"scopes"`
+	ExpiresAt *int64   `json:"expires_at,omitempty"`
+	ID        int64    `json:"id"`
+	Name      string   `json:"name"`
+	Scopes    []string `json:"scopes"`
 }
 
 // An OwnerView is the person a token belongs to. It carries the email address
@@ -120,8 +121,13 @@ type OwnerView struct {
 }
 
 func (p Principal) Me() MeView {
+	var expires *int64
+	if p.Token.ExpiresAt.Valid {
+		n := p.Token.ExpiresAt.Int64
+		expires = &n
+	}
 	return MeView{
-		Token: TokenView{ID: p.Token.ID, Name: p.Token.Name, Scopes: p.Scopes()},
+		Token: TokenView{ExpiresAt: expires, ID: p.Token.ID, Name: p.Token.Name, Scopes: p.Scopes()},
 		User: OwnerView{
 			ID: p.User.ID, Handle: p.User.Handle, Name: p.User.Name,
 			Email: p.User.Email, Role: p.User.Role,
@@ -157,7 +163,7 @@ func (a *API) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 		token, user, err := a.auth.LookupAPIToken(r.Context(), presented)
-		if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, auth.ErrTokenExpired) || errors.Is(err, store.ErrNotFound) {
 			a.unauthorized(w, "that token is not valid")
 			return
 		}

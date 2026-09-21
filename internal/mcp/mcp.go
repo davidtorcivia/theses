@@ -80,9 +80,8 @@ func New(a *api.API, db *store.DB, set *settings.Settings, log *slog.Logger, ver
 	return s
 }
 
-// MaxBodyBytes is what a POST to /mcp may be, the same as the REST API allows,
-// since a tool call is a few hundred bytes of JSON.
-const MaxBodyBytes = 64 << 10
+// MaxBodyBytes allows a transcript import plus the JSON-RPC envelope.
+const MaxBodyBytes = (4 << 20) + (64 << 10)
 
 // keyed puts a tool call's key in the context. The tools that make something
 // take one, because an agent that never saw the answer to a call cannot tell a

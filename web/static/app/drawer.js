@@ -4,7 +4,7 @@ import { rememberTarget, copyTarget } from './anchors.js';
 // the two text fields carry the version they started from.
 
 import { $, el, clear, children, add, initials, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, proposition, emit, hold, canEdit, material, target, baseText, unresolvedCard } from './state.js';
+import { apply, state, user, byHandle, proposition, emit, hold, canEdit, material, target, baseText, unresolvedCard } from './state.js';
 import { send, where, newKey, count, chosen, resend, letGo, Conflict } from './net.js';
 import { file as fileRefusal } from './offline.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
@@ -103,7 +103,7 @@ function linked(card) {
 
 async function detach(what, card, id) {
   try {
-    await api.del('/cards/' + card + '/' + what + '/' + id);
+    apply((await api.del('/cards/' + card + '/' + what + '/' + id)).event);
   } catch (err) {
     say(err.message);
   }
@@ -125,7 +125,7 @@ function attachDialog(card) {
       .map((f) => ({ what: 'files', id: f.id, label: f.name, kind: f.kind || 'file' })),
   ].filter((row) => !onCard.has(row.what + '/' + row.id));
 
-  const dialog = el('dialog', {},
+  const dialog = el('dialog', { 'aria-label':'Attach to '+card.title },
     el('h3', { text: 'Attach to ' + card.title }),
     list,
     el('div', { class: 'acts' },
@@ -143,7 +143,7 @@ function attachDialog(card) {
         const button = e.currentTarget;
         button.disabled = true;
         try {
-          await api.post('/cards/' + card.id + '/' + row.what + '/' + row.id);
+          apply((await api.post('/cards/' + card.id + '/' + row.what + '/' + row.id)).event);
           button.closest('li').remove();
         } catch (err) {
           say(err.message);

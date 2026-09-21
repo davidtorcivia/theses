@@ -235,7 +235,7 @@
         <ul class="pending">
           {{range .Tokens}}<li>
             <span>{{.Name}}<small class="dim"> · {{.OwnerName}}</small></span>
-            <span class="mono">{{.Scopes}} · created {{.Created}} · {{.Used}}</span>
+            <span class="mono">{{.Scopes}} · created {{.Created}} · {{.Used}} · {{.Expires}}</span>
             <form method="post" action="/settings/tokens/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="lnk del" type="submit">Revoke</button></form>
           </li>{{else}}<li><span class="mono dim">None.</span></li>{{end}}
         </ul>
@@ -243,6 +243,7 @@
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <label class="f"><span class="l">Name</span><input name="name" placeholder="What is it for" required></label>
           <label class="f"><span class="l">Scopes</span><select name="scopes"><option value="read">read</option><option value="read write">read and write</option><option value="read write files">read, write and files</option><option value="read write files admin">everything</option></select></label>
+          <label class="f"><span class="l">Key expiry</span><select name="expiry_days"><option value="30">30 days</option><option value="7">7 days</option><option value="90">90 days</option><option value="365">1 year</option><option value="0">No expiry</option></select></label>
           <button class="act" type="submit">Create a token</button>
         </form>
         <p class="small dim">The token appears here, once, as soon as it is made.</p>

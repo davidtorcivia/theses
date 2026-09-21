@@ -438,7 +438,7 @@ export const remember = (row) => withStore('uploads', 'readwrite', (store) => st
 export const forget = (file) => withStore('uploads', 'readwrite', (store) => store.delete(file));
 
 export async function uploads() {
-  return (await withStore('uploads', 'readonly', (store) => store.getAll())) || [];
+  return await withStore('uploads', 'readonly', (store) => store.getAll());
 }
 
 export async function sourceDrafts(account, proposition) {

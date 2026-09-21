@@ -15,7 +15,11 @@ func tokenViews(tokens []*store.APIToken) []tokenView {
 		if t.LastUsedAt.Valid {
 			used = "last used " + on(t.LastUsedAt.Int64)
 		}
-		out = append(out, tokenView{ID: t.ID, Name: t.Name, Scopes: t.Scopes, Created: on(t.CreatedAt), Used: used})
+		expiry := "no expiry"
+		if t.ExpiresAt.Valid {
+			expiry = "expires " + on(t.ExpiresAt.Int64)
+		}
+		out = append(out, tokenView{Expires: expiry, ID: t.ID, Name: t.Name, Scopes: t.Scopes, Created: on(t.CreatedAt), Used: used})
 	}
 	return out
 }

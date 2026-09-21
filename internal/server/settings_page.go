@@ -39,10 +39,10 @@ type inviteView struct {
 }
 
 type tokenView struct {
-	ID            int64
-	Name, Scopes  string
-	OwnerName     string
-	Created, Used string
+	ID                     int64
+	Name, Scopes           string
+	OwnerName              string
+	Created, Used, Expires string
 }
 
 type bucketView struct {
@@ -855,6 +855,16 @@ func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes := strings.Fields(r.PostFormValue("scopes"))
 	name := strings.TrimSpace(r.PostFormValue("name"))
+	var expires int64
+	switch days := r.PostFormValue("expiry_days"); days {
+	case "", "0":
+	case "7", "30", "90", "365":
+		n, _ := strconv.Atoi(days)
+		expires = s.auth.Now().Add(time.Duration(n) * 24 * time.Hour).Unix()
+	default:
+		s.back(w, r, to, map[string]any{"Error": "Choose a valid key expiry."})
+		return
+	}
 	var token string
 	err := s.write(r, "api_token", name, "create", "", strings.Join(scopes, " "), func(q store.Querier) error {
 		var err error
@@ -868,7 +878,7 @@ func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("%w: %s", auth.ErrAPITokenInput, why)
 			}
 		}
-		token, err = s.auth.CreateAPITokenWith(r.Context(), q, u.ID, name, scopes)
+		token, err = s.auth.CreateExpiringAPITokenWith(r.Context(), q, u.ID, name, scopes, expires)
 		return err
 	})
 	if err != nil {

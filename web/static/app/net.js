@@ -599,7 +599,9 @@ addEventListener('offline', () => {
 async function post(row) {
   if (row.cmd !== 'link.add') throw new Error('that did not go through');
   try {
-    return await api.post('/links', row.args, { 'Idempotency-Key': row.idem });
+    const answer=await api.post('/links', row.args, { 'Idempotency-Key': row.idem });
+    apply(answer.event);
+    return answer;
   } catch (err) {
     if (err.status === 0) throw new Offline();
     throw err;

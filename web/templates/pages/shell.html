@@ -4,7 +4,7 @@
   <input type="search" placeholder="Search, jump, do…" spellcheck="false" aria-label="Search this workspace">
   <ul></ul>
 </div></div>
-<p id="netbar" class="mono" hidden>Offline. Your changes are kept on this device.</p>
+<p id="netbar" role="status" aria-live="polite" aria-atomic="true" class="mono" hidden>Offline. Your changes are kept on this device.</p>
 <script type="application/json" id="payload">{{.Payload}}</script>{{end}}
 
 {{define "scripts"}}<script type="module" src="{{asset "app/main.js"}}"></script>{{end}}

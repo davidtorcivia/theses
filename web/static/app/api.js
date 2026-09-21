@@ -28,11 +28,12 @@ async function call(method, path, body, extra) {
   try {
     res = await fetch('/app' + path, {
       method,
+      signal: AbortSignal.timeout(path === '/drive/import' ? 30 * 60 * 1000 : 30000),
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new Refused('You are offline. That did not go through.', 0);
+    throw new Refused(method === 'GET' ? 'Could not connect. Retry when connected.' : 'The response was lost. The change may have saved; retry the same request to confirm.', 0);
   }
   if (res.status === 204) return null;
   // A session that has run out is a redirect to the sign-in page, which fetch
@@ -48,13 +49,13 @@ async function call(method, path, body, extra) {
       offline.signedOut();
       throw new Refused('Your session has ended. Sign in again.', 401);
     }
-    throw new Refused('That did not go through.', res.status);
+    throw new Refused(method === 'GET' ? 'Could not read the response.' : 'The response could not be confirmed. Retry the same request.', method === 'GET' ? res.status : 0);
   }
   let payload = null;
   try {
     payload = await res.json();
   } catch {
-    throw new Refused('That did not go through.', res.status);
+    throw new Refused(method === 'GET' ? 'Could not read the response.' : 'The response could not be confirmed. Retry the same request.', method === 'GET' ? res.status : 0);
   }
   if (!res.ok) {
     throw new Refused((payload && payload.error) || 'That did not go through.', res.status);
@@ -93,8 +94,12 @@ export async function put(url, headers, body, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url, true);
+    let stalled=false, timer;
+    const watch=()=>{clearTimeout(timer);timer=setTimeout(()=>{stalled=true;xhr.abort();},120000);};
+    xhr.addEventListener('loadend',()=>clearTimeout(timer));
     for (const [k, v] of send) xhr.setRequestHeader(k, v);
     xhr.upload.addEventListener('progress', (e) => {
+      watch();
       if (onProgress && e.lengthComputable) onProgress(e.loaded, e.total);
     });
     xhr.addEventListener('load', () => {
@@ -107,7 +112,8 @@ export async function put(url, headers, body, onProgress) {
     xhr.addEventListener('error', () =>
       reject(new Refused(
         'The bucket refused the upload. Check its CORS rule on the Storage settings page.', 0)));
-    xhr.addEventListener('abort', () => reject(new Refused('That upload was stopped.', 0)));
+    xhr.addEventListener('abort', () => reject(new Refused(stalled?'The upload stopped making progress. Retry to resume it.':'That upload was stopped.', 0)));
+    watch();
     xhr.send(body);
   });
 }
@@ -115,4 +121,23 @@ export async function put(url, headers, body, onProgress) {
 function bucketTrouble(status) {
   if (status === 403) return 'The bucket refused that upload. Its keys or its CORS rule need a look.';
   return 'The bucket answered ' + status + '. The upload did not finish.';
+}
+
+// An uncertain response keeps both the key and payload until a retry answers.
+export function mutation() {
+  let pending;
+  return {
+    get pending() { return Boolean(pending); },
+    async run(method, path, body) {
+      pending ||= { method, path, body: structuredClone(body), key: crypto.randomUUID() };
+      try {
+        const out = await call(pending.method, pending.path, pending.body, { 'Idempotency-Key': pending.key });
+        pending = null;
+        return out;
+      } catch (err) {
+        if (err.status >= 400 && err.status < 500 && err.status !== 408) pending = null;
+        throw err;
+      }
+    },
+  };
 }

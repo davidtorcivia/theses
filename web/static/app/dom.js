@@ -174,7 +174,7 @@ export function ask(heading, lead, confirmText) {
   return new Promise((resolve) => {
     const keep = el('button', { class: 'lnk plain', type: 'button', text: 'Keep it' });
     const go = el('button', { class: 'lnk del', type: 'button', text: confirmText });
-    const dialog = el('dialog', {},
+    const dialog = el('dialog', { 'aria-label':heading },
       el('h3', { text: heading }),
       el('p', { text: lead }),
       el('div', { class: 'acts' }, keep, go));

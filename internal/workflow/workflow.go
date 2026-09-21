@@ -30,6 +30,20 @@ type Service struct {
 	paused       bool
 }
 
+func New(c *core.Service) *Service {
+	read := c.Read
+	c.Read = func(ctx context.Context, q store.Querier, entity string, id int64) (any, error) {
+		switch entity {
+		case "evidence":
+			return scanEvidence(q.QueryRowContext(ctx, "SELECT "+evidenceColumns+" FROM evidence WHERE id=?", id))
+		case "calendar_event":
+			return calendarEvent(ctx, q, id)
+		}
+		return read(ctx, q, entity, id)
+	}
+	return &Service{Service: c}
+}
+
 func (s *Service) Readable(ctx context.Context, a core.Actor, prop int64) error {
 	u, err := store.UserByID(ctx, s.DB, a.ID)
 	if err != nil {

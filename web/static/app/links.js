@@ -4,8 +4,8 @@ import { rememberTarget, copyTarget } from './anchors.js';
 // copy the citation.
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
-import { state, user, emit, hold, canEdit, material, unresolvedCard } from './state.js';
-import { send, queueLink, where } from './net.js';
+import { state, user, emit, hold, canEdit, material, unresolvedCard, apply as applyEvent } from './state.js';
+import { send, queueLink, replay, where } from './net.js';
 import { anchorOf } from './docs.js';
 import { openCard } from './drawer.js';
 import { activate } from './keys.js';
@@ -59,32 +59,16 @@ function addLine() {
     if (e.key !== 'Enter') return;
     const url = field.value.trim();
     if (!url) return;
-    // Reading the page is the server's job, so with no connection the URL goes
-    // in the outbox and the title, the author and the date are fetched on the
-    // way back up.
-    if (!navigator.onLine) {
-      field.value = '';
-      const kept = await queueLink(state.open, url);
-      say(kept
-        ? 'That link is kept on this device. It is read when the connection is back.'
-        : 'This browser will not keep it. Paste it again when the connection is back.');
-      return;
-    }
-    field.disabled = true;
-    field.value = 'Reading ' + url + '…';
+    field.disabled=true;
     try {
-      const link = await api.post('/links', { proposition: state.open, url });
-      // The event arrives over the socket too; applying it here as well is
-      // free, because every payload is the whole row.
-      const at = state.links.findIndex((l) => l.id === link.id);
-      if (at < 0) state.links.unshift(link); else state.links[at] = link;
-      openLink(link.id);
-    } catch (err) {
-      say(err.message);
-      field.disabled = false;
-      field.value = url;
-      field.focus();
-    }
+      const kept=await queueLink(state.open,url);
+      if(!kept){say('This browser could not keep the link. Your URL is still here.');return;}
+      field.value='';
+      say(navigator.onLine?'Link queued. Reading its details…':'Link kept on this device until connected.');
+      replay().catch(err=>say(err.message));
+    }catch(err){say(err.message);}
+    finally{field.disabled=false;}
+
   });
   return field;
 }
@@ -294,8 +278,8 @@ export function renderLinkDrawer(drawer) {
       onclick: async () => {
         if (!await ask('Remove this link?', 'The note and the question go with it.', 'Remove it')) return;
         try {
-          await api.del('/links/' + link.id);
-          state.links = state.links.filter((l) => l.id !== link.id);
+          applyEvent((await api.del('/links/' + link.id)).event);
+          if(state.open!==link.proposition_id||state.openLink&&state.openLink!==link.id)return;
           rememberTarget('', state.tab);
           state.openLink = null;
           emit();
@@ -446,7 +430,7 @@ function usedIn(link) {
 
 async function detach(card, link) {
   try {
-    await api.del('/cards/' + card + '/links/' + link);
+    applyEvent((await api.del('/cards/' + card + '/links/' + link)).event);
   } catch (err) {
     say(err.message);
   }
@@ -465,6 +449,8 @@ async function save(link, change) {
 }
 
 function apply(link) {
+  if(link.event){applyEvent(link.event);return;}
+  if(link.proposition_id!==state.open)return;
   const at = state.links.findIndex((l) => l.id === link.id);
   if (at < 0) state.links.unshift(link); else state.links[at] = link;
 }

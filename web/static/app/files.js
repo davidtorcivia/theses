@@ -6,7 +6,7 @@ import { targetURL, rememberTarget, copyTarget } from './anchors.js';
 // bucket, folders as facets, versions, and a download that is a presigned GET.
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
-import { state, user, emit, hold, canEdit, material, unresolvedCard } from './state.js';
+import { state, user, emit, hold, canEdit, material, unresolvedCard, apply, acceptFile } from './state.js';
 import { when, copy } from './links.js';
 import * as api from './api.js';
 import * as upload from './upload.js';
@@ -38,6 +38,7 @@ export function renderFiles(pane) {
     el('span', { id: 'fsum', class: 'mono', text: `${rows.length} of ${state.files.length} · ${bytes(total())}` })));
 
   if (canEdit()) pane.append(dropZone());
+  if(recoveryError)pane.append(el('p',{role:'status'},recoveryError,' ',el('button',{type:'button',class:'lnk',text:'Retry upload recovery',onclick:()=>resumeWhatIsLeft()})));
 
   pane.append(el('div', { class: 'tools' },
     el('input', {
@@ -88,7 +89,7 @@ function dropZone() {
       el('button', { class: 'lnk', type: 'button', text: 'choose', onclick: () => picker.click() }),
       ' · files go straight to the bucket, never through this app'),
     el('span', { class: 'mono' },
-      driveButton((row) => { put(row); emit(); }),
+      driveButton((row, since) => { put(row, since); emit(); }),
       ' · a file in Drive is copied through this app into the bucket'),
     picker);
   for (const name of ['dragenter', 'dragover']) {
@@ -125,8 +126,11 @@ async function take(chosen) {
 // as the bytes go.
 async function run(file, folder, replace, queued = null) {
   let id = 0;
+  const destination=queued?.proposition||state.open;
+  const since=state.seq;
+  const account=queued?.me||state.me;
   if (!queued) {
-    const held = await upload.hold(state.open, state.me, file, folder, replace);
+    const held = await upload.hold(destination, account, file, folder, replace);
     if (!held) {
       say('This browser could not save upload progress. Free browser storage and add the file again.');
       return;
@@ -137,31 +141,31 @@ async function run(file, folder, replace, queued = null) {
       return;
     }
   }
-  state.uploads.set(queued.file, { name: file.name, at: 0, queued: true });
+  if(state.open===destination)state.uploads.set(queued.file, { name: file.name, at: 0, queued: true });
   emit();
   // Nothing can be uploaded with no connection: the bytes go to the bucket, and
   // the bucket is on the far side of the same network. The file waits in the
   // list instead and goes up when there is a line again.
   if (!navigator.onLine) {
-    state.uploads.set(queued.file, { name: file.name, at: 0, queued: true });
+    if(state.open===destination)state.uploads.set(queued.file, { name: file.name, at: 0, queued: true });
     emit();
     return;
   }
   try {
-    const ready = await upload.start(state.open, state.me, file, folder, replace, {
+    const ready = await upload.start(destination, account, file, folder, replace, {
       // The row exists before a byte has moved, so the list shows it filling
       // up. The same row arrives on the socket; applying it twice is applying
       // it once, because every payload is the whole row.
-      started: (row) => { id = row.id; put(row); progress(id, file.name, 0); },
-      progress: (fraction) => progress(id, file.name, fraction),
+      started: (row) => { id = row.id; put(row,since); progress(id, file.name, 0,destination); },
+      progress: (fraction) => progress(id, file.name, fraction,destination),
       remembered: () => state.uploads.delete(queued.file),
     }, queued);
-    state.uploads.delete(ready ? ready.id : id);
-    if (ready) put(ready);
+    state.uploads.delete(ready ? ready.file.id : id);
+    if (ready?.event) apply(ready.event); else if(ready)put(ready.file,since);
     emit();
   } catch (err) {
     say(err.message);
-    state.uploads.set(id || queued.file, {
+    if(state.open===destination)state.uploads.set(id || queued.file, {
       name: file.name, at: 0, error: err.message,
       queued: !id, row: !id ? queued : undefined,
     });
@@ -169,15 +173,14 @@ async function run(file, folder, replace, queued = null) {
   }
 }
 
-function progress(id, name, fraction) {
-  if (!id) return;
+function progress(id, name, fraction, destination=state.open) {
+  if (state.open!==destination||!id) return;
   state.uploads.set(id, { name, at: fraction });
   emit();
 }
 
-function put(row) {
-  const at = state.files.findIndex((f) => f.id === row.id);
-  if (at < 0) state.files.unshift(row); else state.files[at] = row;
+function put(row,since) {
+  acceptFile(row,since);
 }
 
 // resumeWhatIsLeft picks up uploads this browser started and did not finish,
@@ -187,6 +190,7 @@ function put(row) {
 // browser says there is a network.
 let running = false;
 let asked = false;
+let recoveryError='';
 async function resumeWhatIsLeft() {
   if (running || !state.open || !navigator.onLine) return;
   running = true;
@@ -203,7 +207,9 @@ async function carryOn() {
   let rows = [];
   try {
     rows = await upload.pending();
-  } catch {
+    if(recoveryError){recoveryError="";emit();}
+  } catch (err) {
+    recoveryError=err.message;emit();
     return;
   }
   for (const row of rows) {
@@ -213,6 +219,7 @@ async function carryOn() {
       continue;
     }
     if (row.proposition !== state.open) continue;
+    const since=state.seq;
     const name = row.name || (row.handle ? row.handle.name : 'file');
     // A file that waited for a connection has no server row yet, so it starts
     // rather than resumes, and its placeholder leaves the list with it.
@@ -227,20 +234,21 @@ async function carryOn() {
       continue;
     }
     if (!row.handle) {
-      state.uploads.set(row.file, { name, at: 0, reselect: true, row });
+      try{const {file:current}=await api.get('/files/'+row.file);if(current.state==='ready'){await upload.forget(row.file);state.uploads.delete(row.file);put(current,since);emit();continue;}}catch(err){if(err.status===404){await upload.forget(row.file);continue;}}
+      if(state.open===row.proposition)state.uploads.set(row.file, { name, at: 0, reselect: true, row });
       emit();
       continue;
     }
-    progress(row.file, name, 0);
+    progress(row.file, name, 0,row.proposition);
     try {
       const ready = await upload.resume(row, {
-        started: put,
-        progress: (fraction) => progress(row.file, name, fraction),
+        started: row=>put(row,since),
+        progress: (fraction) => progress(row.file, name, fraction,row.proposition),
       });
-      state.uploads.delete(ready ? ready.id : row.file);
-      if (ready) put(ready);
+      state.uploads.delete(ready ? ready.file.id : row.file);
+      if (ready?.event) apply(ready.event); else if(ready)put(ready.file,since);
     } catch (err) {
-      state.uploads.set(row.file, { name, at: 0, error: err.message });
+      if(state.open===row.proposition)state.uploads.set(row.file, { name, at: 0, error: err.message });
       // A file the server no longer has is one the sweep took, and one it
       // refuses outright is one it will refuse again: the note goes with both
       // rather than being offered on every reload from now on.
@@ -458,10 +466,10 @@ export function renderFileDrawer(drawer) {
       class: 'lnk del', type: 'button', text: 'Delete',
       onclick: async () => {
         if (!await ask('Delete ' + file.name + '?',
-          'The object is removed from the bucket. This one cannot be undone.', 'Delete it')) return;
+          'Completed files can be restored for seven days from Activity → Recently deleted. Incomplete uploads are removed permanently.', 'Delete it')) return;
         try {
-          await api.del('/files/' + file.id);
-          state.files = state.files.filter((f) => f.id !== file.id);
+          apply((await api.del('/files/' + file.id)).event);
+          if(state.open!==file.proposition_id||state.openFile&&state.openFile!==file.id)return;
           rememberTarget('', state.tab);
           state.openFile = null;
           emit();
@@ -578,7 +586,7 @@ function usedIn(file) {
       canEdit() ? el('span', { class: 'dim', text: ' · ' }) : null,
       canEdit() ? el('button', {
         class: 'lnk del', type: 'button', text: 'Detach',
-        onclick: () => api.del('/cards/' + join.card_id + '/files/' + file.id).catch((err) => say(err.message)),
+        onclick: () => api.del('/cards/' + join.card_id + '/files/' + file.id).then(answer=>apply(answer.event)).catch((err) => say(err.message)),
       }) : null));
   }
   if (!on.length) list.append(el('li', { class: 'dim', text: 'No cards yet.' }));
@@ -588,8 +596,7 @@ function usedIn(file) {
 async function save(file, change) {
   try {
     const answer = await api.patch('/files/' + file.id, change);
-    const at = state.files.findIndex((f) => f.id === answer.file.id);
-    if (at >= 0) state.files[at] = answer.file;
+    apply(answer.event);
   } catch (err) {
     say(err.message);
   }

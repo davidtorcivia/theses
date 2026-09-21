@@ -1,13 +1,7 @@
 import { newKey } from './net.js';
 import { el, clear, say, ask } from './dom.js';
-import { state, user, canEdit, emit } from './state.js';
+import { state, user, canEdit, apply } from './state.js';
 import * as api from './api.js';
-
-function changedFile(file) {
-  const at = state.files.findIndex((f) => f.id === file.id);
-  if (at >= 0) state.files[at] = file;
-  emit();
-}
 
 export function editFileNotes(file) {
   const note = el('textarea', { rows: 8, value: file.note_md || '', 'aria-label': 'File notes' });
@@ -34,7 +28,7 @@ export function editFileNotes(file) {
     e.preventDefault(); save.disabled = note.disabled = tags.disabled = cancel.disabled = true; clear(choices); status.textContent = 'Saving…';
     try {
       const answer = await api.patch('/files/' + file.id, { note_md: note.value, tags: tags.value, metadata_version: version });
-      saved = true; changedFile(answer.file); dialog.close();
+      saved = true; apply(answer.event); dialog.close();
     } catch (err) {
       status.textContent = err.status === 409 ? 'Someone changed these notes. Your text is still here. Choose which version to keep.' : err.message;
       if (err.status === 409) {
@@ -79,10 +73,10 @@ async function loadComments(file, entry) {
         if (player) player.currentTime = comment.position_ms / 1000;
         else say('Download the recording to view this timestamp.');
       } }), ' · ' + user(comment.user_id).name + ' · ' + comment.body_md + (comment.resolved_at?' · Resolved':''),
- canEdit()?el('button',{type:'button',class:'lnk',text:comment.resolved_at?'Reopen':'Resolve',onclick:async(e)=>{e.currentTarget.disabled=true;try{const answer=await api.patch(`/files/${file.id}/comments/${comment.id}`,{resolved:!comment.resolved_at,version:comment.version});changedFile(answer.file);await loadComments(answer.file,entry);}catch(err){say(err.message);loadComments(file,entry);}}}):null,
+ canEdit()?el('button',{type:'button',class:'lnk',text:comment.resolved_at?'Reopen':'Resolve',onclick:async(e)=>{e.currentTarget.disabled=true;try{const answer=await api.patch(`/files/${file.id}/comments/${comment.id}`,{resolved:!comment.resolved_at,version:comment.version});apply(answer.event);await loadComments(answer.file,entry);}catch(err){say(err.message);loadComments(file,entry);}}}):null,
       canEdit() && comment.user_id === state.me ? el('button', { type: 'button', class: 'lnk', text: 'Delete', onclick: async () => {
         if (!await ask('Delete this recording comment?', '', 'Delete')) return;
-        try { const answer = await api.del(`/files/${file.id}/comments/${comment.id}`); entry.revision = answer.file.comment_revision; entry.restoreFocus = true; changedFile(answer.file); await loadComments(answer.file, entry); } catch (err) { say(err.message); }
+        try { const answer = await api.del(`/files/${file.id}/comments/${comment.id}`); entry.revision = answer.file.comment_revision; entry.restoreFocus = true; apply(answer.event); await loadComments(answer.file, entry); } catch (err) { say(err.message); }
       } }) : null));
     }
     if (!answer.comments?.length) entry.node.append(el('p', { class: 'dim', text: 'No recording comments yet.' }));
@@ -120,7 +114,7 @@ function addComment(file, entry) {
     seconds.disabled = body.disabled = true;
     try {
       const answer = await api.post('/files/' + file.id + '/comments', attempt.body, { 'Idempotency-Key': attempt.key });
-      entry.revision = answer.file.comment_revision; changedFile(answer.file); await loadComments(answer.file, entry); dialog.close();
+      entry.revision = answer.file.comment_revision; apply(answer.event); await loadComments(answer.file, entry); dialog.close();
     } catch (err) {
       status.textContent = err.message;
       if (err.status && err.status < 500) { attempt = null; seconds.disabled = body.disabled = false; }

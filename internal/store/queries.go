@@ -355,6 +355,7 @@ type APIToken struct {
 	Scopes     string
 	CreatedAt  int64
 	LastUsedAt sql.NullInt64
+	ExpiresAt  sql.NullInt64
 }
 
 func CreateAPIToken(ctx context.Context, q Querier, userID int64, name string, hash []byte, scopes string) (int64, error) {
@@ -370,9 +371,9 @@ func CreateAPIToken(ctx context.Context, q Querier, userID int64, name string, h
 func APITokenByHash(ctx context.Context, q Querier, hash []byte) (*APIToken, error) {
 	var t APIToken
 	err := q.QueryRowContext(ctx,
-		`SELECT id, user_id, name, scopes, created_at, last_used_at FROM api_tokens
+		`SELECT id, user_id, name, scopes, created_at, last_used_at, expires_at FROM api_tokens
 		 WHERE hash = ? AND revoked_at IS NULL`, hash).
-		Scan(&t.ID, &t.UserID, &t.Name, &t.Scopes, &t.CreatedAt, &t.LastUsedAt)
+		Scan(&t.ID, &t.UserID, &t.Name, &t.Scopes, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -392,7 +393,7 @@ func ListUserAPITokens(ctx context.Context, q Querier, userID int64) ([]*APIToke
 
 func listAPITokens(ctx context.Context, q Querier, userID int64) ([]*APIToken, error) {
 	rows, err := q.QueryContext(ctx,
-		`SELECT id, user_id, name, scopes, created_at, last_used_at FROM api_tokens
+		`SELECT id, user_id, name, scopes, created_at, last_used_at, expires_at FROM api_tokens
 		 WHERE revoked_at IS NULL AND (?=0 OR user_id=?) ORDER BY created_at DESC,id DESC`, userID, userID)
 	if err != nil {
 		return nil, err
@@ -401,7 +402,7 @@ func listAPITokens(ctx context.Context, q Querier, userID int64) ([]*APIToken, e
 	var out []*APIToken
 	for rows.Next() {
 		var t APIToken
-		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.Scopes, &t.CreatedAt, &t.LastUsedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Name, &t.Scopes, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt); err != nil {
 			return nil, err
 		}
 		out = append(out, &t)

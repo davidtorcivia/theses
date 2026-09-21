@@ -168,7 +168,7 @@ func (f *fileAPI) complete(w http.ResponseWriter, r *http.Request, a core.Actor)
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After})
+	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After, "event": e})
 }
 
 func (f *fileAPI) download(w http.ResponseWriter, r *http.Request, a core.Actor) {
@@ -209,15 +209,16 @@ func (f *fileAPI) editFile(w http.ResponseWriter, r *http.Request, a core.Actor)
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After})
+	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After, "event": e})
 }
 
 func (f *fileAPI) deleteFile(w http.ResponseWriter, r *http.Request, a core.Actor) {
-	if _, err := f.svc.Delete(r.Context(), a, path(r, "id")); err != nil {
+	e, err := f.svc.Delete(r.Context(), a, path(r, "id"))
+	if err != nil {
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "event": e})
 }
 
 func (f *fileAPI) attachments(w http.ResponseWriter, r *http.Request, a core.Actor) {
@@ -254,7 +255,7 @@ func (f *fileAPI) joined(w http.ResponseWriter, r *http.Request, e core.Event, e
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"card": e.EntityID, "action": e.Action})
+	f.writeJSON(w, http.StatusOK, map[string]any{"card": e.EntityID, "action": e.Action, "event": e})
 }
 
 // read decodes a JSON body, answering the client itself when it cannot. It
@@ -315,7 +316,7 @@ func (f *fileAPI) addFileComment(w http.ResponseWriter, r *http.Request, a core.
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After})
+	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After, "event": e})
 }
 func (f *fileAPI) deleteFileComment(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	e, err := f.svc.DeleteFileComment(r.Context(), a, path(r, "id"), path(r, "comment"))
@@ -323,7 +324,7 @@ func (f *fileAPI) deleteFileComment(w http.ResponseWriter, r *http.Request, a co
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "file": e.After})
+	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "file": e.After, "event": e})
 }
 
 func (f *fileAPI) productionTemplate(w http.ResponseWriter, r *http.Request, a core.Actor) {

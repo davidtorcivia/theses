@@ -76,11 +76,12 @@ func (f *fileAPI) refetchLink(w http.ResponseWriter, r *http.Request, a core.Act
 }
 
 func (f *fileAPI) deleteLink(w http.ResponseWriter, r *http.Request, a core.Actor) {
-	if _, err := f.svc.DeleteLink(r.Context(), a, path(r, "id")); err != nil {
+	e, err := f.svc.DeleteLink(r.Context(), a, path(r, "id"))
+	if err != nil {
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "event": e})
 }
 
 // answerLink returns the row a command left, read back rather than taken from
@@ -91,5 +92,8 @@ func (f *fileAPI) answerLink(w http.ResponseWriter, r *http.Request, a core.Acto
 		f.refuse(w, r, err)
 		return
 	}
-	f.writeJSON(w, http.StatusOK, l)
+	f.writeJSON(w, http.StatusOK, struct {
+		files.Link
+		Event core.Event `json:"event"`
+	}{l, e})
 }

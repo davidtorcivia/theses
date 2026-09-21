@@ -347,7 +347,10 @@ func (s *Service) RenameDocument(ctx context.Context, a core.Actor, id int64, na
 
 // DeleteDocument takes the blocks and the revisions with it, by the cascade.
 func (s *Service) DeleteDocument(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
-	return s.document(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx, _ Document) error {
+	return s.document(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx, was Document) error {
+		if err := s.KeepDeleted(ctx, tx, was.Proposition, "document", id, was.Name); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM documents WHERE id = ?`, id)
 		return err
 	})

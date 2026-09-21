@@ -32,7 +32,6 @@ import (
 // outbound client link metadata is fetched with, safehttp's in production.
 type Service struct {
 	CompletionFailures atomic.Uint64
-	ReserveMaintenance func() (func(), error)
 	*core.Service
 	Bucket func(ctx context.Context, folder string) (*blob.Client, error)
 	HTTP   *http.Client

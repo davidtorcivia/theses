@@ -14,6 +14,7 @@ export function modal(title,wide=false) {
 }
 export async function recordingView(doc) {
   const {dialog,body}=modal('Recording view · '+doc.name,true);
+  const pinAttempt=api.mutation();
   let timer,start=0,elapsed=0,readingSize='medium',readingPace=150,cues='',pinning=false;
   const dismiss=async()=>{if(!pinning&&(!cues||await ask('Discard recording cues?','Pin the saved script to keep these cues.','Discard')))dialog.close();};
   dialog.querySelector('header button').onclick=dismiss;dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss();});
@@ -28,7 +29,7 @@ export async function recordingView(doc) {
       notes.value=cues;notes.oninput=()=>{cues=notes.value;};
       const pin=el('button',{type:'button',class:'act',text:'Pin saved script',onclick:async()=>{
         pinning=true;pin.disabled=true;notes.disabled=true;pin.textContent='Pinning…';
-        try{await api.post(`/documents/${doc.id}/snapshots`,{cues},{'Idempotency-Key':newKey()});cues='';await draw();}catch(err){say(err.message);pin.disabled=false;notes.disabled=false;pin.textContent='Pin saved script';}finally{pinning=false;}
+        try{await pinAttempt.run('POST',`/documents/${doc.id}/snapshots`,{cues});cues='';await draw();}catch(err){say(err.message);pin.disabled=false;notes.disabled=pinAttempt.pending;pin.textContent=pinAttempt.pending?'Retry pin':'Pin saved script';}finally{pinning=false;}
       }});
       const choose=el('select',{'aria-label':'Pinned script'},snapshots.map(s=>el('option',{value:s.id,text:'#'+s.id+' · '+new Date(s.created_at*1000).toLocaleString()})));
       const size=el('select',{'aria-label':'Reading text size',onchange:()=>{readingSize=size.value;stage.className='recording-stage size-'+size.value;}},['small','medium','large'].map(s=>el('option',{value:s,text:s+' type',selected:s==='medium'})));
@@ -64,7 +65,7 @@ export async function recordingView(doc) {
 export async function reviewTarget(kind,id) {
   const {dialog,body}=modal(kind==='proposition'?'Episode review history':kind==='document'?'Script review':'Recording review');
   const prop=state.open;
-  let dirty=false,saving=false;const drafts=new Map();
+  let dirty=false,saving=false;const drafts=new Map();const requestAttempt=api.mutation();
   const dismiss=async()=>{if(!saving&&(!dirty||await ask('Discard review feedback?','Your feedback has not been saved.','Discard')))dialog.close();};
   dialog.querySelector('header button').onclick=dismiss;dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss();});
   const leaving=e=>{if(dirty){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',leaving);dialog.addEventListener('close',()=>window.removeEventListener('beforeunload',leaving));
@@ -90,7 +91,8 @@ export async function reviewTarget(kind,id) {
       if(canEdit()&&kind!=='proposition'){
         const p=proposition(prop);
         const select=el('select',{'aria-label':'Reviewer'},[...state.users.values()].filter(u=>['owner','editor','researcher'].includes(u.role)&&(u.role==='owner'||p?.members?.includes(u.id))).map(u=>el('option',{value:u.id,text:u.name})));
-        const request=el('button',{type:'button',class:'act',text:'Request review of current version',onclick:async()=>{if(saving)return;request.disabled=true;saving=true;try{const answer=await api.post('/reviews',{[kind+'_id']:id,reviewer_id:Number(select.value)},{'Idempotency-Key':newKey()});apply(answer.event);await draw();}catch(err){say(err.message);request.disabled=false;}finally{saving=false;}}});
+        select.disabled=requestAttempt.pending;
+        const request=el('button',{type:'button',class:'act',text:'Request review of current version',onclick:async()=>{if(saving)return;request.disabled=true;select.disabled=true;request.textContent='Requesting…';saving=true;try{const answer=await requestAttempt.run('POST','/reviews',{[kind+'_id']:id,reviewer_id:Number(select.value)});apply(answer.event);await draw();}catch(err){say(err.message);request.disabled=false;select.disabled=requestAttempt.pending;request.textContent=requestAttempt.pending?'Retry review request':'Request review of current version';}finally{saving=false;}}});
         body.append(el('div',{class:'review-request'},el('label',{},'Reviewer',select),request));
       }
     }catch(err){clear(body).append(el('p',{text:err.message}),el('button',{class:'lnk',type:'button',text:'Retry',onclick:draw}));}
@@ -98,7 +100,7 @@ export async function reviewTarget(kind,id) {
 }
 const research=new Map();
 export function researchSection(p) {
-  let entry=research.get(p.id);if(entry)return entry;
+  let entry=research.get(p.id);if(entry){if(entry.revision!==state.researchRevision){entry.revision=state.researchRevision;if(entry.open)entry.load();}return entry;}
   const body=el('div',{class:'research-body'});
   entry=el('details',{class:'connected research'},el('summary',{},el('span',{class:'section-eyebrow',text:'THE EVIDENCE'}),el('span',{text:'Research & references'})),body);
   let generation=0;
@@ -116,7 +118,7 @@ export function researchSection(p) {
         el('button',{class:'lnk',type:'button',text:'Copy reference',onclick:async()=>{try{await navigator.clipboard.writeText(`[${e.title.replace(/[\[\]]/g,'')}](${location.origin}/p/${p.id}#evidence-${e.id})`);say('Reference copied');}catch{say('Clipboard access failed.');}}}),canEdit()?el('button',{class:'lnk',type:'button',text:'Edit evidence',onclick:()=>editEvidence(p,e,draw)}):null)));
     }catch(err){clear(body).append(el('p',{text:err.message}),el('button',{class:'lnk',type:'button',text:'Retry',onclick:draw}));}
   };
-  entry.load=draw;entry.addEventListener('toggle',()=>{if(entry.open)draw();});research.set(p.id,entry);return entry;
+  entry.revision=state.researchRevision;entry.load=draw;entry.addEventListener('toggle',()=>{if(entry.open)draw();});research.set(p.id,entry);return entry;
 }
 async function editEvidence(p,e,refresh){
   const {dialog,body}=modal(e.id?'Edit evidence':'Add evidence');

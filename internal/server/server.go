@@ -133,7 +133,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return board.Defaults{Status: status, Statuses: statuses,
 			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
-	s.api.Workflow = &workflow.Service{Service: s.board.Service}
+	s.api.Workflow = workflow.New(s.board.Service)
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
 		return settings.Get[string](set, "defaults.document_template")
@@ -193,6 +193,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return nil, fmt.Errorf("recover transcription jobs: %w", err)
 	}
 	s.api.Diagnostics = s.diagnostics
+	mcp.Workflow(s.mcp)
 	mcp.Files(s.mcp, s.files)
 	mcp.Board(s.mcp, s.board, s.files, s.backups.Now)
 
@@ -385,7 +386,7 @@ func (s *Server) routes() http.Handler {
 	// Add from Drive, in the files pane. More specific than the /app/ pattern
 	// the links and files routes are mounted on, so these win the match.
 	mux.HandleFunc("GET /app/drive", s.requireUser(s.getDriveList))
-	mux.HandleFunc("POST /app/drive/import", s.requireUser(s.postDriveImport))
+	mux.Handle("POST /app/drive/import", s.api.WithKey(http.HandlerFunc(s.requireUser(s.postDriveImport))))
 
 	mux.HandleFunc("POST /p/{id}/publish", s.requireUser(s.postPublish))
 	return mux
