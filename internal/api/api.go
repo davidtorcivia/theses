@@ -23,10 +23,11 @@ import (
 )
 
 type API struct {
-	db   *store.DB
-	auth *auth.Auth
-	set  *settings.Settings
-	log  *slog.Logger
+	Diagnostics func(context.Context) (map[string]any, error)
+	db          *store.DB
+	auth        *auth.Auth
+	set         *settings.Settings
+	log         *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
 	// Files is the links and files service, set the same way. Its routes live

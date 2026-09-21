@@ -276,7 +276,12 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 		mailProblem = err.Error()
 	}
 
+	diagnostics, err := s.diagnostics(ctx)
+	if err != nil {
+		return nil, err
+	}
 	data := map[string]any{
+		"Diagnostics": diagnostics,
 		"Plain":       true,
 		"Section":     "",
 		"S":           shown,

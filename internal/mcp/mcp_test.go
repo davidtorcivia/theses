@@ -462,3 +462,23 @@ func TestSearchShowsOnlyThePropositionsTheOwnerIsAMemberOf(t *testing.T) {
 		}
 	}
 }
+
+func TestDiagnosticsScopeAndLiveRole(t *testing.T) {
+	h := newHarness(t)
+	Files(h.srv, nil)
+	h.srv.api.Diagnostics = func(context.Context) (map[string]any, error) { return map[string]any{"notification_pending": 3}, nil }
+	if result := h.call(h.connect(auth.ScopeRead), "get_diagnostics", noArgs{}, nil); !result.IsError {
+		t.Fatal("read scope exposed diagnostics")
+	}
+	admin := h.connect(auth.ScopeAdmin)
+	var report map[string]any
+	if result := h.call(admin, "get_diagnostics", noArgs{}, &report); result.IsError || report["notification_pending"] != float64(3) {
+		t.Fatalf("owner diagnostics: %+v %+v", result, report)
+	}
+	if _, err := h.db.ExecContext(context.Background(), "UPDATE users SET role='editor' WHERE id=?", h.user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if result := h.call(admin, "get_diagnostics", noArgs{}, nil); !result.IsError {
+		t.Fatal("demoted owner read diagnostics")
+	}
+}

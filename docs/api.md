@@ -1332,3 +1332,7 @@ Search results include a relative `url` for each workspace hit, including
 API and MCP search responses. Opening a link requires the same membership as
 opening its proposition; deleted or inaccessible targets expose no metadata.
 File drawers distinguish permanent workspace links from temporary download URLs.
+
+## `GET /api/v1/diagnostics`
+
+Scope `admin`, workspace owners only. Returns aggregate notification backlog/delivery counts, expired uploads, backup enabled/stale flags, and process-lifetime command refusal, upload completion failure, and mirror failure counts. No content, user identities, object keys, or credentials are included. MCP `get_diagnostics` returns the same report with the same authorization. Failure counters reset on process restart and include failed/rejected attempts; they do not by themselves assert a current outage.

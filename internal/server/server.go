@@ -183,6 +183,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
 	s.files.ReserveMaintenance = s.backups.ReserveMaintenance
 	s.api.Board, s.api.Files = s.board, s.files
+	s.api.Diagnostics = s.diagnostics
 	mcp.Files(s.mcp, s.files)
 	mcp.Board(s.mcp, s.board, s.files, s.backups.Now)
 

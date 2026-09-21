@@ -9,11 +9,30 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27"
           cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Dependency vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck ./...
+      - name: Browser dependencies
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+          npm audit --audit-level=high
+      - name: Browser workflow
+        run: npm run test:browser
+      - name: Workspace performance baseline
+        run: go test ./internal/search -run '^$' -bench BenchmarkWorkspace -benchmem -count=3
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
@@ -26,12 +45,9 @@ jobs:
           for f in $(find web/static -name '*.js'); do node --input-type=module --check < "$f" || { echo "syntax error in $f"; exit 1; }; done
           node --test web/*_test.mjs
       - run: go test ./...
-      # The race detector cannot run on the machine these branches are written
-      # on, so the hub and the command bus, which are where the goroutines are,
-      # are raced on the pull request rather than first on main.
       - name: go test -race on the concurrent packages
         if: github.event_name == 'pull_request'
-        run: go test -race ./internal/realtime/ ./internal/core/
+        run: go test -race ./internal/realtime/ ./internal/core/ ./internal/notify/ ./internal/backup/ ./internal/files/
       - name: go test -race
         if: github.event_name == 'push'
         run: go test -race ./...

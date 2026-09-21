@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/board"
@@ -82,6 +83,7 @@ type Revision struct {
 }
 
 type Service struct {
+	MirrorFailures atomic.Uint64
 	*core.Service
 	// Template is what the first document of a proposition starts from, read at
 	// the moment it is created so changing the setting changes the next one.

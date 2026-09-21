@@ -1,0 +1,11 @@
+{
+  "name": "workspace-browser-checks",
+  "private": true,
+  "devDependencies": {
+    "playwright": "1.63.0"
+  },
+  "scripts": {
+    "test:browser": "THESES_BROWSER_TEST=1 go test ./internal/server -run '^TestBrowserWorkflow$' -count=1 -v"
+  },
+  "type": "module"
+}

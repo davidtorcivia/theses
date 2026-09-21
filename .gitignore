@@ -8,3 +8,5 @@
 /docs/internal/
 /CLAUDE.md
 .DS_Store
+
+/node_modules/

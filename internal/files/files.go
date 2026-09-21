@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -30,6 +31,7 @@ import (
 // second bucket without anything here knowing about settings. HTTP is the
 // outbound client link metadata is fetched with, safehttp's in production.
 type Service struct {
+	CompletionFailures atomic.Uint64
 	ReserveMaintenance func() (func(), error)
 	*core.Service
 	Bucket func(ctx context.Context, folder string) (*blob.Client, error)

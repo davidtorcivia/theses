@@ -1,0 +1,17 @@
+# Release checks
+
+Run `go vet ./...`, `go test ./...`, `node --test web/*_test.mjs`, and the JavaScript syntax checks in `.github/workflows/ci.yml`. Pull requests also run the race detector on commands, realtime, notifications, backups, and files; main runs it across all packages.
+
+The browser suite uses a temporary database, synthetic accounts, an in-process S3 fake, and an ephemeral loopback HTTP server. It never connects to an existing deployment. Install the development-only dependency with `npm ci`, install Chromium with `npx playwright install --with-deps chromium`, then run `npm run test:browser`. `PLAYWRIGHT_MODULE` and `BROWSER_EXECUTABLE` can select an already installed Playwright module and Chromium executable. The app runtime remains a single Go binary with no Node dependency.
+
+Browser coverage includes source draft reload and in-flight typing, inline Show notes, proposition references on cards, exact links and browser history, saved filters, explicit moves, outlines, activity filters, production checklists, failed-upload retry, searchable file notes, unauthenticated access, offline draft recovery, service-worker cache replacement, and a 390-pixel mobile viewport. Browser checks complement the permission, concurrency, idempotency, and failure-path service tests. Mobile emulation does not replace testing a physical phone or a screen reader.
+
+Run `go test ./internal/search -run '^$' -bench BenchmarkWorkspace -benchmem -count=3` for a repeatable database sample. The fixture contains 10,000 cards and 50,000 activity records. CI logs retain the samples; they are observations, not latency thresholds. Compare results on the same hardware and toolchain before claiming an improvement.
+
+Initial local medians with Go 1.27 on linux/amd64: search 502,484 ns/op, 24,110 B/op, 400 allocations; deep activity page 22,929 ns/op, 1,256 B/op, 115 allocations. These establish a baseline and do not measure browser INP or network latency. The browser script separately prints synthetic navigation, filter-interaction, long-task, and heap samples on a 500-card board. Field p75 INP of 200 ms remains a target requiring real-user measurements and a reported sample size.
+
+Run `go mod verify`, `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...`, and `npm audit --audit-level=high` before release. The initial scan found no vulnerable imported packages or reachable symbols. Its module-only advisory GO-2026-5932 concerns the unused, unmaintained `golang.org/x/crypto/openpgp` package; the application uses supported packages from that module. Do not add OpenPGP as a workaround or suppress reachable findings.
+
+Owner settings show aggregate operational counts and links to the relevant controls. Permission/conflict refusals, failed/rejected upload completion attempts, and mirror failures count since process startup; pending notification and expired-upload counts come from SQLite. Counters carry no document content, identities, object keys, or credentials. Historical failure counts are not current-health alarms. `GET /api/v1/diagnostics` and MCP `get_diagnostics` require an owner with admin scope.
+
+Before deployment, use the isolated restore verifier in Backup settings and inspect its recorded duration, integrity, mirror, and sampled-object result. A sampled object check is not a full bucket recovery. Build the image before stopping the running service, retain a consistent database/mirror snapshot and previous image, then check health, readiness, schema integrity, and the served asset version after deployment.

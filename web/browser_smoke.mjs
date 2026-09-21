@@ -1,0 +1,146 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE || undefined });
+try {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await context.addCookies(fixture.cookies);
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  const errors = [];
+  page.on('pageerror', err => errors.push(err.message));
+  page.on('dialog', dialog => dialog.accept());
+  await page.addInitScript(() => {
+    window.longTasks = [];
+    new PerformanceObserver(list => window.longTasks.push(...list.getEntries().map(e => e.duration))).observe({ type: 'longtask', buffered: true });
+  });
+  const visit = path => page.goto(fixture.url + path);
+  // waitForFunction treats a returned Promise as truthy before it resolves.
+  const waitAsync = async (predicate, argument) => {
+    const deadline = Date.now() + 15000;
+    while (!(await page.evaluate(predicate, argument))) {
+      assert.ok(Date.now() < deadline, 'Asynchronous browser condition timed out');
+      await page.waitForTimeout(100);
+    }
+  };
+  await visit('/show');
+  await page.locator('#board').waitFor();
+  assert.equal(await page.locator('.tabs [data-tab=notes]').count(), 0);
+  await page.locator('#docmode').click();
+  await page.locator('#docsrc').fill('# Research\n\nDurable draft');
+  await page.getByText('Draft on this device · Save to publish', { exact: true }).waitFor();
+  await page.reload();
+  await page.getByRole('button', { name: 'Recover draft', exact: true }).click();
+  await page.locator('#docsrc:not([readonly])').waitFor();
+  assert.match(await page.locator('#docsrc').inputValue(), /Durable draft/);
+  let release, seen;
+  const intercepted = new Promise(resolve => seen = resolve);
+  await page.route('**/app/documents/*/source', async route => {
+    seen(); await new Promise(resolve => release = resolve); await route.continue();
+  });
+  await page.locator('#docsave').click(); await intercepted;
+  await page.locator('#docsrc').fill('# Research\n\nDurable draft\n\nTyped during save');
+  release();
+  await page.getByText('Draft on this device · Save to publish', { exact: true }).waitFor();
+  await page.unroute('**/app/documents/*/source');
+  await page.locator('#docsave').click();
+  await page.locator('#doc .blk').filter({ hasText: 'Typed during save' }).waitFor();
+  await page.locator('.outline summary').click();
+  await page.locator('.outline a').first().click();
+  await page.waitForFunction(() => document.activeElement?.classList.contains('blk'));
+  await page.locator('.board-add').first().getByRole('button', { name: '+ Card', exact: true }).click();
+  await page.locator('.newcard textarea').fill(`Plan @[p:${fixture.proposition}]`);
+  await page.locator('.newcard textarea').press('Enter');
+  const linked = page.locator('#board .card').filter({ hasText: 'Tidal Power' });
+  await linked.waitFor(); await linked.click();
+  const cardURL = page.url(); assert.match(cardURL, /#card-\d+$/);
+  await page.reload(); await page.locator('#drawer h2').waitFor();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.goBack(); await page.locator('#drawer h2').waitFor();
+  await page.goForward(); await page.locator('#drawer').waitFor({ state: 'hidden' });
+  await page.locator('#filter-view').selectOption('list');
+  await page.locator('#filter-query').fill('Plan');
+  await page.waitForTimeout(300); await page.reload();
+  await page.waitForFunction(() => document.querySelector('#filter-query')?.value === 'Plan');
+  assert.equal(await page.locator('#filter-view').inputValue(), 'list');
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await linked.click();
+  const move = page.getByRole('combobox', { name: 'Move to column', exact: true });
+  await move.waitFor();
+  const choices = await move.locator('option').evaluateAll(rows => rows.map(row => row.value));
+  const previous = await move.inputValue(); const next = choices.find(id => id !== previous);
+  const movedID = Number(new URL(page.url()).hash.slice(6));
+  await move.selectOption(next);
+  await waitAsync(async ({id,next}) => { const html=await (await fetch(location.pathname)).text();const document=new DOMParser().parseFromString(html,'text/html');const payload=JSON.parse(document.querySelector('#payload').textContent);return payload.board.cards.some(c=>c.id===id&&String(c.column_id)===next); }, {id:movedID,next});
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByText('Production calendar', { exact: true }).click(); await page.getByRole('table').waitFor();
+  await visit('/p/' + fixture.proposition);
+  await page.getByText('Production readiness', { exact: true }).click();
+  await page.getByRole('button', { name: 'Create production checklist', exact: true }).click();
+  await page.locator('#drawer h2').filter({ hasText: 'Production checklist' }).waitFor();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
+  const filtered = page.waitForResponse(response => response.url().includes('/app/activity?') && new URL(response.url()).searchParams.get('entity') === 'file');
+  await page.getByRole('combobox', { name: 'Activity type', exact: true }).selectOption('file');
+  const history = await (await filtered).json(); assert.ok((history.activity || history.rows || []).every(row => row.entity === 'file'));
+  await page.getByRole('heading', { name: 'History', exact: true }).waitFor();
+  await page.locator('#drawer').getByText('Nothing yet.',{exact:true}).waitFor();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+  await visit('/p/' + fixture.proposition + '#files');
+  // The fake S3 server is loopback-only; CORS is supplied at this test boundary.
+  let failed = false;
+  await context.route('**/browser-fixture/**', async route => {
+    const request = route.request();
+    if (request.method() === 'OPTIONS') { await route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,HEAD,PUT', 'Access-Control-Allow-Headers': '*' } }); return; }
+    if (request.method() === 'PUT' && !failed) { failed = true; await route.abort('failed'); return; }
+    const response = await route.fetch();
+    await route.fulfill({ response, headers: { ...response.headers(), 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'ETag' } });
+  });
+  await page.locator('#drop input[type=file]').setInputFiles({ name: 'browser-upload.txt', mimeType: 'text/plain', buffer: Buffer.from('Recovered upload') });
+  await page.getByRole('button', { name: /retry/i }).first().waitFor();
+  await page.getByRole('button', { name: /retry/i }).first().click();
+  await page.locator('#flist .row').filter({ hasText: 'browser-upload.txt' }).click();
+  await page.getByRole('button', { name: 'Download', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Edit notes and tags', exact: true }).click();
+  await page.getByRole('textbox', { name: 'File notes', exact: true }).fill('Searchable upload notes');
+  await page.getByRole('textbox', { name: 'Tags', exact: true }).fill('Research, source');
+  await page.getByRole('button', { name: 'Save notes', exact: true }).click();
+  await page.getByText('Searchable upload notes', { exact: true }).waitFor();
+  const fileURL = page.url(); await page.reload(); await page.getByText('Searchable upload notes', { exact: true }).waitFor();
+  const anonymous = await browser.newContext();
+  const denied = await anonymous.newPage(); await denied.goto(fileURL);
+  assert.match(denied.url(), /\/login/); await anonymous.close();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await visit('/show'); await page.locator('#board').waitFor();
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await page.waitForFunction(() => navigator.serviceWorker.controller);
+  await page.evaluate(() => window.previousController = navigator.serviceWorker.controller);
+  await page.evaluate(async () => { const old = await caches.open('theses-stale-fixture'); await old.put('/stale', new Response('old')); await fetch('/__smoke/upgrade'); const reg = await navigator.serviceWorker.getRegistration(); await reg.update(); });
+  await waitAsync(async () => !(await caches.keys()).includes('theses-stale-fixture') && navigator.serviceWorker.controller !== window.previousController && navigator.serviceWorker.controller?.state === 'activated');
+  await waitAsync(() => new Promise(resolve => { const request=indexedDB.open('theses-offline'); request.onsuccess=()=>{const db=request.result;const read=db.transaction('snapshot').objectStore('snapshot').getAll();read.onsuccess=()=>{const rows=read.result;db.close();resolve(rows.some(row=>row.payload.propositions.some(p=>p.kind==='show' && p.id===row.proposition)));};}; }));
+  await context.setOffline(true); await visit('/show'); await page.locator('#board').waitFor();
+  await page.locator('#docmode').click(); await page.locator('#docsrc').fill('Offline source draft');
+  await page.getByText('Offline · draft on this device', { exact: true }).waitFor();
+  await context.setOffline(false);
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#payload')?.textContent || 'null')?.me);
+  await page.getByRole('button', { name: 'Recover draft', exact: true }).click(); await page.locator('#docsrc:not([readonly])').waitFor();
+  assert.equal(await page.locator('#docsrc').inputValue(), 'Offline source draft'); await page.locator('#docsave').click();
+  await page.locator('#doc .blk').filter({ hasText: 'Offline source draft' }).waitFor();
+  await visit('/p/' + fixture.large);
+  await page.waitForFunction(() => document.querySelectorAll('#board .card').length === 500);
+  const filterStart = performance.now();
+  await page.locator('#filter-query').fill('Research task 499');
+  await page.waitForFunction(() => document.querySelectorAll('#board .card').length === 1);
+  const filter_ms = performance.now() - filterStart;
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await page.waitForFunction(() => document.querySelectorAll('#board .card').length === 500);
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.getByRole('button', { name: 'Activity', exact: true }).click(); await page.keyboard.press('Escape');
+  const timings = await page.evaluate(() => ({ navigation_ms: performance.getEntriesByType('navigation')[0]?.duration, long_tasks: window.longTasks.length, longest_task_ms: Math.max(0, ...window.longTasks), heap_bytes: performance.memory?.usedJSHeapSize }));
+  assert.deepEqual(errors, []);
+  console.log('PASS drafts, mentions, links, filters, move controls, outline, production, history, upload retry, notes, private access, offline recovery, worker cache replacement, mobile');
+  console.log('Lab sample (not field INP): ' + JSON.stringify({ cards: 500, filter_ms, ...timings }));
+} finally { await browser.close(); }
