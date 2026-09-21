@@ -2096,10 +2096,11 @@ function keepClash(id) {
       args: { block: id, text: w.text, base: w.base, whole: true },
       base: w.base, base_text: w.sent };
   const why = clash ? clashMessage : w.reason;
+  const key = keyOf(b);
   const detail = clash
     ? { entity: 'block', entity_id: id, field: 'text', version: w.version, current: w.theirs }
     : null;
-  file(row, keyOf(b), why, detail).then((n) => {
+  file(row, key, why, detail).then((n) => {
     if (!n) return;
     // Answered while the write was in the air: typing over a conflict is an
     // answer, and so is somebody else's change arriving that says what this
@@ -2110,7 +2111,14 @@ function keepClash(id) {
     // way chosen takes one out before its own read: the panel is the other
     // place this question is asked, and it should not have to wait a round of
     // the database to start asking it.
-    state.refused = state.refused.filter((r) => r.n !== n).concat({ ...row, n, refused: why, detail });
+    //
+    // It carries the name it was filed under, like the copy the store holds.
+    // The panel answers whichever copy it was drawn from, and a keep mine that
+    // is refused files the question again under the row's own name: without it
+    // here that name would be nothing, and a nameless refusal is written over
+    // the first other nameless one there is.
+    state.refused = state.refused.filter((r) => r.n !== n)
+      .concat({ ...row, n, key, refused: why, detail });
     count();
   });
 }
@@ -2182,11 +2190,15 @@ function unanswered() {
 // what the block holds now, and keep mine sends the words again from the
 // version they were written against, which the server merges or refuses like
 // any other save.
-// Nothing is armed for a row that has gone back in the queue: it carries these
-// words already, because filing it is what wrote them there, and a save from
-// here would send the same change a second time. The entry stands until the
-// drain's command lands, which arrived takes as this tab's own text coming back
-// and finishes with.
+// A row back in the queue leaves an entry with unsaved text in it, and such an
+// entry is armed like any other. The row carries these words already, so the
+// save that follows usually sends the same change a second time and the server
+// merges it to where the first one put it. What it is there for is the case
+// where it does not: somebody typing in the moment between the last write into
+// the row and another tab pressing try it again, which leaves this entry the
+// only place those words are. Unarmed it is also an entry nothing ever settles,
+// and the save line goes on calling the document unsaved for the rest of the
+// session.
 function answered(n, answer) {
   for (const [id, w] of work) {
     if (w.filed !== n) continue;
@@ -2196,7 +2208,7 @@ function answered(n, answer) {
     delete w.reason;
     notice(id);
     emit();
-    status();
+    arm(id, w);
     return;
   }
 }
