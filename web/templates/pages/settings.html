@@ -234,7 +234,7 @@
         <p class="small dim">A token carries the permissions of the account that made it.</p>
         <ul class="pending">
           {{range .Tokens}}<li>
-            <span>{{.Name}}</span>
+            <span>{{.Name}}<small class="dim"> · {{.OwnerName}}</small></span>
             <span class="mono">{{.Scopes}} · created {{.Created}} · {{.Used}}</span>
             <form method="post" action="/settings/tokens/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="lnk del" type="submit">Revoke</button></form>
           </li>{{else}}<li><span class="mono dim">None.</span></li>{{end}}

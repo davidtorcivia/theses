@@ -303,6 +303,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/v1/propositions/{id}/events", s.api.Authenticate(http.HandlerFunc(s.propositionEvents)))
 
 	mux.HandleFunc("GET /calendar/{token}/production.ics", s.getCalendar)
+	mux.HandleFunc("POST /profile/tokens", s.requireUser(s.postTokenCreate))
+	mux.HandleFunc("POST /profile/tokens/{id}/revoke", s.requireUser(s.postTokenRevoke))
 	mux.HandleFunc("POST /profile/calendar", s.requireUser(s.postCalendar))
 	mux.HandleFunc("GET /profile", s.requireUser(s.getProfile))
 	mux.HandleFunc("POST /profile", s.requireUser(s.postProfile))

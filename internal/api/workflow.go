@@ -30,6 +30,35 @@ func (a *API) workflowAnswer(w http.ResponseWriter, r *http.Request, value any, 
 	a.writeJSON(w, 200, value)
 }
 func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
+	m.HandleFunc("GET "+p+"/calendar-entries", wrap(auth.ScopeRead, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
+		entries, err := a.Workflow.CalendarEntries(r.Context(), actor)
+		a.workflowAnswer(w, r, map[string]any{"entries": entries}, err)
+	}))
+	m.HandleFunc("POST "+p+"/calendar-events", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
+		var in workflow.CalendarEntry
+		if !(&fileAPI{API: a}).read(w, r, &in) {
+			return
+		}
+		event, err := a.Workflow.SaveCalendarEvent(r.Context(), actor, in)
+		a.workflowAnswer(w, r, map[string]any{"event": event}, err)
+	}))
+	m.HandleFunc("DELETE "+p+"/calendar-events/{id}", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
+		event, err := a.Workflow.DeleteCalendarEvent(r.Context(), actor, path(r, "id"), id(r, "version"))
+		a.workflowAnswer(w, r, map[string]any{"event": event}, err)
+	}))
+	m.HandleFunc("POST "+p+"/calendar-tasks", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
+		var in struct {
+			Title  string `json:"title"`
+			Date   string `json:"date"`
+			Column int64  `json:"column"`
+		}
+		if !(&fileAPI{API: a}).read(w, r, &in) {
+			return
+		}
+		event, err := a.Board.CreateCalendarTask(r.Context(), actor, in.Column, in.Title, in.Date)
+		a.workflowAnswer(w, r, map[string]any{"event": event}, err)
+	}))
+
 	m.HandleFunc("DELETE "+p+"/evidence/{id}", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		event, err := a.Workflow.DeleteEvidence(r.Context(), actor, path(r, "id"), id(r, "version"))
 		a.workflowAnswer(w, r, map[string]any{"event": event}, err)

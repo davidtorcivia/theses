@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davidtorcivia/theses/internal/api"
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/blob"
@@ -40,6 +41,7 @@ type inviteView struct {
 type tokenView struct {
 	ID            int64
 	Name, Scopes  string
+	OwnerName     string
 	Created, Used string
 }
 
@@ -256,14 +258,13 @@ func (s *Server) settingsData(r *http.Request, extra map[string]any) (map[string
 	if err != nil {
 		return nil, err
 	}
-	tokens := make([]tokenView, 0, len(apiTokens))
-	for _, t := range apiTokens {
-		used := "never used"
-		if t.LastUsedAt.Valid {
-			used = "last used " + on(t.LastUsedAt.Int64)
-		}
-		tokens = append(tokens, tokenView{ID: t.ID, Name: t.Name, Scopes: t.Scopes,
-			Created: on(t.CreatedAt), Used: used})
+	tokens := tokenViews(apiTokens)
+	names := make(map[int64]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name + " (@" + u.Handle + ")"
+	}
+	for i, t := range apiTokens {
+		tokens[i].OwnerName = names[t.UserID]
 	}
 
 	outbox, err := s.mail.State(ctx)
@@ -848,17 +849,31 @@ func (s *Server) logInvite(who string) {
 }
 
 func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
+	to := "/settings#tokens"
+	if r.URL.Path == "/profile/tokens" {
+		to = "/profile#tokens"
+	}
 	scopes := strings.Fields(r.PostFormValue("scopes"))
 	name := strings.TrimSpace(r.PostFormValue("name"))
 	var token string
 	err := s.write(r, "api_token", name, "create", "", strings.Join(scopes, " "), func(q store.Querier) error {
 		var err error
-		token, err = s.auth.CreateAPITokenWith(r.Context(), q, userOf(r).ID, name, scopes)
+		u, err := store.UserByID(r.Context(), q, userOf(r).ID)
+		if err != nil {
+			return err
+		}
+		principal := api.Principal{User: u, Token: &store.APIToken{Scopes: strings.Join(scopes, " ")}}
+		for _, scope := range scopes {
+			if why := principal.Deny(scope); why != "" {
+				return fmt.Errorf("%w: %s", auth.ErrAPITokenInput, why)
+			}
+		}
+		token, err = s.auth.CreateAPITokenWith(r.Context(), q, u.ID, name, scopes)
 		return err
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAPITokenInput) {
-			s.back(w, r, "/settings#tokens", map[string]any{"Error": err.Error()})
+			s.back(w, r, to, map[string]any{"Error": err.Error()})
 			return
 		}
 		s.fail(w, r, err)
@@ -866,7 +881,7 @@ func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// The token is shown once and nowhere else, so it reaches the page it is
 	// printed on in the flash rather than in the address.
-	s.back(w, r, "/settings#tokens", map[string]any{"NewToken": token})
+	s.back(w, r, to, map[string]any{"NewToken": token})
 }
 
 func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
@@ -876,12 +891,34 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.write(r, "api_token", itoa(id), "revoke", "", "", func(q store.Querier) error {
+		if strings.HasPrefix(r.URL.Path, "/profile/") {
+			res, err := q.ExecContext(r.Context(), `UPDATE api_tokens SET revoked_at=unixepoch() WHERE id=? AND user_id=? AND revoked_at IS NULL`, id, userOf(r).ID)
+			if err != nil {
+				return err
+			}
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return store.ErrNotFound
+			}
+			return nil
+		}
 		return store.RevokeAPIToken(r.Context(), q, id)
 	}); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.errorPage(w, r, http.StatusNotFound)
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}
-	http.Redirect(w, r, settingsTo("tokens", true), http.StatusSeeOther)
+	to := settingsTo("tokens", true)
+	if strings.HasPrefix(r.URL.Path, "/profile/") {
+		to = profileTo("tokens", true)
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
 // activity records a mutation that could not share a transaction with its

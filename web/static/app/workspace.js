@@ -31,6 +31,11 @@ function found(work) {
   const node = document.activeElement;
   if (!node || !work.contains(node)) return '';
   if (node.id === 'wtitle' || node.id === 'wstate' || node.id === 'activitytab') return '#' + node.id;
+  if(node.closest('.doc-ph')){
+    if(node.id)return '#'+CSS.escape(node.id);
+    if(node.dataset.docControl!==undefined)return '.doc-ph [data-doc-control="'+node.dataset.docControl+'"]';
+    if(node.dataset.d)return '.doc-ph [data-d="'+node.dataset.d+'"]';
+  }
   if (node.classList.contains('card')) return `#board .card[data-id="${node.dataset.id}"]`;
   const column = node.tagName === 'H3' ? node.closest('.col') : null;
   return column ? `#board .col[data-col="${column.dataset.col}"] h3` : '';

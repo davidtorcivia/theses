@@ -417,6 +417,9 @@ function outlineFor(doc) {
 // renderDocument returns the whole document area, head and all, for the board
 // pane to append. It is called on every render, so the block being edited is
 // carried over rather than rebuilt.
+let documentToolsOpen=false;
+let toolsDocument=0;
+document.addEventListener('click',e=>{const tools=$('.document-tools');if(tools?.open&&!tools.contains(e.target)){documentToolsOpen=false;tools.open=false;}});
 export function renderDocument() {
   loadDrafts();
   const doc = current();
@@ -424,9 +427,11 @@ export function renderDocument() {
   if (doc && state.docSource) ensureSource(doc);
   const head = el('div', { class: 'ph doc-ph' }, tabs(doc), summary(doc));
   if (doc) {
-    // The links sit together at the right. One auto margin each would share
-    // the space between them and put History in the middle of the row.
-    const links = el('div', { class: 'dlinks' },
+    if(toolsDocument!==doc.id){toolsDocument=doc.id;documentToolsOpen=false;}
+    const tools=el('details',{class:'document-tools',open:documentToolsOpen},el('summary',{id:'document-tools-toggle',text:'Tools','aria-label':'Document tools'}));
+    tools.addEventListener('toggle',()=>{if(tools.isConnected)documentToolsOpen=tools.open;});
+    tools.addEventListener('keydown',e=>{if(e.key==='Escape'&&tools.open){e.preventDefault();e.stopPropagation();tools.open=false;tools.querySelector('summary').focus();}});
+    const secondary=el('div',{class:'document-tools-list'},
       copyTarget(state.open, 'document', doc.id),
  el('button',{class:'lnk',type:'button',text:'Recording view',onclick:()=>recordingView(doc)}),
  el('button',{class:'lnk',type:'button',text:'Review',onclick:()=>reviewTarget('document',doc.id)}),
@@ -434,8 +439,12 @@ export function renderDocument() {
         class: 'lnk', type: 'button', id: 'dhistory', text: 'History',
         onclick: () => openHistory(doc),
       }),
-      // Save stands between the two, next to the toggle it belongs to, and is
-      // there only while the markdown is open to somebody who may write it.
+    );
+    if(canEdit() && state.can.delete)secondary.append(deleteDocument(doc));
+    tools.append(secondary);
+    secondary.querySelectorAll('button,a').forEach((button,index)=>{button.dataset.docControl=index;});
+    secondary.addEventListener('click',e=>{if(e.target.closest('button,a')){documentToolsOpen=false;tools.open=false;tools.querySelector('summary').focus();}},{capture:true});
+    const links=el('div',{class:'dlinks'},
       state.docSource && canEdit() && sourceOf(doc) ? saveButton(doc) : null,
       el('button', {
         class: 'lnk', type: 'button', id: 'docmode',
@@ -450,8 +459,7 @@ export function renderDocument() {
             emit();
           }
         },
-      }));
-    if (canEdit() && state.can.delete) links.append(deleteDocument(doc));
+      }),tools);
     head.append(links);
   }
 

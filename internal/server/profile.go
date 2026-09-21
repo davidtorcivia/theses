@@ -11,7 +11,7 @@ import (
 
 // profileSections are the anchors a form on the profile page may send the
 // browser back to.
-var profileSections = map[string]bool{"you": true, "security": true, "notifications": true, "danger": true, "calendar": true}
+var profileSections = map[string]bool{"you": true, "security": true, "notifications": true, "danger": true, "calendar": true, "tokens": true}
 
 // profileTo is the profile page's half of settingsTo.
 func profileTo(section string, saved bool) string {
@@ -30,8 +30,18 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	tokens, err := store.ListUserAPITokens(r.Context(), s.db, u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	data := s.page(r, "Profile", merge(map[string]any{
 		"CalendarActive": calendarActive,
+		"Tokens":         tokenViews(tokens),
+		"TokenWrite":     auth.Can(u.Role, auth.CanEdit),
+		"MCPURL":         s.cfg.BaseURL + "/mcp",
+		"APIURL":         s.cfg.BaseURL + "/api/v1",
+		"MCPConfig":      desktopMCPConfig(s.cfg.BaseURL + "/mcp"),
 		"Plain":          true,
 		"Section":        "",
 		"Swatches":       swatches(u.Colour),

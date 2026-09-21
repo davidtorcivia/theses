@@ -163,6 +163,9 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO api_tokens(user_id,name,hash,scopes,created_at) SELECT id,'Restored key',zeroblob(32),'read',1 FROM users LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
 	m, err := f.b.Run(ctx)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -218,6 +221,10 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 
+	var restoredKeys int
+	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM api_tokens`).Scan(&restoredKeys); err != nil || restoredKeys != 0 {
+		t.Fatalf("restored API credentials: %d, %v", restoredKeys, err)
+	}
 	var subscriptions int
 	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM calendar_subscriptions`).Scan(&subscriptions); err != nil || subscriptions != 0 {
 		t.Fatalf("restored subscription credentials: %d, %v", subscriptions, err)

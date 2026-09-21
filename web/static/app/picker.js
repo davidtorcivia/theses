@@ -192,7 +192,7 @@ export function handleMentionKey(e, picker, field) {
   if (e.isComposing) return;
   const choices = [...picker.querySelectorAll('button')];
   const at = choices.findIndex((choice) => choice.getAttribute('aria-selected') === 'true');
-  if (e.key === 'Enter') {
+  if ((e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey)) && choices.length) {
     e.preventDefault();
     e.stopImmediatePropagation();
     choices[Math.max(0, at)]?.click();
