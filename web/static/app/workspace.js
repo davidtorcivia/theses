@@ -11,7 +11,7 @@ import { renderBoard, boardSummary } from './board.js';
 import { renderDocument } from './docs.js';
 import { renderLinks } from './links.js';
 import { renderFiles } from './files.js';
-import { openPanel, outstanding } from './activity.js';
+import { openPanel, closePanel, outstanding } from './activity.js';
 import { activate } from './keys.js';
 
 // Activity is a panel rather than a pane, so it has no tab of its own to land
@@ -29,7 +29,7 @@ const tabsFor = (p) => p.kind === 'show'
 function found(work) {
   const node = document.activeElement;
   if (!node || !work.contains(node)) return '';
-  if (node.id === 'wtitle' || node.id === 'wstate') return '#' + node.id;
+  if (node.id === 'wtitle' || node.id === 'wstate' || node.id === 'activitytab') return '#' + node.id;
   if (node.classList.contains('card')) return `#board .card[data-id="${node.dataset.id}"]`;
   const column = node.tagName === 'H3' ? node.closest('.col') : null;
   return column ? `#board .col[data-col="${column.dataset.col}"] h3` : '';
@@ -95,7 +95,8 @@ function head(p) {
   const held = outstanding();
   tabs.append(el('button', {
     class: 'tab' + (state.panel ? ' on' : ''), id: 'activitytab', type: 'button',
-    onclick: openPanel,
+    'aria-expanded': String(state.panel), 'aria-controls': 'drawer',
+    onclick: () => state.panel ? closePanel() : openPanel(),
   }, 'Activity', held ? el('i', { text: ' ' + held }) : null));
   tabs.append(el('a', { class: 'tab', href: p.kind === 'show' ? '/show/settings' : `/p/${p.id}/settings` },
     p.kind === 'show' ? 'Show settings' : 'Settings'));
