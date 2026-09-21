@@ -97,21 +97,38 @@ func (s *Server) getCalendar(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, event := range []struct{ kind, date string }{{"Record", record}, {"Edit", edit}, {"Release", release}} {
-			day, err := time.Parse("2006-01-02", event.date)
-			if err != nil || day.Year() < 1 || day.Year() > 9998 {
-				continue
-			}
-			for _, line := range []string{
-				"BEGIN:VEVENT", fmt.Sprintf("UID:%x-%x-%d-%d-%s@theses", workspace[:8], hash[:12], id, created, event.kind),
-				"DTSTAMP:" + time.Unix(updated, 0).UTC().Format("20060102T150405Z"), fmt.Sprintf("SEQUENCE:%d", revision),
-				"DTSTART;VALUE=DATE:" + day.Format("20060102"), "DTEND;VALUE=DATE:" + day.AddDate(0, 0, 1).Format("20060102"),
-				"SUMMARY:" + calendarText(event.kind+": "+title), "URL:" + s.cfg.BaseURL + "/p/" + itoa(id), "CLASS:PRIVATE", "TRANSP:TRANSPARENT", "END:VEVENT",
-			} {
-				calendarLine(&out, line)
-			}
+			appendCalendarEvent(&out, fmt.Sprintf("%x-%x-%d-%d-%s", workspace[:8], hash[:12], id, created, event.kind), event.date, event.kind+": "+title, "", s.cfg.BaseURL+"/p/"+itoa(id), revision, updated)
 		}
 	}
 	if err := rows.Err(); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := rows.Close(); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	extra, err := tx.QueryContext(r.Context(), `SELECT 'card',c.id,c.created_at,c.calendar_revision,c.calendar_updated_at,c.due_date,c.title,'','/p/'||p.id||'#card-'||c.id FROM cards c JOIN propositions p ON p.id=c.proposition_id WHERE c.done_at IS NULL AND p.archived_at IS NULL AND coalesce(c.due_date,'')!='' AND (?='owner' OR EXISTS(SELECT 1 FROM proposition_members m WHERE m.proposition_id=p.id AND m.user_id=?))
+ UNION ALL SELECT 'event',e.id,e.created_at,e.version,e.updated_at,e.date,e.title,e.notes,'/show#calendar' FROM calendar_events e JOIN propositions p ON p.kind='show' WHERE (?='owner' OR EXISTS(SELECT 1 FROM proposition_members m WHERE m.proposition_id=p.id AND m.user_id=?)) ORDER BY 1,2`, role, uid, role, uid)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	defer extra.Close()
+	for extra.Next() {
+		var kind, date, title, notes, path string
+		var id, created, revision, updated int64
+		if err := extra.Scan(&kind, &id, &created, &revision, &updated, &date, &title, &notes, &path); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		label := "Event: "
+		if kind == "card" {
+			label = "Task: "
+		}
+		appendCalendarEvent(&out, fmt.Sprintf("%x-%x-%s-%d-%d", workspace[:8], hash[:12], kind, id, created), date, label+title, notes, s.cfg.BaseURL+path, revision, updated)
+	}
+	if err := extra.Err(); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -119,6 +136,16 @@ func (s *Server) getCalendar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/calendar; charset=utf-8")
 	w.Header().Set("Content-Disposition", `inline; filename="production.ics"`)
 	fmt.Fprint(w, out.String())
+}
+
+func appendCalendarEvent(out *strings.Builder, uid, date, title, notes, url string, revision, updated int64) {
+	day, err := time.Parse("2006-01-02", date)
+	if err != nil || day.Year() < 1 || day.Year() > 9998 {
+		return
+	}
+	for _, line := range []string{"BEGIN:VEVENT", "UID:" + uid + "@theses", "DTSTAMP:" + time.Unix(updated, 0).UTC().Format("20060102T150405Z"), fmt.Sprintf("SEQUENCE:%d", revision), "DTSTART;VALUE=DATE:" + day.Format("20060102"), "DTEND;VALUE=DATE:" + day.AddDate(0, 0, 1).Format("20060102"), "SUMMARY:" + calendarText(title), "DESCRIPTION:" + calendarText(notes), "URL:" + url, "CLASS:PRIVATE", "TRANSP:TRANSPARENT", "END:VEVENT"} {
+		calendarLine(out, line)
+	}
 }
 
 func calendarText(s string) string {

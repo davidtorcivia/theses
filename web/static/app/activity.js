@@ -155,7 +155,10 @@ const follows = (a, b) => a.entity === 'block' && a.action === 'set'
 function activityRow(group, oldest) {
   const row = group[0];
   const who = row.actor && row.actor.id ? user(row.actor.id) : { name: row.actor ? row.actor.name : '', initials: '··', colour: 'c8' };
+  const via=row.actor?.via||'';
+  const attribution=who.name+(via.startsWith('token:')?' via API · '+via.slice(6):via.startsWith('mcp:')?' via MCP · '+via.slice(4):via?' via '+via:'');
   const line = el('div', {},
+    el('span',{class:'activity-author',text:attribution}),
     el('p', { class: row.undone ? 'dim' : '', text: describe(row) }),
     el('span', { class: 'mono when', text: when(row.at)
       + (group.length > 1 ? ` · ${group.length} saves` : '')

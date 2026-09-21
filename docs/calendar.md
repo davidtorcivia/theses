@@ -8,6 +8,10 @@ Federal recurrence and observation rules follow the [OPM holiday schedule](https
 
 `node --test web/calendar_test.mjs` checks dates, observed days, leap-month navigation, and year boundaries. The browser workflow checks month headings, holiday visibility, leap days, and layouts from 320 to 1440 pixels, including a minimum gap between research toolbar controls.
 
+## Events and tasks
+
+Click **Add to calendar** or a day number to add an all-day event or a dated task. Events have a title and notes; click an event to edit it or delete it with the appropriate permissions. Concurrent edits are rejected instead of overwriting another person's changes. Tasks are ordinary Show board cards, assigned to their creator in the selected column. Open the card to change its date, assignees, or completion status. The calendar also shows dated, unfinished cards from accessible active propositions.
+
 ## Calendar subscriptions
 
 Open **Calendar sync** from the production calendar or Profile. Create a private subscription URL and copy it before leaving the page. The database stores only its SHA-256 hash. The same URL works in multiple clients; replacing it invalidates the previous URL, and revoking it disables further downloads. Restoring a backup revokes all calendar subscriptions to prevent old links from becoming valid again. Create a new link, remove the old subscribed calendar, and add the new URL after a restore. Clients may retain events from the old calendar.
@@ -17,6 +21,6 @@ Open **Calendar sync** from the production calendar or Profile. Create a private
 
 This is a read-only iCalendar subscription. Edit dates in Theses. Refresh timing is controlled by the calendar client and can be delayed; importing a downloaded file does not subscribe to future changes. The server must be reachable from the calendar provider. Holiday overlays are not included, so clients can use their own holiday calendars.
 
-Each refresh includes recording, editing and release dates for active episodes the subscribing user can currently access. It contains episode titles, all-day dates and links back to Theses, without notes or scripts. Anyone holding the URL can fetch those details without signing in. Membership removal, role changes and account deletion affect subsequent requests; previously downloaded data can remain in a provider's cache.
+Each refresh includes recording, editing and release dates for active episodes the subscribing user can currently access. It also includes unfinished dated tasks and Show calendar events. It contains titles, all-day dates, event notes and links back to Theses; document scripts and card descriptions are excluded. Anyone holding the URL can fetch those details without signing in. Membership removal, role changes and account deletion affect subsequent requests; previously downloaded data can remain in a provider's cache.
 
 The feed follows [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545): stable event identifiers, durable revision counters, UTC modification stamps, escaped text, UTF-8-safe line folding and exclusive end dates. Subscription mutations use the existing CSRF and audit transaction paths. Feed URLs are redacted from application request logs; reverse proxies should also avoid logging credential-bearing paths.

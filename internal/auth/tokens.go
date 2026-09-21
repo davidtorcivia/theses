@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -173,8 +174,8 @@ func (a *Auth) CreateAPIToken(ctx context.Context, userID int64, name string, sc
 // CreateAPITokenWith is CreateAPIToken on a caller's transaction, so the
 // one-time credential and its activity row can commit together.
 func (a *Auth) CreateAPITokenWith(ctx context.Context, q store.Querier, userID int64, name string, scopes []string) (string, error) {
-	if strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("%w: a token needs a name", ErrAPITokenInput)
+	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 100 {
+		return "", fmt.Errorf("%w: a token needs a name of at most 100 characters", ErrAPITokenInput)
 	}
 	if len(scopes) == 0 {
 		return "", fmt.Errorf("%w: a token needs at least one scope", ErrAPITokenInput)

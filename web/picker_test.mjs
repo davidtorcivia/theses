@@ -41,7 +41,7 @@ const choice = {
   click() { this.clicked = true; },
 };
 const picker = { querySelectorAll: () => [choice] };
-for (const name of ['Enter', 'Escape']) {
+for (const name of ['Enter', 'Tab', 'Escape']) {
   const target = new EventTarget();
   let leaked = false;
   target.addEventListener('keydown', (event) => handleMentionKey(event, picker, {}));
@@ -97,3 +97,13 @@ Object.defineProperty(imeEnter, 'isComposing', { value: true });
 composingField.dispatchEvent(imeEnter);
 assert.equal(submitted, false, 'IME confirmation does not submit the field after closing suggestions');
 assert.equal(imeEnter.defaultPrevented, false);
+
+choice.clicked=false;
+const backward=key('Tab');Object.defineProperty(backward,'shiftKey',{value:true});
+handleMentionKey(backward,picker,{});
+assert.equal(choice.clicked,false,'Shift+Tab leaves without selecting');
+assert.equal(backward.defaultPrevented,false);
+const emptyTab=key('Tab');handleMentionKey(emptyTab,{querySelectorAll:()=>[]},{});
+assert.equal(emptyTab.defaultPrevented,false,'Empty suggestions do not trap Tab');
+choice.clicked=false;const tab=key('Tab');handleMentionKey(tab,picker,{});
+assert.equal(choice.clicked,true,'Tab completes the selection');assert.equal(tab.defaultPrevented,true);

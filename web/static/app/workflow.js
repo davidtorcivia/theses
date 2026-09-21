@@ -3,7 +3,7 @@ import { state, canEdit, proposition, byHandle, apply, material } from './state.
 import { newKey } from './net.js';
 import * as api from './api.js';
 
-function modal(title,wide=false) {
+export function modal(title,wide=false) {
   const back=document.activeElement;
   const body=el('div',{class:'workflow-body'});
   const close=el('button',{type:'button',class:'lnk',text:'Close',onclick:()=>dialog.close()});

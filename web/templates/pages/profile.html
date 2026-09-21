@@ -1,5 +1,5 @@
 {{define "content"}}<section id="admin">
-  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#calendar">Calendar sync</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a>{{if .IsOwner}}<a href="/settings">Workspace settings</a>{{end}}<a href="/" class="back">← Back to work</a></nav>
+  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#tokens">API &amp; MCP</a><a href="#calendar">Calendar sync</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a>{{if .IsOwner}}<a href="/settings">Workspace settings</a>{{end}}<a href="/" class="back">← Back to work</a></nav>
   <div class="apane">
     <h2>Profile</h2>
     {{if not .Section}}{{template "notice" .}}{{end}}
@@ -56,17 +56,55 @@
       </div>
     </section>
 
+    <section class="fs" id="tokens">
+      <div class="fsh"><h3>API &amp; MCP keys</h3><p>Connect your own tools and assistants using your account's permissions.</p></div>
+      <div class="fsb">
+        {{if eq .Section "tokens"}}{{template "notice" .}}{{end}}
+        <p>Each key belongs to you. It can access only the propositions you can access, within the scopes you choose. Permission changes apply on the next request. Activity identifies you and whether an action came through API or MCP.</p>
+        {{if .NewToken}}<div class="notice"><p>Copy this key now. It will not be shown again.</p><span class="once" id="personal-key">{{.NewToken}}</span><button class="lnk" type="button" data-copy="personal-key">Copy key</button></div>{{end}}
+        <ul class="personal-keys">
+          {{range .Tokens}}<li><div><strong>{{.Name}}</strong><p class="small dim">{{.Scopes}} · created {{.Created}} · {{.Used}}</p></div><form method="post" action="/profile/tokens/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="lnk del" type="submit" aria-label="Revoke {{.Name}}">Revoke</button></form></li>{{else}}<li class="dim">No active personal keys.</li>{{end}}
+        </ul>
+        <form class="form personal-key-form" method="post" action="/profile/tokens">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <label class="f"><span class="l">Key name</span><input name="name" maxlength="100" placeholder="Claude Desktop" required></label>
+          <label class="f"><span class="l">Key permissions</span><select name="scopes" aria-label="Key permissions"><option value="read">Read only</option>{{if .TokenWrite}}<option value="read write">Read and edit</option><option value="read write files">Read, edit and manage files</option>{{end}}{{if .IsOwner}}<option value="read write files admin">Full account access, including settings</option>{{end}}</select></label>
+          <button class="save" type="submit">Create personal key</button>
+        </form>
+        <p class="small dim">Use a separate key for each app so you can revoke one without interrupting the others. Treat keys like passwords.</p>
+        <details class="connection-guide"><summary>Connect Claude Desktop</summary>
+          {{if .MCPConfig}}<ol>
+            <li>Install a current Node.js LTS release on your computer, then create a key above. Choose Read and edit if you want Claude to make changes.</li>
+            <li>In Claude Desktop, open Settings → Developer → Edit Config. Add the <code>theses</code> entry below inside your existing <code>mcpServers</code> object, preserving other servers.</li>
+            <li>Replace <code>PASTE_YOUR_KEY_HERE</code> with your key, keeping <code>Bearer </code> before it. Save, fully quit Claude Desktop, and reopen it.</li>
+            <li>Enable Theses in the conversation's connectors/tools menu. Ask Claude to call <code>whoami</code> to check the connected account.</li>
+          </ol>
+          <pre id="desktop-mcp-config">{{.MCPConfig}}</pre><button class="lnk" type="button" data-copy="desktop-mcp-config">Copy Claude Desktop config</button>
+          <p class="small dim">This uses the third-party mcp-remote bridge to send your key to Theses. The copied template contains a placeholder, not your key. Keep the finished configuration private. If npx cannot be found, use its full path in the command field. This local setup is for Claude Desktop; it does not configure Claude's web app or Cowork.</p>
+          {{else}}<p>Ask your workspace owner to configure an HTTPS base URL before connecting Claude Desktop across the network. Localhost HTTP is supported for local development.</p>{{end}}
+          <p class="small"><a href="https://modelcontextprotocol.io/docs/develop/connect-local-servers" target="_blank" rel="noopener noreferrer">Claude Desktop setup guide</a> · <a href="https://github.com/punkpeye/mcp-remote#custom-headers" target="_blank" rel="noopener noreferrer">Bridge documentation</a></p>
+        </details>
+        <details class="connection-guide"><summary>Other MCP clients and the REST API</summary>
+          {{if .MCPConfig}}<p>For a client that supports Streamable HTTP with custom headers:</p>
+          <label class="f"><span class="l">MCP endpoint</span><input readonly value="{{.MCPURL}}"></label>
+          <p>Set the <code>Authorization</code> header to <code>Bearer YOUR_KEY</code>. Never put your key in the URL.</p>
+          <label class="f"><span class="l">REST API base URL</span><input readonly value="{{.APIURL}}"></label>
+          <p>Send the same header to <code>GET /api/v1/me</code> to verify your account and scopes. A 401 means the key is missing or revoked; a 403 means the key or your account lacks the required permission.</p>{{else}}<p>Configure an HTTPS base URL before sending keys across the network. Localhost HTTP is supported only for local development.</p>{{end}}
+        </details>
+      </div>
+    </section>
+
     <section class="fs" id="calendar">
-      <div class="fsh"><h3>Calendar sync</h3><p>Follow recording, editing and release dates in Google Calendar or Apple Calendar/iCloud.</p></div>
+      <div class="fsh"><h3>Calendar sync</h3><p>Follow production milestones, tasks and events in Google Calendar or Apple Calendar/iCloud.</p></div>
       <div class="fsb">
         {{if eq .Section "calendar"}}{{template "notice" .}}{{end}}
-        <p>Includes all active episodes you can access. Dates are all-day events. Change them in Theses; your calendar service decides when updates arrive.</p>
+        <p>Includes accessible active episodes, unfinished dated tasks, and Show events with their notes. Dates are all-day events. Change them in Theses; your calendar service decides when updates arrive.</p>
         {{if .CalendarURL}}<label class="f"><span class="l">Private subscription URL</span><input id="calendar-url" readonly value="{{.CalendarURL}}" autocomplete="off" spellcheck="false"><small>Copy this link now. It is shown only once. Use the same link on all your calendars.</small></label><button class="lnk" type="button" data-copy="calendar-url">Copy subscription link</button>{{end}}
         <ol class="calendar-instructions">
           <li><b>Google Calendar:</b> on a computer, choose Other calendars + → From URL, paste the link, then Add calendar.</li>
           <li><b>Apple Calendar on Mac:</b> choose File → New Calendar Subscription, paste the link, then choose iCloud as the account to see it on your other devices.</li>
         </ol>
-        <p class="small dim">Anyone with this private link can read your episode titles and dates. Replacing or revoking it stops future access; calendar services may retain earlier copies. Subscribe by URL instead of importing a file to keep receiving changes.</p>
+        <p class="small dim">Anyone with this private link can read included titles, dates and event notes. Replacing or revoking it stops future access; calendar services may retain earlier copies. Subscribe by URL instead of importing a file to keep receiving changes.</p>
         <form method="post" action="/profile/calendar" class="calendar-subscription-actions">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <button class="save" name="action" value="create" type="submit">{{if .CalendarActive}}Replace subscription link{{else}}Create subscription link{{end}}</button>

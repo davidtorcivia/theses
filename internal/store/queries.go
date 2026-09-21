@@ -380,9 +380,20 @@ func APITokenByHash(ctx context.Context, q Querier, hash []byte) (*APIToken, err
 }
 
 func ListAPITokens(ctx context.Context, q Querier) ([]*APIToken, error) {
+	return listAPITokens(ctx, q, 0)
+}
+
+func ListUserAPITokens(ctx context.Context, q Querier, userID int64) ([]*APIToken, error) {
+	if userID <= 0 {
+		return nil, ErrNotFound
+	}
+	return listAPITokens(ctx, q, userID)
+}
+
+func listAPITokens(ctx context.Context, q Querier, userID int64) ([]*APIToken, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT id, user_id, name, scopes, created_at, last_used_at FROM api_tokens
-		 WHERE revoked_at IS NULL ORDER BY created_at DESC`)
+		 WHERE revoked_at IS NULL AND (?=0 OR user_id=?) ORDER BY created_at DESC,id DESC`, userID, userID)
 	if err != nil {
 		return nil, err
 	}

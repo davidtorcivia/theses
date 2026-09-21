@@ -151,9 +151,7 @@ link is also shown once on the page, for the owner to pass on by hand; neither
 link is written to the activity log. Resending mints a new token and kills the
 old link.
 
-API tokens and MCP clients are managed here too. A token is shown once,
-carries the permissions of the account that made it, and can be revoked. See
-[api.md](api.md).
+Each user creates and revokes personal API/MCP keys in **Profile → API & MCP**. The owner workspace page lists all active keys with the owning account and can revoke any of them. Keys are shown once and carry the intersection of their selected scopes and the account's current permissions. Restoring a backup clears API keys and calendar subscription credentials to avoid reactivating revoked secrets. See [connection setup](connections.md) and [api.md](api.md).
 
 ## Environment
 

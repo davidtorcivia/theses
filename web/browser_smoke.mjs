@@ -47,6 +47,10 @@ try {
   }
   assert.equal(await page.locator('.tabs [data-tab=notes]').count(), 0);
   await page.locator('#docmode').click();
+  await page.locator('#docsrc').fill('@Al');
+  await page.locator('#picker [aria-selected=true]').waitFor();
+  await page.locator('#docsrc').press('Tab');
+  assert.match(await page.locator('#docsrc').inputValue(),/^@\w+ $/);
   await page.locator('#docsrc').fill('# Research\n\nDurable draft');
   await page.getByText('Draft on this device · Save to publish', { exact: true }).waitFor();
   await page.reload();
@@ -69,7 +73,10 @@ try {
   await page.locator('.outline a').first().click();
   await page.waitForFunction(() => document.activeElement?.classList.contains('blk'));
   await page.locator('.board-add').first().getByRole('button', { name: '+ Card', exact: true }).click();
-  await page.locator('.newcard textarea').fill(`Plan @[p:${fixture.proposition}]`);
+  await page.locator('.newcard textarea').fill('Plan @Tidal');
+  await page.locator('#picker [aria-selected=true]').waitFor();
+  await page.locator('.newcard textarea').press('Tab');
+  assert.equal(await page.locator('.newcard textarea').inputValue(),`Plan @[p:${fixture.proposition}] `);
   await page.locator('.newcard textarea').press('Enter');
   const linked = page.locator('#board .card').filter({ hasText: 'Tidal Power' });
   await linked.waitFor(); await linked.click();
@@ -146,7 +153,7 @@ try {
   await page.locator('#drawer').getByText('Nothing yet.',{exact:true}).waitFor();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
 
-  await page.getByRole('button',{name:'Recording view',exact:true}).click();
+  await page.getByLabel('Document tools',{exact:true}).click();await page.getByRole('button',{name:'Recording view',exact:true}).click();
   await page.locator('.recording-pin summary').click();
   await page.getByLabel('Recording cues',{exact:true}).fill('Pause before the conclusion.');
   if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.recording-view').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/recording-view.png'});
@@ -155,7 +162,7 @@ try {
   await page.getByRole('button',{name:'Start timer',exact:true}).click();
   await page.getByRole('button',{name:'Pause timer',exact:true}).waitFor();
   await page.locator('dialog header').getByRole('button',{name:'Close',exact:true}).click();
-  await page.getByRole('button',{name:'Review',exact:true}).click();
+  await page.getByLabel('Document tools',{exact:true}).click();await page.getByRole('button',{name:'Review',exact:true}).click();
   await page.getByRole('button',{name:'Request review of current version',exact:true}).click();
   await page.getByRole('button',{name:'Approve version',exact:true}).click();
   await page.locator('.review-item strong').filter({hasText:'approved'}).waitFor();
@@ -287,6 +294,37 @@ try {
     await page.getByRole('table').waitFor();
     if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.production-calendar').screenshot({animations:'disabled',style:'#top{visibility:hidden}',path:process.env.THESES_SCREENSHOT_DIR+'/calendar-'+width+'.png'});
   }
+  await page.getByRole('button',{name:'Add event or task on 2026-11-12',exact:true}).click();
+  assert.equal(await page.getByLabel('Calendar date',{exact:true}).inputValue(),'2026-11-12');
+  await page.getByLabel('Calendar title',{exact:true}).fill('Editorial planning');
+  await page.getByLabel('Event notes',{exact:true}).fill('Choose guests and research leads.');
+  let releaseCalendarSave;const calendarSaving=new Promise(resolve=>releaseCalendarSave=resolve);
+  await page.route('**/app/calendar-events',async route=>{await calendarSaving;await route.fetch();await route.abort();});
+  await page.locator('dialog').getByRole('button',{name:'Add to calendar',exact:true}).click();
+  assert.equal(await page.getByLabel('Calendar title',{exact:true}).isDisabled(),true);
+  assert.equal(await page.getByLabel('Calendar date',{exact:true}).isDisabled(),true);
+  releaseCalendarSave();await page.getByRole('button',{name:'Retry save',exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Calendar title',{exact:true}).isDisabled(),true);
+  await page.unroute('**/app/calendar-events');await page.getByRole('button',{name:'Retry save',exact:true}).click();
+  await page.locator('dialog').waitFor({state:'hidden'});
+  assert.equal(await page.locator('.calendar-scroll').getByRole('button',{name:'event Editorial planning',exact:true}).count(),1);
+  await page.waitForFunction(()=>document.activeElement?.textContent==='Add to calendar');
+  await page.locator('.calendar-scroll').getByRole('button',{name:'event Editorial planning',exact:true}).click();
+  await page.getByLabel('Calendar title',{exact:true}).fill('Editorial planning updated');
+  await page.getByRole('button',{name:'Save event',exact:true}).click();
+  await page.getByRole('button',{name:'Add event or task on 2026-11-13',exact:true}).click();
+  await page.getByLabel('Calendar item type',{exact:true}).selectOption('task');
+  await page.getByLabel('Calendar title',{exact:true}).fill('Calendar research task');
+  await page.locator('dialog').getByRole('button',{name:'Add to calendar',exact:true}).click();
+  await page.locator('.calendar-scroll').getByRole('link',{name:'task Calendar research task',exact:true}).waitFor();
+  await page.locator('#board .card').filter({hasText:'Calendar research task'}).waitFor();
+  for(const width of [320,768,1024,1440]){
+    await page.setViewportSize({width,height:1000});
+    await page.getByRole('button',{name:'Add event or task on 2026-11-15',exact:true}).click();
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Calendar creation overflow');
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('dialog').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/calendar-create-'+width+'.png'});
+    await page.locator('dialog header').getByRole('button',{name:'Close',exact:true}).click();
+  }
   await page.getByRole('link',{name:'Calendar sync',exact:true}).click();
   await page.getByRole('button',{name:'Create subscription link',exact:true}).click();
   const calendarURL=await page.locator('#calendar-url').inputValue();
@@ -296,7 +334,7 @@ try {
   const calendarPath=new URL(calendarURL).pathname;
   const subscriber=await browser.newContext();
   const feed=await subscriber.request.get(fixture.url+calendarPath);
-  assert.equal(feed.status(),200);assert.match(await feed.text(),/BEGIN:VCALENDAR/);
+  assert.equal(feed.status(),200);const calendarFeed=await feed.text();assert.match(calendarFeed,/BEGIN:VCALENDAR/);assert.match(calendarFeed,/Editorial planning updated/);assert.match(calendarFeed,/Calendar research task/);
   for(const width of [320,1440]){
     await page.setViewportSize({width,height:1000});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Calendar settings overflow at '+width);
@@ -312,6 +350,51 @@ try {
   assert.equal((await subscriber.request.get(fixture.url+replacement)).status(),404);
   await page.getByRole('button',{name:'Create subscription link',exact:true}).waitFor();
   await subscriber.close();
+  await visit('/profile#tokens');
+  await page.getByLabel('Key name',{exact:true}).fill('Browser assistant');
+  await page.getByLabel('Key permissions',{exact:true}).selectOption('read write');
+  await page.getByRole('button',{name:'Create personal key',exact:true}).click();
+  const personalKey=(await page.locator('#personal-key').textContent()).trim();
+  await page.getByRole('button',{name:'Copy key',exact:true}).click();
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),personalKey);
+  const headers={Authorization:'Bearer '+personalKey};
+  assert.equal((await context.request.get(fixture.url+'/api/v1/me',{headers})).status(),200);
+  await page.getByText('Connect Claude Desktop',{exact:true}).click();
+  const config=JSON.parse(await page.locator('#desktop-mcp-config').textContent());
+  assert.ok(config.mcpServers.theses.args.includes('auto'));
+  assert.ok(!JSON.stringify(config).includes(personalKey));
+  for(const width of [320,768,1024,1440]){
+    await page.setViewportSize({width,height:1000});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Key settings overflow at '+width);
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('#tokens').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/personal-keys-'+width+'.png'});
+  }
+  await visit('/p/'+fixture.proposition);
+  await page.locator('#board .col').first().waitFor();
+  const column=Number(await page.locator('#board .col').first().getAttribute('data-col'));
+  const apiWrite=await context.request.post(fixture.url+'/api/v1/columns/'+column+'/cards',{headers,data:{title:'Browser API action'}});assert.equal(apiWrite.status(),200);
+  const mcpWrite=await context.request.post(fixture.url+'/mcp',{headers:{...headers,Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-06-18'},data:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'create_card',arguments:{column,title:'Browser MCP action'}}}});
+  assert.equal(mcpWrite.status(),200,await mcpWrite.text());assert.match(await mcpWrite.text(),/Browser MCP action|"id"/);
+  await page.locator('#activitytab').click();
+  await page.locator('.activity-author').filter({hasText:'via API · Browser assistant'}).waitFor();
+  await page.locator('.activity-author').filter({hasText:'via MCP · Browser assistant'}).waitFor();
+  await page.locator('#activitytab').click();
+  for(const width of [320,390,768,1024,1280,1440]){
+    await page.setViewportSize({width,height:1000});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Document controls overflow at '+width);
+    assert.equal(await page.getByRole('button',{name:'Recording view',exact:true}).isVisible(),false);
+    assert.ok((await page.locator('.doc-ph').boundingBox()).height<180,'Document header too tall at '+width);
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.doc-ph').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/document-controls-'+width+'.png'});
+    await page.getByLabel('Document tools',{exact:true}).click();
+    const menu=await page.locator('.document-tools-list').boundingBox();assert.ok(menu.x>=0&&menu.x+menu.width<=width+1,'Document menu outside viewport');
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.document-tools-list').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/document-tools-'+width+'.png'});
+    await page.getByRole('button',{name:'History',exact:true}).focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getByLabel('Document tools',{exact:true}).evaluate(n=>n===document.activeElement),true);
+  }
+  await visit('/profile#tokens');
+  assert.equal(await page.locator('#personal-key').count(),0);
+  await page.getByRole('button',{name:'Revoke Browser assistant',exact:true}).click();
+  assert.equal((await context.request.get(fixture.url+'/api/v1/me',{headers})).status(),401);
   assert.deepEqual(errors, []);
   console.log('PASS drafts, mentions, links, filters, move controls, outline, production, history, upload retry, notes, private access, offline recovery, worker cache replacement, mobile');
   console.log('Lab sample (not field INP): ' + JSON.stringify({ cards: 500, filter_ms, ...timings }));

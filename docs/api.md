@@ -25,7 +25,7 @@ remain available to API clients.
 
 ## Tokens and scopes
 
-A token is created in the app and shown once. It starts with `thes_` and is sent
+A token is created in **Profile → API & MCP** and shown once. Each user can list and revoke only their own keys; workspace owners can also revoke keys from the workspace settings. See [client setup instructions](connections.md). It starts with `thes_` and is sent
 on every request:
 
 ```
@@ -1360,3 +1360,5 @@ The session routes below use `/app`; bearer routes use the same paths under `/ap
 Each transcript segment has `start_ms`, `end_ms`, `speaker` and `text`. Plain text imports have null timestamps. Editing a transcript while a transcription job runs causes the job's replacement to be refused, preserving the edited transcript. Script approvals include the document's monotonic revision and block contents; moving or editing and then reverting a block still invalidates the approval. Replacement recordings require a new review. Deleting a source document or recording retains pinned script and review history under the proposition; deleting the proposition removes that history.
 
 The new workflow has REST and browser controls. Existing MCP tools retain their current scope.
+
+Calendar entries use `GET /api/v1/calendar-entries`. Create or edit an event with `POST /api/v1/calendar-events` (`title`, `date` as YYYY-MM-DD, optional `notes`; edits also need `id` and `version`). Delete with `DELETE /api/v1/calendar-events/{id}?version=N`. Create a Show task with `POST /api/v1/calendar-tasks` (`title`, `date`, `column`); it is assigned to the authenticated user. Event writes require current Show edit permission; deletion requires delete permission. Task writes use the same board permissions and audit path as other card creation.

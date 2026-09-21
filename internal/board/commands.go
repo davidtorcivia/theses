@@ -543,6 +543,23 @@ func (s *Service) DeleteColumn(ctx context.Context, a core.Actor, id int64) (cor
 // Cards.
 
 func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, title string, assignees []int64) (core.Event, error) {
+	return s.createCard(ctx, a, column, title, assignees, "")
+}
+
+func (s *Service) CreateCalendarTask(ctx context.Context, a core.Actor, column int64, title, due string) (core.Event, error) {
+	if due == "" {
+		return core.Event{}, ErrDueDate
+	}
+	return s.createCard(ctx, a, column, title, []int64{a.ID}, due)
+}
+
+func (s *Service) createCard(ctx context.Context, a core.Actor, column int64, title string, assignees []int64, due string) (core.Event, error) {
+	if due != "" {
+		if day, err := time.Parse("2006-01-02", due); err != nil || day.Year() < 2000 || day.Year() > 2100 {
+			return core.Event{}, ErrDueDate
+		}
+	}
+
 	title, err := Field(title, MaxLine)
 	if err != nil {
 		return core.Event{}, err
@@ -558,6 +575,13 @@ func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, ti
 		return core.Event{}, err
 	}
 	return s.do(ctx, a, proposition, auth.CanEdit, "card", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+		var valid bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM columns c JOIN propositions p ON p.id=c.proposition_id WHERE c.id=? AND p.id=? AND (?='' OR p.kind='show'))`, column, proposition, due).Scan(&valid); err != nil {
+			return core.Change{}, err
+		}
+		if !valid {
+			return core.Change{}, core.ErrNotFound
+		}
 		position, err := last(ctx, tx, "cards", "column_id", column)
 		if err != nil {
 			return core.Change{}, err
@@ -567,8 +591,8 @@ func (s *Service) CreateCard(ctx context.Context, a core.Actor, column int64, ti
 			by = a.ID
 		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO cards
-			(proposition_id, column_id, position, title, created_by, created_at)
-			VALUES (?, ?, ?, ?, ?, unixepoch())`, proposition, column, position, title, by)
+			(proposition_id, column_id, position, title, created_by, created_at,due_date)
+			VALUES (?, ?, ?, ?, ?, unixepoch(),?)`, proposition, column, position, title, by, value(due))
 		if err != nil {
 			return core.Change{}, err
 		}
