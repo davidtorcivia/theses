@@ -583,11 +583,15 @@ const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('t
 // this, the next person at this machine answering their own first question
 // would settle a block in a tab the person before them left open, on nothing
 // more than the two rows having been the first of their stores.
+//
+// It has to say so, rather than merely not disagree: the channel arrived with
+// this, so there are no older messages to be kind to, and one that names
+// nobody is one nothing in this app sent.
 if (channel) {
   channel.addEventListener('message', (e) => {
     const said = e.data;
     if (!said || !said.answered) return;
-    if (said.me && state.me && said.me !== state.me) return;
+    if (said.me !== state.me) return;
     settled(said.answered, said.answer, { post: false });
     // What the other tab did to the store, this one has not read yet.
     count();
