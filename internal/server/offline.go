@@ -132,11 +132,24 @@ func (s *Server) getActivity(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"error": "no such proposition"})
 		return
 	}
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	entity := r.URL.Query().Get("entity")
+	where := "a.proposition_id = ?"
+	args := []any{proposition}
+	if before > 0 {
+		where += " AND a.id < ?"
+		args = append(args, before)
+	}
+	if entity != "" {
+		where += " AND a.entity = ?"
+		args = append(args, entity)
+	}
+	args = append(args, activityPage+1)
 	rows, err := s.db.QueryContext(r.Context(), `SELECT a.id, a.actor_kind, a.actor_id,
 		coalesce(u.name, ''), coalesce(a.via, ''), a.entity, a.entity_id, a.action,
 		a.before_json, a.after_json, a.created_at, a.undone_at
 		FROM activity a LEFT JOIN users u ON a.actor_kind = 'user' AND u.id = a.actor_id
-		WHERE a.proposition_id = ? ORDER BY a.id DESC LIMIT ?`, proposition, activityPage)
+		WHERE `+where+` ORDER BY a.id DESC LIMIT ?`, args...)
 	if err != nil {
 		s.fail(w, r, err)
 		return
@@ -170,7 +183,15 @@ func (s *Server) getActivity(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"activity": out})
+	more := len(out) > activityPage
+	if more {
+		out = out[:activityPage]
+	}
+	var next int64
+	if len(out) > 0 {
+		next = out[len(out)-1].Seq
+	}
+	writeJSON(w, map[string]any{"activity": out, "more": more, "before": next})
 }
 
 // getSearch is the palette's read. It is the same query as GET /api/v1/search,

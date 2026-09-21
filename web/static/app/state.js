@@ -30,6 +30,7 @@ export const state = {
   tab: 'board',
   railFilter: null,
   boardFilter: 'all',
+  boardOptions: { assignee: '', due: '', proposition: '', query: '', view: 'board', status: 'all' },
   openCard: null,
   connected: false,
   // conflict is the stale text edits the server refused, by the field each was

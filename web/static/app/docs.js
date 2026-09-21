@@ -391,6 +391,28 @@ function carets(id, here, version, move) {
   return out;
 }
 
+const outlines = new Map();
+function outlineFor(doc) {
+  const headings = (doc?.blocks || []).filter((b) => /^#{1,6}\s+/.test(b.text));
+  if (!headings.length) return null;
+  let entry = outlines.get(doc.id);
+  if (!entry) {
+    entry = { node: el('details', { class: 'outline' }, el('summary', { text: 'Document outline' })), key: '' };
+    outlines.set(doc.id, entry);
+  }
+  const key = JSON.stringify(headings.map((b) => [b.id, b.text.split('\n')[0]]));
+  if (entry.key !== key) {
+    const focused = entry.node.contains(document.activeElement);
+    entry.node.querySelector('ul')?.remove();
+    entry.node.append(el('ul', {}, headings.map((b) => el('li', {}, el('a', {
+      href: '#block-' + b.id, text: b.text.split('\n')[0].replace(/^#+\s+/, ''),
+    })))));
+    entry.key = key;
+    if (focused) entry.node.querySelector('summary').focus();
+  }
+  return entry.node;
+}
+
 // renderDocument returns the whole document area, head and all, for the board
 // pane to append. It is called on every render, so the block being edited is
 // carried over rather than rebuilt.
@@ -432,6 +454,7 @@ export function renderDocument() {
 
   const body = el('div', { id: 'docwrap', class: state.docSource ? 'source' : '' });
   const rendered = el('div', { id: 'doc' });
+  const outline = outlineFor(doc);
   body.append(recovery(doc), rendered, source(doc));
   if (!doc) {
     rendered.append(el('p', { class: 'empty', text: 'No document yet. The + above starts one.' }));
@@ -461,7 +484,7 @@ export function renderDocument() {
     // it.
     if (canEdit()) rendered.append(addBlock(doc));
   }
-  return [head, body];
+  return [head, outline, body];
 }
 
 // afterRender puts the caret back where it was. The whole pane is rebuilt on

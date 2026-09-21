@@ -757,3 +757,13 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
 .reference-context { display: none; position: absolute; left: 0; top: 100%; z-index: 5; min-width: 12rem; max-width: min(24rem, 70vw); padding: .65rem; background: var(--k); color: var(--p); border: 1px solid currentColor; white-space: normal; font-size: .85rem; }
 .reference-preview:hover .reference-context, .reference-preview:focus-within .reference-context { display: block; }
 .blk > .lnk { font-size: .7rem; margin-top: .3rem; }
+.board-controls { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
+.board-controls label { flex: 1 1 8rem; min-width: 0; }
+.board-controls label > span { display: block; font-size: .7rem; color: var(--dim); margin-bottom: .3rem; }
+.board-controls input, .board-controls select { min-height: 2rem; border-bottom: 1px solid var(--hair); }
+#board.list-view { grid-template-columns: minmax(0, 1fr); }
+#board.list-view .card { display: flex; gap: 1rem; align-items: start; }
+#board.list-view .card .cb { flex: 1; min-width: 0; }
+.outline { margin: .5rem 0 1rem; }
+.outline summary { cursor: pointer; padding: .5rem 0; }
+.outline li { margin: .5rem 0; }
