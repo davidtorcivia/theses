@@ -6,8 +6,10 @@ import * as api from './api.js';
 const entries=new Map();
 const stamp=ms=>ms===null?'Untimed':Math.floor(ms/60000)+':'+String(Math.floor(ms/1000)%60).padStart(2,'0');
 export function transcriptSection(file){
-  let entry=entries.get(file.id);if(entry)return entry;
+  let entry=entries.get(file.id);if(entry?.dataset.version===String(file.metadata_version))return entry;
+  if(entry)entry.open=false;
   const body=el('div');entry=el('details',{class:'transcript'},el('summary',{text:'Transcript'}),body);entries.set(file.id,entry);
+  entry.dataset.version=String(file.metadata_version);
   let generation=0,poll;
   const load=async()=>{
     const request=++generation;clearTimeout(poll);clear(body).append(el('p',{role:'status',text:'Loading transcript…'}));
@@ -26,8 +28,9 @@ export function transcriptSection(file){
         const stereo=el('input',{type:'checkbox'});
         if(local_transcription){body.append(el('label',{class:'check-label'},stereo,'Label speakers by stereo channel'),el('p',{class:'dim',text:'Use channel labels only when each host has a separate left/right channel. Mixed or mono recordings need manual labels. Audio is sent to the Whisper service configured by your server operator. No paid transcription API is required.'}));
           actions.append(el('button',{type:'button',class:'act',text:'Transcribe locally',disabled:jobs.some(j=>['queued','running'].includes(j.state)),onclick:async(e)=>{
+            const button=e.currentTarget;
             if(transcript.version&&!await ask('Regenerate transcript?','The new transcript will replace this version only if it has not changed while processing.','Transcribe'))return;
-            const button=e.currentTarget;button.disabled=true;button.textContent='Queueing…';
+            button.disabled=true;button.textContent='Queueing…';
             try{await api.post(`/files/${file.id}/transcription-jobs`,{stereo:stereo.checked},{'Idempotency-Key':newKey()});await load();}catch(err){say(err.message);button.disabled=false;button.textContent='Transcribe locally';}
           }}));
         }else body.append(el('p',{class:'dim',text:'Automatic transcription needs a local Whisper service configured by the server operator. Transcript import is ready to use.'}));
@@ -59,12 +62,13 @@ export function transcriptSection(file){
 function edit(segment,transcript,file,refresh){
   const speaker=el('input',{'aria-label':'Speaker label',maxlength:100,value:segment.speaker});const text=el('textarea',{rows:8,'aria-label':'Transcript passage',required:true});text.value=segment.text;
   const all=el('input',{type:'checkbox'});const status=el('p',{role:'status'});const save=el('button',{type:'submit',class:'act',text:'Save passage'});
+  const attempt=api.mutation();
   const close=el('button',{type:'button',class:'lnk',text:'Cancel'});
   const form=el('form',{},el('h3',{text:'Edit transcript passage'}),el('label',{},'Speaker',speaker),el('label',{class:'check-label'},all,'Rename this speaker throughout the transcript'),text,status,el('div',{class:'acts'},close,save));
   const dialog=el('dialog',{class:'workflow-dialog','aria-label':'Edit transcript passage'},form);const back=document.activeElement;
   const dirty=()=>text.value!==segment.text||speaker.value!==segment.speaker;const dismiss=async()=>{if(!save.disabled&&(!dirty()||await ask('Discard passage changes?','Changes have not been saved.','Discard')))dialog.close();};close.onclick=dismiss;dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss();});
   const leaving=e=>{if(dirty()){e.preventDefault();e.returnValue='';}};window.addEventListener('beforeunload',leaving);dialog.addEventListener('close',()=>{window.removeEventListener('beforeunload',leaving);dialog.remove();if(back?.isConnected)back.focus();else entries.get(file.id)?.querySelector('summary')?.focus();});
-  form.onsubmit=async e=>{e.preventDefault();save.disabled=true;status.textContent='Saving…';const segments=transcript.segments.map((s,i)=>({...s,speaker:i===segment.index||(all.checked&&s.speaker===segment.speaker)?speaker.value:s.speaker,text:i===segment.index?text.value:s.text}));
-    try{await api.replace(`/files/${file.id}/transcript`,{segments,version:transcript.version},{'Idempotency-Key':newKey()});dialog.close();refresh();}catch(err){status.textContent=err.message;save.disabled=false;}
+  form.onsubmit=async e=>{e.preventDefault();save.disabled=true;status.textContent='Saving…';speaker.disabled=text.disabled=all.disabled=true;const segments=transcript.segments.map((s,i)=>({...s,speaker:i===segment.index||(all.checked&&s.speaker===segment.speaker)?speaker.value:s.speaker,text:i===segment.index?text.value:s.text}));
+    try{await attempt.run('PUT',`/files/${file.id}/transcript`,{segments,version:transcript.version});dialog.close();refresh();}catch(err){status.textContent=err.message;save.disabled=false;speaker.disabled=text.disabled=all.disabled=attempt.pending;save.textContent=attempt.pending?'Retry save':'Save passage';}
   };document.body.append(dialog);dialog.showModal();
 }

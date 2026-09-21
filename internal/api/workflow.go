@@ -30,6 +30,26 @@ func (a *API) workflowAnswer(w http.ResponseWriter, r *http.Request, value any, 
 	a.writeJSON(w, 200, value)
 }
 func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
+	m.HandleFunc("GET "+p+"/trash", wrap(auth.ScopeRead, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
+		rows, err := a.Board.Trash(r.Context(), actor, id(r, "proposition"))
+		a.workflowAnswer(w, r, map[string]any{"items": rows}, err)
+	}))
+	m.HandleFunc("POST "+p+"/trash/{id}/restore", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
+		item, err := a.Board.DeletedItem(r.Context(), actor, path(r, "id"))
+		if err != nil {
+			a.workflowAnswer(w, r, nil, err)
+			return
+		}
+		if p, ok := PrincipalFrom(r.Context()); ok && item.Entity == "file" {
+			if why := p.Deny(auth.ScopeFiles); why != "" {
+				a.fail(w, 403, why)
+				return
+			}
+		}
+		event, err := a.Board.RestoreDeleted(r.Context(), actor, path(r, "id"))
+		a.workflowAnswer(w, r, map[string]any{"event": event}, err)
+	}))
+
 	m.HandleFunc("GET "+p+"/calendar-entries", wrap(auth.ScopeRead, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		entries, err := a.Workflow.CalendarEntries(r.Context(), actor)
 		a.workflowAnswer(w, r, map[string]any{"entries": entries}, err)

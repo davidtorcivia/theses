@@ -109,9 +109,10 @@ type Reader func(ctx context.Context, q store.Querier, entity string, id int64) 
 
 // Service holds the database and the bus every command publishes on.
 type Service struct {
-	Rejected atomic.Uint64
-	DB       *store.DB
-	Bus      *Bus
+	ReserveMaintenance func() (func(), error)
+	Rejected           atomic.Uint64
+	DB                 *store.DB
+	Bus                *Bus
 	// publishing keeps SQLite's commit order through delivery to subscribers.
 	publishing sync.Mutex
 	// Now is the clock, replaced in tests.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,6 +62,14 @@ func TestBrowserWorkflow(t *testing.T) {
 	}
 	recordingID, err := recording.LastInsertId()
 	if err != nil {
+		t.Fatal(err)
+	}
+
+	var largeDocument int64
+	if err := h.db.QueryRowContext(ctx, "SELECT id FROM documents WHERE proposition_id=? ORDER BY position,id LIMIT 1", large).Scan(&largeDocument); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200) INSERT INTO blocks(document_id,position,text,updated_at) SELECT ?,printf('z%06d',x),?,1 FROM n`, largeDocument, strings.Repeat("Research paragraph with checked sources and recording notes. ", 15)); err != nil {
 		t.Fatal(err)
 	}
 	var workerRevision atomic.Uint64

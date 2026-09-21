@@ -69,3 +69,34 @@ await two;
 assert.equal(reads, 3);
 assert.equal(state.files[0].id, 8);
 assert.equal(state.loaded, state.open);
+
+const block={id:50,document_id:20,text:'restored',version:4,position:'V'};
+apply({...event(30,'document',20,{id:20,position:'V',blocks:[block]}),action:'restore'});
+apply(event(29,'block',50,{...block,text:'stale',version:3}));
+assert.equal(state.documents.find(d=>d.id===20).blocks[0].text,'restored');
+apply(event(32,'block',50,{...block,text:'newer',version:5}));
+apply({...event(31,'document',20,{id:20,position:'V',blocks:[block]}),action:'restore'});
+assert.equal(state.documents.find(d=>d.id===20).blocks[0].text,'newer');
+apply(event(34,'document',20,{id:20,title:'Renamed',position:'V'}));
+apply(event(33,'block',50,{...block,text:'edit before rename',version:6}));
+assert.equal(state.documents.find(d=>d.id===20).blocks[0].text,'edit before rename','row-only rename does not mask block edits');
+
+const priorResearch=state.researchRevision;
+apply({...event(35,'evidence',2,{id:2,title:'restored source'}),action:'restore'});
+assert.ok(state.researchRevision>priorResearch);
+let readsAfterRestore=0;
+globalThis.fetch=async path=>{readsAfterRestore++;return new Response(JSON.stringify(path.includes('attachments')?{links:[{card_id:2,link_id:9}]}:{links:[],files:[]}),{headers:{'content-type':'application/json'}});};
+apply({...event(36,'link',9,{id:9,proposition_id:1,url:'https://example.com'}),action:'restore'});
+await material();
+assert.equal(readsAfterRestore,3);
+assert.deepEqual(state.attachments.links,[{card_id:2,link_id:9}]);
+
+const {acceptFile}=await import('./static/app/state.js');
+apply(event(40,'file',8,{id:8,proposition_id:1,name:'newest'}));
+acceptFile({id:8,proposition_id:1,name:'old response'},39);
+assert.equal(state.files.find(f=>f.id===8).name,'newest');
+apply(event(41,'file',8,null,{id:8,proposition_id:1}));
+acceptFile({id:8,proposition_id:1,name:'deleted during read'},40);
+assert.equal(state.files.some(f=>f.id===8),false);
+acceptFile({id:9,proposition_id:2,name:'other workspace'},41);
+assert.equal(state.files.some(f=>f.proposition_id===2),false);

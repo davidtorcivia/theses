@@ -26,4 +26,6 @@ This local configuration applies to Claude Desktop. It does not configure Claude
 
 For a client supporting Streamable HTTP and custom headers, use the profile's MCP endpoint and `Authorization: Bearer YOUR_KEY`. For REST, use the profile's API base URL and the same header. `GET /api/v1/me` verifies identity and scopes. Use HTTPS except for localhost development. Never put credentials in URLs.
 
-A 401 means the key is absent, invalid or revoked. A 403 means the key or account lacks a required permission. An inaccessible proposition returns 404. After a backup restore, all keys and calendar subscriptions must be recreated; restored copies of previously revoked credentials are deliberately removed.
+A 401 means the key is absent, invalid, expired or revoked. A 403 means the key or account lacks a required permission. An inaccessible proposition returns 404. After a backup restore, all keys and calendar subscriptions must be recreated; restored copies of previously revoked credentials are deliberately removed.
+
+Personal keys can expire after 7, 30, 90 or 365 days, or have no expiry. The form defaults to 30 days. Replace an expiring key in your client before its expiry; existing keys are unchanged.

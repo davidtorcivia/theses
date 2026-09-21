@@ -73,6 +73,7 @@ export const state = {
   // materialFailed is the last read of the links and files having gone wrong,
   // which the panes say out loud rather than reporting there are none.
   materialFailed: false,
+  researchRevision: 0,
 };
 
 // unresolvedCard is true while a card text conflict still needs an explicit
@@ -87,6 +88,7 @@ export function unresolvedCard(id) {
 
 export function boot(payload) {
   recent.clear();
+  documentFloors.clear();
   state.me = payload.me;
   state.workspace = payload.workspace;
   state.timezone = payload.timezone || '';
@@ -131,15 +133,19 @@ function loadBoard(board) {
 // requests away and only the tab that shows them needs them. Events keep them
 // up to date from then on.
 let materialRead = null;
+let materialGeneration = 0;
 export function material() {
   if (materialRead?.proposition === state.open) return materialRead.promise;
-  const read = { proposition: state.open };
-  read.promise = loadMaterial().finally(() => { if (materialRead === read) materialRead = null; });
+  const read = { proposition: state.open, generation: materialGeneration };
+  read.promise = loadMaterial(read.generation).finally(() => {
+    if (materialRead === read) materialRead = null;
+    if(read.proposition===state.open&&read.generation!==materialGeneration)material().catch(()=>{});
+  });
   materialRead = read;
   return read.promise;
 }
 
-async function loadMaterial() {
+async function loadMaterial(generation) {
   if (!state.open || state.loaded === state.open) return;
   // With no connection there is nothing to read them from, and every render
   // would try again and say so again over whatever else is on the bar. What
@@ -168,7 +174,7 @@ async function loadMaterial() {
     ]);
     // A tab that was navigated away while these were in flight keeps what it
     // has: the answers belong to a proposition it is no longer showing.
-    if (state.open !== proposition) return;
+    if (state.open !== proposition || generation !== materialGeneration) return;
     state.links = links.links || [];
     state.files = files.files || [];
     state.folders = files.folders || [];
@@ -193,7 +199,7 @@ async function loadMaterial() {
     });
     emit();
   } catch (err) {
-    if (state.open !== proposition) return;
+    if (state.open !== proposition || generation !== materialGeneration) return;
     // The mark is cleared so another go is possible, and the stamp above is
     // what keeps that from being every render. The pane says it could not read
     // them rather than saying there are none.
@@ -216,6 +222,7 @@ async function loadMaterial() {
 // that is the event that makes another go worth making right now rather than in
 // ten seconds.
 export function retryMaterial() {
+  materialGeneration++;
   state.loaded = 0;
   lastTried = 0;
 }
@@ -301,6 +308,13 @@ export function hold(on) {
 // apply moves the state forward by one event. Every payload is the whole row as
 // the server has it, so applying an event twice is applying it once.
 const recent = new Map();
+const documentFloors = new Map();
+// A resource read cannot replace a mutation received after that read started.
+export function acceptFile(row,since){
+  if(row.proposition_id!==state.open||(recent.get(`${row.proposition_id}:file:${row.id}`)?.seq||0)>since)return;
+  const at=state.files.findIndex(file=>file.id===row.id);
+  if(at<0)state.files.unshift(row);else state.files[at]=row;
+}
 let snapshotSeq = 0;
 const materialEntities = new Set(['link', 'file', 'card_link', 'card_file']);
 
@@ -325,6 +339,7 @@ export function apply(ev) {
     const [parent, id] = parentOf(ev);
     const floor = ev.proposition === state.open && !materialEntities.has(ev.entity) ? snapshotSeq : 0;
     const previous = Math.max(floor, recent.get(key)?.seq || 0,
+      ev.entity==='block' ? documentFloors.get(`${ev.proposition}:${(ev.after||ev.before)?.document_id}`)||0 : 0,
       recent.get(`${ev.proposition}:${parent}:${id}`)?.seq || 0);
     if (ev.seq <= previous) {
       settleReplayed(ev);
@@ -402,6 +417,10 @@ export function apply(ev) {
       if (at < 0) state.documents.push({ blocks: [], ...now });
       else state.documents[at] = { ...state.documents[at], ...now };
       state.documents.sort(order);
+      if(ev.seq>0&&Array.isArray(now.blocks)){
+        documentFloors.set(`${ev.proposition}:${ev.entity_id}`,ev.seq);
+        for(const child of recent.values())if(child.entity==='block'&&child.proposition===ev.proposition&&(child.after||child.before)?.document_id===ev.entity_id&&child.seq>ev.seq)apply({...child,seq:0});
+      }
       break;
     }
 
@@ -473,6 +492,10 @@ export function apply(ev) {
     }
   }
   // Parent payloads include their children; retain child events newer than them.
+  if(ev.seq>0&&ev.proposition===state.open){
+    if(ev.entity==='evidence'||ev.action==='restore')state.researchRevision++;
+    if(ev.action==='restore'&&['card','file','link'].includes(ev.entity)){retryMaterial();material().catch(()=>{});}
+  }
   if (ev.seq > 0 && ev.after && (ev.entity === 'card' || ev.entity === 'proposition')) {
     for (const child of recent.values()) {
       const [parent, id] = parentOf(child);

@@ -32,7 +32,7 @@ function open(onImported) {
     class: 'q', type: 'search', spellcheck: 'false', placeholder: 'Search Drive',
     oninput: (e) => { query = e.target.value.trim(); redraw(); },
   });
-  const dialog = el('dialog', { class: 'drive' },
+  const dialog = el('dialog', { class: 'drive', 'aria-label':'Add from Drive' },
     el('h3', { text: 'Add from Drive' }),
     el('div', { class: 'tools' }, search, where),
     list,
@@ -104,17 +104,20 @@ function open(onImported) {
         }));
     }
     const go = el('button', { class: 'lnk', type: 'button', text: 'Import' });
-    go.addEventListener('click', () => take(row, go));
+    const attempt=api.mutation();
+    go.addEventListener('click', () => take(row, go, attempt));
     return el('li', {},
       el('span', { text: row.name }),
       el('span', { class: 'mono dim', text: bytes(row.size) }),
       go);
   }
 
-  async function take(row, button) {
+  async function take(row, button, attempt) {
+    const since=state.seq;
+    const destination=state.open;
     const into = folder.value || DEFAULT_FOLDER;
     const clash = state.files.find((f) => f.name === row.name && f.folder === into && f.state === 'ready');
-    if (clash && !await ask(
+    if (!attempt.pending && clash && !await ask(
       'There is already a file called ' + row.name + '.',
       'Importing it again adds a second file with the same name. Versions are for files you upload.',
       'Import it anyway')) {
@@ -124,16 +127,16 @@ function open(onImported) {
     button.textContent = 'Copying…';
     note.textContent = 'Copying ' + row.name + ' into the bucket. Large files take a while.';
     try {
-      const answer = await api.post('/drive/import', {
-        proposition: state.open, file: row.id, folder: into,
+      const answer = await attempt.run('POST','/drive/import', {
+        proposition: destination, file: row.id, folder: into,
       });
       note.textContent = row.name + ' is in ' + into + '.';
       button.textContent = 'Imported';
-      onImported(answer.file);
+      onImported(answer.file,since);
     } catch (err) {
       note.textContent = err.message;
       button.disabled = false;
-      button.textContent = 'Import';
+      button.textContent = attempt.pending?'Retry import':'Import';
     }
   }
 

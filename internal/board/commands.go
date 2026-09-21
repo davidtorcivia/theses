@@ -788,7 +788,10 @@ func (s *Service) SetCardDone(ctx context.Context, a core.Actor, id int64, done 
 }
 
 func (s *Service) DeleteCard(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
-	return s.card(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx, _ Card) error {
+	return s.card(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx, was Card) error {
+		if err := s.KeepDeleted(ctx, tx, was.Proposition, "card", id, was.Title); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM cards WHERE id = ?`, id)
 		return err
 	})

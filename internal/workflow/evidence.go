@@ -182,6 +182,9 @@ func (s *Service) DeleteEvidence(ctx context.Context, a core.Actor, id, version 
 		if row.Version != version {
 			return core.Change{}, ErrChanged
 		}
+		if err := s.KeepDeleted(ctx, tx, row.Proposition, "evidence", id, row.Title); err != nil {
+			return core.Change{}, err
+		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM evidence WHERE id=?`, id)
 		return core.Change{Entity: "evidence", EntityID: id, Action: "delete", Before: row}, err
 	})

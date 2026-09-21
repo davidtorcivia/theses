@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/core"
 )
@@ -163,6 +164,96 @@ func readerThatCancels(cancel func(), n int) io.Reader {
 type readerFunc func([]byte) (int, error)
 
 func (r readerFunc) Read(p []byte) (int, error) { return r(p) }
+
+func TestOverlappingImportRetriesDoNotCopyTwice(t *testing.T) {
+	f := setup(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	secondRead := make(chan struct{}, 1)
+	type result struct {
+		file File
+		err  error
+	}
+	results := make(chan result, 2)
+	run := func(body io.Reader) {
+		keyed, err := core.WithKey(ctx, "overlapping-import")
+		if err == nil {
+			var file File
+			file, err = f.Import(keyed, f.who["editor"], f.prop, "notes.txt", "Documents", 3, body)
+			results <- result{file, err}
+		} else {
+			results <- result{err: err}
+		}
+	}
+	first := true
+	go run(readerFunc(func(p []byte) (int, error) {
+		if !first {
+			return 0, io.EOF
+		}
+		first = false
+		close(entered)
+		select {
+		case <-release:
+			return copy(p, "abc"), nil
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	}))
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("first import did not start")
+	}
+	go run(readerFunc(func(p []byte) (int, error) {
+		select {
+		case secondRead <- struct{}{}:
+		default:
+		}
+		return copy(p, "xyz"), nil
+	}))
+	select {
+	case <-secondRead:
+		t.Error("overlapping retry started a second copy")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	var id int64
+	for range 2 {
+		select {
+		case out := <-results:
+			if out.err != nil || !out.file.Ready() || id != 0 && out.file.ID != id {
+				t.Fatalf("retry result %+v", out)
+			}
+			id = out.file.ID
+		case <-ctx.Done():
+			t.Fatal("imports did not finish")
+		}
+	}
+	select {
+	case <-secondRead:
+		t.Fatal("completed retry consumed the source again")
+	default:
+	}
+}
+
+func TestAbandonedImportCanRetryItsKey(t *testing.T) {
+	f := setup(t)
+	keyed := func() context.Context {
+		ctx, err := core.WithKey(context.Background(), "failed-import-retry")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ctx
+	}
+	if _, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("x")); err == nil {
+		t.Fatal("short import accepted")
+	}
+	row, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("abc"))
+	if err != nil || !row.Ready() {
+		t.Fatalf("retry: %+v %v", row, err)
+	}
+}
 
 func TestImportReplayKeepsCompletedBytes(t *testing.T) {
 	f := setup(t)

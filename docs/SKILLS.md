@@ -40,8 +40,9 @@ with `tools/list`, and call `whoami` first. Use the actual schemas rather than
 inventing tool arguments. `get_show`, `list_propositions`, `list_cards`,
 `list_documents`, `read_document` and `search` are useful entry points.
 The server supports multiple MCP protocol revisions; let the client negotiate.
-Calendar, evidence, reviews and transcript workflows also have REST endpoints;
-do not assume each REST operation has an MCP tool.
+Calendar, evidence, reviews, production plans, transcripts and deleted-item
+recovery have matching MCP tools returning a typed `result`. See the parity table in [api.md](api.md), and
+discover each tool's exact argument schema with `tools/list`.
 
 ## Permissions and attribution
 
@@ -50,7 +51,8 @@ other scopes, but no scope overrides the account's current role or proposition
 membership. Permission changes and revocation apply to subsequent requests.
 Activity records the account and identifies API or MCP actions. Use a separate
 named key for each client. Keys cannot be recovered after creation; the user
-can revoke them in Profile. Restoring a backup invalidates keys.
+can revoke them or choose an expiry when creating them in Profile. Expired keys
+are rejected on every new request; `whoami` reports `token.expires_at` when set. Restoring a backup invalidates keys.
 
 ## Find the right workspace and IDs
 
@@ -158,7 +160,7 @@ do not mark a file complete before its upload succeeds.
 ## Failures and boundaries
 
 - 400/422: correct the request or validation error before retrying.
-- 401: missing, invalid or revoked key; reconnect with the user's credential.
+- 401: missing, invalid, expired or revoked key; reconnect with the user's credential.
 - 403: missing scope or current role permission. Do not attempt escalation.
 - 404: missing or inaccessible resource; the API intentionally does not reveal
   which. A deleted resource may also produce 404 on a retry.
@@ -167,9 +169,19 @@ do not mark a file complete before its upload succeeds.
 - 500/503 or a lost connection: reconcile uncertain writes using their retry
   key; do not create duplicates. A service dependency may be unavailable.
 
-Most API/MCP JSON requests are limited to 64 KiB; the reference documents larger
-transcript import limits. Use documented pagination rather than assuming the
+Ordinary REST JSON requests are limited to 64 KiB. MCP allows 4 MiB plus
+64 KiB for the envelope; transcript imports have a 4 MiB content limit. Use documented pagination rather than assuming the
 first page is complete. Some browser-only integrations have no API/MCP route.
 Do not assume Pinecast publishing is connected: no Pinecast publishing API is
 provided by this guide. Deleting, publishing, bulk changes and administrative
 operations require authorization from the user as well as server permissions.
+
+
+## Recover a deletion
+
+Use `list_trash` with `proposition`, then `restore_deleted` with the trash item's
+`id`, or the matching REST routes. Individual cards, documents, links, completed
+files, evidence and calendar events have a seven-day recovery window. Restore
+requires current delete permission. Check the returned event and original
+resource; never assume an item was restored from its absence in trash.
+Do not delete a proposition to remove one item: proposition deletion is permanent.

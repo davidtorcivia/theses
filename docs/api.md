@@ -785,8 +785,9 @@ Scope `admin`, workspace owners only. GET inspects durable file deletion records
 
 ## `DELETE /api/v1/files/{id}`
 
-Scope `files`. Removes the row, then the object, its thumbnail and any
-multipart upload still in flight. Answers `{"deleted": true}`.
+Scope `files`. Completed files enter the seven-day recovery window. Incomplete
+uploads and their multipart data are removed permanently. Answers
+`{"deleted": true, "event": {...}}`.
 
 ## `GET /api/v1/attachments?proposition=`
 
@@ -1323,8 +1324,7 @@ belongs to, with `mcp:<client>` in the log's `via` field.
 
 ## What is not here
 
-Adding a file from Drive and publishing to Transistor are browser routes only.
-Neither has an API or MCP surface yet.
+Adding a file from Drive is a browser route only. Pinecast publishing remains a manual handoff; there is no Pinecast publishing API in this app.
 
 Workspace item links use `/p/{proposition}#card-{id}`, `#file-{id}`,
 `#link-{id}`, `#document-{id}`, `#block-{id}`, and `#comment-{id}`.
@@ -1359,6 +1359,83 @@ The session routes below use `/app`; bearer routes use the same paths under `/ap
 
 Each transcript segment has `start_ms`, `end_ms`, `speaker` and `text`. Plain text imports have null timestamps. Editing a transcript while a transcription job runs causes the job's replacement to be refused, preserving the edited transcript. Script approvals include the document's monotonic revision and block contents; moving or editing and then reverting a block still invalidates the approval. Replacement recordings require a new review. Deleting a source document or recording retains pinned script and review history under the proposition; deleting the proposition removes that history.
 
-The new workflow has REST and browser controls. Existing MCP tools retain their current scope.
+The workflow is available through the browser, REST and the MCP tools below. All surfaces call the same commands and enforce current role and membership permissions.
 
 Calendar entries use `GET /api/v1/calendar-entries`. Create or edit an event with `POST /api/v1/calendar-events` (`title`, `date` as YYYY-MM-DD, optional `notes`; edits also need `id` and `version`). Delete with `DELETE /api/v1/calendar-events/{id}?version=N`. Create a Show task with `POST /api/v1/calendar-tasks` (`title`, `date`, `column`); it is assigned to the authenticated user. Event writes require current Show edit permission; deletion requires delete permission. Task writes use the same board permissions and audit path as other card creation.
+
+
+## Workflow MCP and REST parity
+
+Discover argument schemas with `tools/list`. Each workflow tool returns a typed
+`result`: a resource or list for reads, a string for exports, and an event for
+mutations. Events include `after` and `replayed`. Give workflow mutations a
+`key` when the schema exposes it; retry with identical arguments after an
+uncertain response. File restoration requires both `write` and `files` scopes.
+
+| MCP tool | Scope | REST route |
+| --- | --- | --- |
+| `list_calendar_entries` | `read` | `GET /api/v1/calendar-entries` |
+| `save_calendar_event` | `write` | `POST /api/v1/calendar-events` |
+| `delete_calendar_event` | `write` | `DELETE /api/v1/calendar-events/{id}` |
+| `create_calendar_task` | `write` | `POST /api/v1/calendar-tasks` |
+| `get_production_plan` | `read` | `GET /api/v1/propositions/{id}/production-plan` |
+| `save_production_plan` | `write` | `PUT /api/v1/propositions/{id}/production-plan` |
+| `list_evidence` | `read` | `GET /api/v1/evidence` |
+| `save_evidence` | `write` | `PUT /api/v1/evidence` |
+| `delete_evidence` | `write` | `DELETE /api/v1/evidence/{id}` |
+| `export_evidence` | `read` | `GET /api/v1/evidence/export` |
+| `list_snapshots` | `read` | `GET /api/v1/documents/{id}/snapshots` |
+| `get_snapshot` | `read` | `GET /api/v1/snapshots/{id}` |
+| `pin_script` | `write` | `POST /api/v1/documents/{id}/snapshots` |
+| `list_reviews` | `read` | `GET /api/v1/reviews` |
+| `request_review` | `write` | `POST /api/v1/reviews` |
+| `decide_review` | `write` | `PATCH /api/v1/reviews/{id}` |
+| `get_transcript` | `read` | `GET /api/v1/files/{id}/transcript` |
+| `save_transcript` | `write` | `PUT /api/v1/files/{id}/transcript` |
+| `export_transcript` | `read` | `GET /api/v1/files/{id}/transcript/export` |
+| `list_transcription_jobs` | `read` | `GET /api/v1/files/{id}/transcription-jobs` |
+| `queue_transcription` | `write` | `POST /api/v1/files/{id}/transcription-jobs` |
+| `resolve_file_comment` | `write` | `PATCH /api/v1/files/{id}/comments/{comment}` |
+| `list_trash` | `read` | `GET /api/v1/trash` |
+| `restore_deleted` | `write` | `POST /api/v1/trash/{id}/restore` |
+
+`save_evidence` takes an `evidence` object; `save_production_plan` takes a `plan`
+object. Both contain `proposition_id` and the current `version`. Other tools
+expose their fields directly. Supply exactly one of `document` or `file` to
+`request_review`. Transcript `segments` contain `start_ms`, `end_ms`, `speaker`
+and `text`; import `text` with `format` instead when using TXT, SRT or VTT.
+MCP requests allow 4 MiB plus 64 KiB for the envelope; transcript content still
+has its own 4 MiB limit. Ordinary REST bodies remain limited to 64 KiB.
+
+## Recover deleted content
+
+`GET /api/v1/trash?proposition={id}` lists recoverable items in that proposition.
+Each has `id` (trash ID), `entity`, `entity_id` (original resource ID), `title`,
+`deleted_at`, and `expires_at`. `POST /api/v1/trash/{id}/restore` restores the item
+and returns `event`. Restoration requires the current account's delete permission
+and membership. An archived proposition must be restored before its content.
+
+Individual cards, documents, links, ready files, evidence and calendar events
+are recoverable for seven days after deletion. Restoration preserves original
+resource IDs and restores owned content such as document blocks, card comments,
+file comments and transcripts. It refuses conflicting names or missing related
+resources atomically with HTTP 409. References cleared on surviving records by deletion are reconnected only if
+they still point to nothing or to the same original target; a new target is a
+conflict and prevents restoration.
+Document revision/checklist internal IDs may change. Pending transcription jobs
+are not restarted. Restore related items first when a dependency is missing.
+
+Permanent proposition deletion, individual comment/checklist deletion and
+incomplete upload removal are excluded. Blocks retain their existing activity
+undo. File bytes remain in storage during the recovery window; the existing
+owner storage-cleanup tools can remove unreferenced objects after seven days.
+Recovery requires the original storage object to remain available.
+
+## Key expiry
+
+Profile and workspace settings offer 7, 30, 90 or 365 day expiry, or no expiry.
+The form defaults to 30 days; existing keys keep their previous lifetime.
+The API and MCP reject an expired key on each new request, including previously
+initialized MCP sessions. `/me` and `whoami` expose `token.expires_at` as Unix
+seconds when set. Expiry does not broaden scope or proposition membership. Per-key proposition allowlists are not supported;
+use an account with the appropriate proposition membership for narrower access.

@@ -32,6 +32,7 @@ const withoutHandle = (row) => {
 
 export async function pending() {
   const rows = await offline.uploads();
+  if(rows===null)throw new api.Refused("Upload recovery storage could not be read. Retry recovery.",0);
   return rows.map((row) => {
     // Read uploads written by the previous release once, then replace their
     // large stored File with metadata when they next resume.
@@ -121,6 +122,8 @@ export function sameFile(row, file) {
 // file has to be the same one: its size is checked, because a presigned URL was
 // signed for that many bytes.
 export async function resume(row, hooks) {
+  const {file:current}=await api.get('/files/'+row.file);
+  if(current.state==='ready'){await forget(row.file);handles.delete(row.file);return {file:current};}
   const file = row.handle || handles.get(row.file);
   const up = await api.get('/files/' + row.file + '/parts');
   if (!file || file.size !== up.file.size) {
@@ -149,7 +152,7 @@ async function carryOn(up, file, onProgress) {
   const done = await api.post('/files/' + id + '/complete', await measure(file));
   await forget(id);
   handles.delete(id);
-  return done.file;
+  return done;
 }
 
 // margin is how long before its URLs expire a batch is abandoned for a fresh

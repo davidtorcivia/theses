@@ -545,7 +545,16 @@ function prune() {
     if (busy(w)) lost = true;
   }
   if (lost) say('A block you had unsaved text in was deleted.');
-  for (const id of sources.keys()) if (!documents().some((d) => d.id === id)) sources.delete(id);
+  for (const [id,src] of sources) if (!documents().some(d=>d.id===id)) {
+    if(sourceDirty(src)){
+      src.text=src.area.value;
+      const row=draftRecord(src,state.me,state.open,src.identity);
+      recoverable.set(src.draftID,row);
+      keepDraft(src.identity,src,false,row);
+      say('A document with your unsaved draft was deleted. Your draft is available below the document controls.');
+    }
+    sources.delete(id);
+  }
 }
 
 export function afterRender() {
@@ -658,8 +667,8 @@ function deleteDocument(doc) {
   return el('button', {
     class: 'lnk del', type: 'button', id: 'docdel', text: 'Delete this document',
     onclick: () => ask(`Delete ${doc.name}?`,
-      'Its blocks and the markdown file it is mirrored to go with it. The record of the deletion stays in activity.',
-      'Delete permanently').then((yes) => {
+      'You can restore this document and its blocks for seven days from Activity → Recently deleted.',
+      'Delete document').then((yes) => {
       if (!yes) return;
       send('document.delete', { document: doc.id })
         .then(() => where(docWhere()))
@@ -801,11 +810,11 @@ function loadDrafts() {
   });
 }
 
-function keepDraft(doc, src, remove = false) {
+function keepDraft(doc, src, remove = false, row = draftRecord(src, state.me, state.open, doc)) {
   clearTimeout(src.draftTimer);
   src.draftTimer = 0;
   const generation = src.generation = (src.generation || 0) + 1;
-  src.writeWanted = { row: draftRecord(src, state.me, state.open, doc), remove, generation };
+  src.writeWanted = { row, remove, generation };
   src.stored = false;
   if (!src.storing) {
     src.storing = (async () => {
@@ -837,12 +846,18 @@ function scheduleDraft(doc, src) {
 
 function recovery(doc) {
   const wrap = el('div', { class: 'draft-recovery' });
-  if (!doc || !canEdit()) return wrap;
+  if (!canEdit()) return wrap;
   if (draftReadFailed) wrap.append(el('p', { class: 'notice' },
     'Draft storage is unavailable. Keep this page open until your work is saved. ',
     el('button', { type: 'button', text: 'Retry draft recovery', onclick: () => { draftScope = ''; loadDrafts(); } })));
   for (const row of recoverable.values()) {
-    if (!draftMatches(row, state.me, state.open, doc)) continue;
+    if(row.account===state.me&&row.proposition===state.open&&!documents().some(d=>draftMatches(row,state.me,state.open,d))){
+      const text=el('textarea',{readonly:true,rows:6,'aria-label':'Unsaved draft from deleted document'});text.value=row.text;
+      wrap.append(el('details',{class:'notice'},el('summary',{text:'Unsaved draft from deleted document #'+row.document}),el('p',{text:'Copy this text, or restore the document from Activity → Recently deleted to recover it there.'}),text,
+        el('button',{type:'button',class:'lnk',text:'Copy draft',onclick:async()=>{try{await navigator.clipboard.writeText(row.text);say('Draft copied');}catch{text.focus();text.select();say('Select and copy the draft text.');}}})));
+      continue;
+    }
+    if (!doc || !draftMatches(row, state.me, state.open, doc)) continue;
     wrap.append(el('div', { class: 'notice' },
       el('span', { text: 'Unsaved markdown draft · ' + new Date(row.at).toLocaleString() }),
       el('button', { type: 'button', text: 'Recover draft', onclick: async () => {
@@ -975,6 +990,7 @@ function reopen(doc, recovered = null) {
     key: '',
     notice: '',
     clean: area.value,
+    identity:{id:doc.id,created_at:doc.created_at},
     draftID: newKey(),
     pending: null,
     stored: true,
@@ -2709,7 +2725,7 @@ async function openHistory(doc) {
 
   const close = el('button', { class: 'lnk plain', type: 'button', text: 'Close' });
   const keep = el('button', { class: 'lnk', type: 'button', text: 'Save a version now' });
-  const dialog = el('dialog', { class: 'history' },
+  const dialog = el('dialog', { class: 'history', 'aria-label':'Document history' },
     el('h3', { text: 'History of ' + doc.name }),
     el('p', { text: 'Changes are saved as you type. A version is kept when you ask, every two minutes while somebody is editing, and before markdown for the whole document is read back in from the file or from the source view.' }),
     list, pane,

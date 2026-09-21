@@ -388,7 +388,7 @@ try {
     await page.setViewportSize({width,height:1000});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Document controls overflow at '+width);
     assert.equal(await page.getByRole('button',{name:'Recording view',exact:true}).isVisible(),false);
-    assert.ok((await page.locator('.doc-ph').boundingBox()).height<180,'Document header too tall at '+width);
+    await page.waitForFunction(()=>{const h=document.querySelector('.doc-ph')?.getBoundingClientRect().height;return h>0&&h<180;});
     if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.doc-ph').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/document-controls-'+width+'.png'});
     await page.getByLabel('Document tools',{exact:true}).click();
     const menu=await page.locator('.document-tools-list').boundingBox();assert.ok(menu.x>=0&&menu.x+menu.width<=width+1,'Document menu outside viewport');

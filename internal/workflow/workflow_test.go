@@ -21,7 +21,7 @@ func TestWorkflowVersionsAndBoundaries(t *testing.T) {
 	c := core.New(db, core.NewBus())
 	b := board.New(c, func() board.Defaults { return board.Defaults{Status: "idea", Columns: []string{"Research"}} })
 	d := docs.New(c, "", func() string { return "# Script\n\nFirst claim." }, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s := &Service{Service: c}
+	s := New(c)
 	actors := map[string]core.Actor{}
 	for _, role := range []string{"owner", "editor", "guest"} {
 		id, err := store.CreateUser(ctx, db, &store.User{Handle: role, Email: role + "@example.com", Name: role, Role: role, PasswordHash: "x"})

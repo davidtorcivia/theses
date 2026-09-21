@@ -344,6 +344,9 @@ func (s *Service) abandon(ctx context.Context, row File) {
 		if current.State != stateUploading || current.ObjectKey != row.ObjectKey {
 			return ErrState
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM client_keys WHERE activity_id IN (SELECT id FROM activity WHERE entity='file' AND entity_id=? AND action='create')`, row.ID); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, row.ID)
 		return err
 	}); err != nil {
@@ -628,11 +631,7 @@ func (s *Service) PatchFileDetails(ctx context.Context, a core.Actor, id int64, 
 	})
 }
 
-// Delete removes the row and then the object. That order loses nothing if the
-// second step fails: what is left is an object nobody can reach, which costs
-// storage until somebody lists the bucket.
-//
-// Durable cleanup records retain exact keys when object deletion fails.
+// Delete retains ready files for the recovery window and aborts incomplete uploads.
 func (s *Service) Delete(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
 	was, err := s.readable(ctx, a, id)
 	if err != nil {
@@ -645,14 +644,27 @@ func (s *Service) Delete(ctx context.Context, a core.Actor, id int64) (core.Even
 	if err != nil && !errors.Is(err, core.ErrNotFound) {
 		return core.Event{}, err
 	}
+	retained := false
 	event, err := s.file(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
+		current, err := GetFile(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if current.Ready() {
+			retained = true
+			if err := s.KeepDeleted(ctx, tx, current.Proposition, "file", id, current.Name); err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
 		return err
 	})
 	if err != nil {
 		return core.Event{}, err
 	}
-	s.forget(ctx, was, multipart)
+	if !retained {
+		s.forget(ctx, was, multipart)
+	}
 	return event, nil
 }
 

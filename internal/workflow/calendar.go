@@ -121,6 +121,9 @@ func (s *Service) DeleteCalendarEvent(ctx context.Context, a core.Actor, id, ver
 		if err := s.Allow(ctx, tx, show.ID, "calendar_event", "delete"); err != nil {
 			return core.Change{}, err
 		}
+		if err := s.KeepDeleted(ctx, tx, show.ID, "calendar_event", id, was.Title); err != nil {
+			return core.Change{}, err
+		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM calendar_events WHERE id=?`, id)
 		return core.Change{Entity: "calendar_event", EntityID: id, Action: "delete", Before: was}, err
 	})

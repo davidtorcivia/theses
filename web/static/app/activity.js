@@ -9,6 +9,9 @@ import { $, el, initials, say } from './dom.js';
 import { state, user, emit, canEdit, unresolvedCard } from './state.js';
 import { send, again, letGo, resend, Conflict } from './net.js';
 import { gone } from './docs.js';
+import { modal } from './workflow.js';
+import { clear } from './dom.js';
+import { apply } from './state.js';
 import * as api from './api.js';
 
 export function openPanel() {
@@ -93,7 +96,7 @@ export function renderPanel(drawer) {
     filter = e.target.value; expanded = false; state.activity = []; readActivity(false);
   } }, ['', 'card', 'block', 'document', 'file', 'link', 'comment', 'proposition'].map((kind) =>
     el('option', { value: kind, selected: filter === kind, text: kind || 'All activity' })));
-  drawer.append(select);
+  drawer.append(el('div',{class:'activity-controls'},select,el('button',{type:'button',class:'lnk',text:'Recently deleted',onclick:openTrash})));
   if (failure) drawer.append(el('p', { role: 'status', text: failure }), el('button', { class: 'lnk', type: 'button', text: 'Retry', 'data-k': 'activity-retry', onclick: () => readActivity(false) }));
   if (expanded && seen !== state.seq) drawer.append(el('button', { class: 'lnk', type: 'button', text: 'Load new activity', 'data-k': 'activity-new', onclick: () => readActivity(false) }));
   drawer.append(el('h4', { text: loading ? 'Loading…' : 'History' }));
@@ -340,3 +343,29 @@ function when(unix) {
 // outstanding is what the tab says beside its name: the queue plus whatever the
 // server has already refused.
 export const outstanding = () => state.waitingHere + state.refused.length;
+
+async function openTrash() {
+ const prop=state.open;
+ const {dialog,body}=modal('Recently deleted');
+ let saving=false;
+ const dismiss=()=>{if(!saving)dialog.close();};dialog.querySelector('header button').onclick=dismiss;dialog.addEventListener('cancel',e=>{e.preventDefault();dismiss();});
+ const draw=async()=>{
+  clear(body).append(el('p',{role:'status',text:'Loading deleted items…'}));
+  try{
+   const {items}=await api.get('/trash?proposition='+prop);if(!dialog.open)return;
+   clear(body).append(el('p',{text:'Individual cards, documents, links, files, evidence, and calendar events can be restored for seven days. Permanent proposition deletion and incomplete uploads are excluded.'}));
+   if(!items.length)body.append(el('p',{text:'No recoverable deleted items.'}));
+   for(const item of items){
+    const attempt=api.mutation();
+    const status=el('p',{role:'status'});
+    const restore=el('button',{type:'button',class:'act',text:'Restore',onclick:async()=>{
+     if(saving)return;saving=true;restore.disabled=true;status.textContent='Restoring…';
+     try{const answer=await attempt.run('POST','/trash/'+item.id+'/restore',{});apply(answer.event);await draw();say('Item restored');}
+     catch(err){status.textContent=err.message;restore.disabled=false;}
+     finally{saving=false;}
+    }});
+    body.append(el('article',{class:'review-item'},el('strong',{text:item.title||item.entity+' #'+item.entity_id}),el('p',{class:'dim',text:item.entity.replaceAll('_',' ')+' · recover until '+new Date(item.expires_at*1000).toLocaleString()}),state.can.delete?restore:null,status));
+   }
+  }catch(err){clear(body).append(el('p',{role:'status',text:err.message}),el('button',{class:'lnk',type:'button',text:'Retry',onclick:draw}));}
+ };await draw();
+}

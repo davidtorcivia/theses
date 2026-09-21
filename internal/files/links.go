@@ -174,6 +174,14 @@ func (s *Service) RefetchLink(ctx context.Context, a core.Actor, id int64) (core
 
 func (s *Service) DeleteLink(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
 	return s.link(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
+		var trashProp int64
+		var trashTitle string
+		if err := tx.QueryRowContext(ctx, "SELECT proposition_id,title FROM links WHERE id=?", id).Scan(&trashProp, &trashTitle); err != nil {
+			return err
+		}
+		if err := s.KeepDeleted(ctx, tx, trashProp, "link", id, trashTitle); err != nil {
+			return err
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM links WHERE id = ?`, id)
 		return err
 	})

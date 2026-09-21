@@ -174,6 +174,14 @@ func (a *Auth) CreateAPIToken(ctx context.Context, userID int64, name string, sc
 // CreateAPITokenWith is CreateAPIToken on a caller's transaction, so the
 // one-time credential and its activity row can commit together.
 func (a *Auth) CreateAPITokenWith(ctx context.Context, q store.Querier, userID int64, name string, scopes []string) (string, error) {
+	return a.CreateExpiringAPITokenWith(ctx, q, userID, name, scopes, 0)
+}
+
+// CreateExpiringAPITokenWith creates a key with an optional Unix expiry.
+func (a *Auth) CreateExpiringAPITokenWith(ctx context.Context, q store.Querier, userID int64, name string, scopes []string, expiresAt int64) (string, error) {
+	if expiresAt != 0 && expiresAt <= a.Now().Unix() {
+		return "", fmt.Errorf("%w: expiry must be in the future", ErrAPITokenInput)
+	}
 	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 100 {
 		return "", fmt.Errorf("%w: a token needs a name of at most 100 characters", ErrAPITokenInput)
 	}
@@ -190,7 +198,11 @@ func (a *Auth) CreateAPITokenWith(ctx context.Context, q store.Querier, userID i
 		return "", err
 	}
 	clear := APITokenPrefix + base64.RawURLEncoding.EncodeToString(token)
-	if _, err := store.CreateAPIToken(ctx, q, userID, name, a.mac([]byte(clear)), strings.Join(scopes, " ")); err != nil {
+	var expiry any
+	if expiresAt != 0 {
+		expiry = expiresAt
+	}
+	if _, err := q.ExecContext(ctx, `INSERT INTO api_tokens(user_id,name,hash,scopes,created_at,expires_at) VALUES(?,?,?,?,unixepoch(),?)`, userID, name, a.mac([]byte(clear)), strings.Join(scopes, " "), expiry); err != nil {
 		return "", fmt.Errorf("create api token: %w", err)
 	}
 	return clear, nil
@@ -226,6 +238,9 @@ func (a *Auth) LookupAPIToken(ctx context.Context, clear string) (*store.APIToke
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if t.ExpiresAt.Valid && t.ExpiresAt.Int64 <= a.Now().Unix() {
+		return nil, nil, ErrTokenExpired
 	}
 	u, err := store.UserByID(ctx, a.db, t.UserID)
 	if err != nil {

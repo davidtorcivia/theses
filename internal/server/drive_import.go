@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -127,6 +128,23 @@ func (s *Server) postDriveImport(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.writable(r, in.Proposition); err != nil {
 		s.refuseJSON(w, r, err)
 		return
+	}
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		var id int64
+		err := s.db.QueryRowContext(r.Context(), `SELECT f.id FROM client_keys k JOIN activity a ON a.id=k.activity_id JOIN files f ON f.id=CAST(a.entity_id AS INTEGER) WHERE k.actor_id=? AND k.key=? AND a.entity='file' AND a.action='create' AND f.proposition_id=? AND f.state='ready'`, userOf(r).ID, key, in.Proposition).Scan(&id)
+		if err == nil {
+			row, err := s.files.ReadFile(r.Context(), core.Actor{Kind: core.KindUser, ID: userOf(r).ID}, id)
+			if err != nil {
+				s.refuseJSON(w, r, err)
+				return
+			}
+			s.writeJSON(w, http.StatusOK, map[string]any{"file": row})
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			s.refuseJSON(w, r, err)
+			return
+		}
 	}
 	drive, err := s.loadDrive(r.Context())
 	if err != nil {

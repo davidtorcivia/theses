@@ -121,6 +121,38 @@ func TestDriveImportStreamsIntoTheBucket(t *testing.T) {
 	}
 }
 
+func TestDriveImportRetryUsesOneFile(t *testing.T) {
+	h, drive, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
+	csrf := h.csrf("/profile")
+	var first int64
+	for range 2 {
+		req, err := http.NewRequest("POST", h.http.URL+"/app/drive/import", strings.NewReader(`{"proposition":`+strconv.FormatInt(proposition, 10)+`,"file":"f1","folder":"Recordings"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-CSRF-Token", csrf)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Idempotency-Key", "drive-retry")
+		response, err := h.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer struct {
+			File files.File `json:"file"`
+		}
+		err = json.NewDecoder(response.Body).Decode(&answer)
+		response.Body.Close()
+		if err != nil || response.StatusCode != 200 || !answer.File.Ready() {
+			t.Fatalf("import response: %d %+v %v", response.StatusCode, answer, err)
+		}
+		if first != 0 && first != answer.File.ID {
+			t.Fatal("retry created another file")
+		}
+		first = answer.File.ID
+		drive.Close()
+	}
+}
+
 func TestDriveImportRefusals(t *testing.T) {
 	h, _, proposition := connectedDrive(t, map[string]string{"f1": "twelve bytes"})
 	token := h.csrf("/profile")

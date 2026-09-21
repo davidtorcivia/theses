@@ -62,7 +62,7 @@ func (s *Service) orphanPage(ctx context.Context, a core.Actor, before, only int
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,json_object('id',file_id,'folder',folder,'object_key',object_key) FROM file_cleanup WHERE deleted_at<? AND (?=0 OR id<?) AND (?=0 OR id=?) ORDER BY id DESC LIMIT 101`, s.Now().Add(-cleanupGrace).Unix(), before, before, only, only)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,json_object('id',file_id,'folder',folder,'object_key',object_key) FROM file_cleanup WHERE deleted_at<? AND NOT EXISTS(SELECT 1 FROM trash t WHERE t.entity='file' AND t.entity_id=file_cleanup.file_id AND t.restored_at IS NULL AND t.expires_at>unixepoch()) AND (?=0 OR id<?) AND (?=0 OR id=?) ORDER BY id DESC LIMIT 101`, s.Now().Add(-cleanupGrace).Unix(), before, before, only, only)
 	if err != nil {
 		return OrphanReport{}, err
 	}

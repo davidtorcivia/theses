@@ -790,7 +790,7 @@ func TestMoveBetweenBucketsIsRefused(t *testing.T) {
 	}
 }
 
-func TestDeleteRemovesTheObject(t *testing.T) {
+func TestDeleteRetainsObjectForRecovery(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 	row := f.upload(t, "tides.pdf", "Documents", []byte("one page"))
@@ -798,16 +798,45 @@ func TestDeleteRemovesTheObject(t *testing.T) {
 	if _, err := f.Delete(ctx, f.who["researcher"], row.ID); !errors.Is(err, core.ErrForbidden) {
 		t.Fatalf("a researcher deleting: %v, want forbidden", err)
 	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO evidence(proposition_id,file_id,title) VALUES(?,?,'Linked recording')`, row.Proposition, row.ID); err != nil {
+		t.Fatal(err)
+	}
 	e, err := f.Delete(ctx, f.who["editor"], row.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.bucket.Head(ctx, row.ObjectKey); !errors.Is(err, blob.ErrNotFound) {
-		t.Fatalf("the object is still in the bucket: %v", err)
+	if _, _, err := f.bucket.Head(ctx, row.ObjectKey); err != nil {
+		t.Fatalf("retained bytes missing: %v", err)
 	}
-	// The object is gone, so there is nothing to put a row back in front of.
 	if _, err := f.Undo(ctx, f.who["editor"], e.Seq); !errors.Is(err, core.ErrNotUndoable) {
-		t.Fatalf("undoing a file delete: %v, want not undoable", err)
+		t.Fatalf("activity undo: %v", err)
+	}
+	items, err := f.Trash(ctx, f.who["editor"], row.Proposition)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("trash %+v %v", items, err)
+	}
+	f.ReserveMaintenance = func() (func(), error) { return nil, errors.New("busy") }
+	if _, err = f.RestoreDeleted(ctx, f.who["editor"], items[0].ID); !errors.Is(err, core.ErrRestoreBusy) {
+		t.Fatalf("maintenance exclusion %v", err)
+	}
+	released := false
+	f.ReserveMaintenance = func() (func(), error) { return func() { released = true }, nil }
+	if _, err = f.RestoreDeleted(ctx, f.who["editor"], items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if !released {
+		t.Fatal("maintenance reservation not released")
+	}
+	var reference int64
+	if err := f.db.QueryRowContext(ctx, "SELECT file_id FROM evidence WHERE title='Linked recording'").Scan(&reference); err != nil || reference != row.ID {
+		t.Fatalf("lost restored relationship %d %v", reference, err)
+	}
+	restored, err := GetFile(ctx, f.db, row.ID)
+	if err != nil || restored.ObjectKey != row.ObjectKey || restored.MetadataVersion <= row.MetadataVersion || restored.CommentRevision <= row.CommentRevision {
+		t.Fatalf("restored %+v %v", restored, err)
+	}
+	if _, _, err = f.bucket.Head(ctx, restored.ObjectKey); err != nil {
+		t.Fatal(err)
 	}
 }
 
