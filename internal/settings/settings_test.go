@@ -231,6 +231,12 @@ func TestInternalSettingsOnlyAcceptSystemWrites(t *testing.T) {
 	if got := Get[int](s, "backups.last_ok_at"); got != 2000000000 {
 		t.Errorf("backups.last_ok_at = %d after system write", got)
 	}
+	if err := s.Delete(ctx, "backups.last_ok_at", User(0)); err == nil {
+		t.Fatal("a user cleared scheduler state")
+	}
+	if got := Get[int](s, "backups.last_ok_at"); got != 2000000000 || !s.IsSet("backups.last_ok_at") {
+		t.Errorf("backups.last_ok_at after rejected delete = %d, set %t", got, s.IsSet("backups.last_ok_at"))
+	}
 }
 
 func TestIntegerSettingsAreBounded(t *testing.T) {
@@ -336,15 +342,7 @@ func TestConcurrentWritesLeaveTheCacheMatchingTheRow(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-
-	var stored string
-	if err := db.QueryRowContext(ctx,
-		`SELECT value_json FROM settings WHERE key = 'workspace.name'`).Scan(&stored); err != nil {
-		t.Fatal(err)
-	}
-	if cached := Get[string](s, "workspace.name"); stored != `"`+cached+`"` {
-		t.Errorf("the row holds %s and the cache holds %q", stored, cached)
-	}
+	assertNameCacheMatchesRow(t, ctx, db, s)
 }
 
 func TestBlockedSettingsWriteDoesNotBlockCacheReads(t *testing.T) {
@@ -399,5 +397,107 @@ func TestBlockedSettingsWriteDoesNotBlockCacheReads(t *testing.T) {
 	}
 	if stored != `"After the lock"` {
 		t.Fatalf("stored value after write = %s", stored)
+	}
+}
+
+func TestBlockedSettingsDeleteDoesNotBlockCacheReads(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+	if err := s.Set(ctx, "workspace.name", []string{"Before delete"}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Delete(ctx, "workspace.name", User(0)) }()
+	select {
+	case err := <-done:
+		t.Fatalf("settings delete finished while another write transaction was open: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	read := make(chan string, 1)
+	go func() { read <- Get[string](s, "workspace.name") }()
+	select {
+	case got := <-read:
+		if got != "Before delete" {
+			t.Fatalf("cache read while delete waited = %q", got)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("a database wait during delete blocked a settings cache read")
+	}
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("settings delete did not finish after the database lock was released")
+	}
+	assertNameCacheMatchesRow(t, ctx, db, s)
+}
+
+func TestConcurrentDeleteSetAndReloadLeaveTheCacheMatchingTheRow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 20 {
+				var err error
+				if (i+j)%3 == 0 {
+					err = s.Reload(ctx)
+				} else if (i+j)%2 == 0 {
+					err = s.Set(ctx, "workspace.name", []string{fmt.Sprintf("name %d %d", i, j)}, 0)
+				} else {
+					err = s.Delete(ctx, "workspace.name", User(0))
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent settings operations did not finish")
+	}
+	assertNameCacheMatchesRow(t, ctx, db, s)
+}
+
+func assertNameCacheMatchesRow(t *testing.T, ctx context.Context, db *store.DB, s *Settings) {
+	t.Helper()
+	row, err := store.GetSetting(ctx, db, "workspace.name")
+	if errors.Is(err, store.ErrNotFound) {
+		if cached := Get[string](s, "workspace.name"); cached != "Workspace" || s.IsSet("workspace.name") {
+			t.Fatalf("missing row has cache %q, set %t", cached, s.IsSet("workspace.name"))
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached := Get[string](s, "workspace.name"); row.ValueJSON != `"`+cached+`"` || !s.IsSet("workspace.name") {
+		t.Fatalf("row holds %s and cache holds %q, set %t", row.ValueJSON, cached, s.IsSet("workspace.name"))
 	}
 }

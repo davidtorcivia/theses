@@ -31,6 +31,7 @@ single-process architecture and add no runtime dependencies.
 | Link and file edits sent stale copies of unrelated fields. | Patch only supplied fields inside the command transaction across browser, API and MCP callers. |
 | MCP link creation could leave a link behind when its annotations were invalid. | Validate and insert the link, note and question as one command. Tests verify invalid annotations leave no link and keyed retries retain the original result. |
 | Deleted propositions left markdown mirrors behind; dropped events could leave obsolete mirrors attached to reused rows. | Remove owned mirrors on deletion and reconcile against current document identity, creation event and path after overflow. Preserve hand edits without importing them into a replacement document. |
+| A failed read of an existing markdown mirror could permit overwriting unreadable hand edits. | Refuse ordinary mirror writes on read errors other than a missing file. |
 | Notification schedules shifted by an hour across daylight-saving transitions. | Construct the requested local clock time directly. Tests cover both transition dates and malformed signed times. |
 | Simultaneous publication requests could create duplicate external episodes. | Permit one publication at a time and refuse the second request before calling the provider. |
 | Archived propositions offered an Undo action that the command would reject. | Exclude archive events from the advertised undoable actions. |

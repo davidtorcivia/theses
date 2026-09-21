@@ -252,7 +252,11 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 		return nil
 	}
 	if !force {
-		if current, err := readMirror(path); err == nil && (!known || hashOf(current) != was.hash) {
+		current, err := readMirror(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err == nil && (!known || hashOf(current) != was.hash) {
 			return nil
 		}
 	}

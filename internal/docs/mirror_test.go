@@ -1256,6 +1256,42 @@ func TestMirrorRecoversFromAWriteThatDidNotLand(t *testing.T) {
 	}
 }
 
+func TestMirrorDoesNotOverwriteAnUnreadableUnknownFile(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, t.TempDir())
+	_, path, err := f.paths(ctx, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const handEdit = "an unreadable hand edit\n"
+	if err := os.WriteFile(path, []byte(handEdit), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("file permissions are not enforced")
+	}
+
+	if err := f.Mirror(ctx, f.doc, nil, false); err == nil {
+		t.Fatal("mirror overwrote a file it could not inspect")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, path); got != handEdit {
+		t.Fatalf("unreadable hand edit was replaced with %q", got)
+	}
+	f.mu.Lock()
+	_, tracked := f.written[path]
+	f.mu.Unlock()
+	if tracked {
+		t.Fatal("unreadable unknown file was claimed as a mirror")
+	}
+}
+
 // The markers an import leaves survive every write but the next import's, so a
 // change made in the browser to some other block does not take away the only
 // notice the person at the terminal has.
