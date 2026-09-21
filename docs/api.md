@@ -1336,3 +1336,27 @@ File drawers distinguish permanent workspace links from temporary download URLs.
 ## `GET /api/v1/diagnostics`
 
 Scope `admin`, workspace owners only. Returns aggregate notification backlog/delivery counts, expired uploads, backup enabled/stale flags, and process-lifetime command refusal, upload completion failure, and mirror failure counts. No content, user identities, object keys, or credentials are included. MCP `get_diagnostics` returns the same report with the same authorization. Failure counters reset on process restart and include failed/rejected attempts; they do not by themselves assert a current outage.
+
+## Production, research and recordings
+
+The session routes below use `/app`; bearer routes use the same paths under `/api/v1`. Reads require `read`, writes require `write`, and every operation enforces current proposition membership and role. Writes to archived propositions are refused. Send `Idempotency-Key` when creating records or retrying writes.
+
+| Route | Behavior |
+| --- | --- |
+| `GET/PUT /propositions/{id}/production-plan` | Owner, next action, blocker, recording date and edit date. PUT requires the last read `version`, initially 0. Release dates remain proposition target dates. |
+| `GET/POST /documents/{id}/snapshots` | List recent pinned scripts or pin the current saved script with optional `cues`. |
+| `GET /snapshots/{id}` | Read an exact immutable script snapshot. |
+| `GET /reviews?proposition={id}` | Named reviewer, decision, note and whether the requested version is stale. |
+| `POST /reviews` | Request a review with `document_id` or `file_id`, and `reviewer_id`. |
+| `PATCH /reviews/{id}` | The named reviewer sends `version`, `state` (`approved` or `changes_requested`) and `note`. Changed targets return 409. |
+| `GET/PUT /evidence` | GET accepts `proposition`; PUT accepts `proposition_id`, optional existing `id`, `version`, title, author, year, URL, quotation, locator, interpretation, claim, verification, and optional link/file/block IDs. |
+| `DELETE /evidence/{id}?version={version}` | Delete a reference with delete permission and a matching version. |
+| `GET /evidence/export?proposition={id}&format=md` | Export research notes and bibliography. Use `format=ris` for reference managers. |
+| `GET/PUT /files/{id}/transcript` | Read a recording transcript or replace it using its current `version`. PUT accepts `text` and `format` (`txt`, `srt`, `vtt`), or edited `segments`. Imports are bounded to 4 MiB and 10,000 passages. |
+| `GET /files/{id}/transcript/export?format=vtt` | Export timed captions. `format=txt` also supports untimed transcripts. |
+| `GET/POST /files/{id}/transcription-jobs` | Read recent jobs or queue local transcription; optional `stereo` labels separate left/right speakers. |
+| `PATCH /files/{id}/comments/{comment}` | Resolve or reopen a recording comment with `version` and boolean `resolved`. |
+
+Each transcript segment has `start_ms`, `end_ms`, `speaker` and `text`. Plain text imports have null timestamps. Editing a transcript while a transcription job runs causes the job's replacement to be refused, preserving the edited transcript. Script approvals include the document's monotonic revision and block contents; moving or editing and then reverting a block still invalidates the approval. Replacement recordings require a new review. Deleting a source document or recording retains pinned script and review history under the proposition; deleting the proposition removes that history.
+
+The new workflow has REST and browser controls. Existing MCP tools retain their current scope.

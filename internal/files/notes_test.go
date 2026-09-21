@@ -73,6 +73,22 @@ func TestFileMetadataConflictsAndRecordingComments(t *testing.T) {
 	if err != nil || len(comments) != 1 || comments[0].Position != 3000 {
 		t.Fatalf("comments %+v %v", comments, err)
 	}
+	if _, err := f.ResolveComment(ctx, actor, row.ID, comments[0].ID, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := f.FileComments(ctx, actor, row.ID)
+	if err != nil || resolved[0].ResolvedAt == nil || resolved[0].Version != 2 {
+		t.Fatalf("resolution %+v %v", resolved, err)
+	}
+	if _, err := f.ResolveComment(ctx, actor, row.ID, comments[0].ID, 1, false); err == nil {
+		t.Fatal("stale resolution accepted")
+	}
+	if _, err := f.ResolveComment(ctx, f.who["guest"], row.ID, comments[0].ID, 2, false); err == nil {
+		t.Fatal("guest resolved comment")
+	}
+	if _, err := f.ResolveComment(ctx, actor, row.ID, comments[0].ID, 2, false); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.AddFileComment(ctx, actor, row.ID, 10001, "Outside recording"); err == nil {
 		t.Fatal("invalid timestamp accepted")
 	}

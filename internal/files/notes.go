@@ -36,19 +36,22 @@ func cleanTags(input string) (string, error) {
 }
 
 type FileComment struct {
-	ID       int64  `json:"id"`
-	File     int64  `json:"file_id"`
-	User     *int64 `json:"user_id"`
-	Body     string `json:"body_md"`
-	Position int64  `json:"position_ms"`
-	Created  int64  `json:"created_at"`
+	ResolvedBy *int64 `json:"resolved_by"`
+	ResolvedAt *int64 `json:"resolved_at"`
+	Version    int64  `json:"version"`
+	ID         int64  `json:"id"`
+	File       int64  `json:"file_id"`
+	User       *int64 `json:"user_id"`
+	Body       string `json:"body_md"`
+	Position   int64  `json:"position_ms"`
+	Created    int64  `json:"created_at"`
 }
 
 func (s *Service) FileComments(ctx context.Context, a core.Actor, id int64) ([]FileComment, error) {
 	if _, err := s.readable(ctx, a, id); err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,file_id,user_id,body_md,position_ms,created_at FROM file_comments WHERE file_id=? ORDER BY position_ms,id`, id)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,file_id,user_id,body_md,position_ms,created_at,resolved_by,resolved_at,version FROM file_comments WHERE file_id=? ORDER BY position_ms,id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +59,7 @@ func (s *Service) FileComments(ctx context.Context, a core.Actor, id int64) ([]F
 	out := []FileComment{}
 	for rows.Next() {
 		var c FileComment
-		if err := rows.Scan(&c.ID, &c.File, &c.User, &c.Body, &c.Position, &c.Created); err != nil {
+		if err := rows.Scan(&c.ID, &c.File, &c.User, &c.Body, &c.Position, &c.Created, &c.ResolvedBy, &c.ResolvedAt, &c.Version); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -96,14 +99,14 @@ func (s *Service) AddFileComment(ctx context.Context, a core.Actor, id, position
 			return FileComment{}, err
 		}
 		user := a.ID
-		return FileComment{ID: commentID, File: id, User: &user, Body: body, Position: position, Created: created}, nil
+		return FileComment{ID: commentID, File: id, User: &user, Body: body, Position: position, Created: created, Version: 1}, nil
 	})
 }
 
 func (s *Service) DeleteFileComment(ctx context.Context, a core.Actor, id, comment int64) (core.Event, error) {
 	return s.comment(ctx, a, id, "comment.delete", func(ctx context.Context, tx *sql.Tx) (FileComment, error) {
 		var row FileComment
-		err := tx.QueryRowContext(ctx, `SELECT id,file_id,user_id,body_md,position_ms,created_at FROM file_comments WHERE id=? AND file_id=?`, comment, id).Scan(&row.ID, &row.File, &row.User, &row.Body, &row.Position, &row.Created)
+		err := tx.QueryRowContext(ctx, `SELECT id,file_id,user_id,body_md,position_ms,created_at,resolved_by,resolved_at,version FROM file_comments WHERE id=? AND file_id=?`, comment, id).Scan(&row.ID, &row.File, &row.User, &row.Body, &row.Position, &row.Created, &row.ResolvedBy, &row.ResolvedAt, &row.Version)
 		if err == sql.ErrNoRows {
 			return row, core.ErrNotFound
 		}
@@ -150,5 +153,32 @@ func (s *Service) comment(ctx context.Context, a core.Actor, id int64, action st
 			after.Comment = &row
 		}
 		return core.Change{Entity: "file", EntityID: id, Action: action, Before: before, After: after}, nil
+	})
+}
+
+func (s *Service) ResolveComment(ctx context.Context, a core.Actor, file, id, version int64, resolved bool) (core.Event, error) {
+	return s.comment(ctx, a, file, "comment.resolve", func(ctx context.Context, tx *sql.Tx) (FileComment, error) {
+		var row FileComment
+		err := tx.QueryRowContext(ctx, `SELECT id,file_id,user_id,body_md,position_ms,created_at,resolved_by,resolved_at,version FROM file_comments WHERE id=? AND file_id=?`, id, file).Scan(&row.ID, &row.File, &row.User, &row.Body, &row.Position, &row.Created, &row.ResolvedBy, &row.ResolvedAt, &row.Version)
+		if errors.Is(err, sql.ErrNoRows) {
+			return row, core.ErrNotFound
+		}
+		if err != nil {
+			return row, err
+		}
+		if row.Version != version {
+			return row, &core.ConflictError{Entity: "file_comment", EntityID: id, Field: "version", Version: row.Version, Current: "The comment changed. Reload before resolving it."}
+		}
+		row.ResolvedAt = nil
+		row.ResolvedBy = nil
+		if resolved {
+			now := s.now()
+			user := a.ID
+			row.ResolvedAt = &now
+			row.ResolvedBy = &user
+		}
+		row.Version++
+		_, err = tx.ExecContext(ctx, `UPDATE file_comments SET resolved_at=?,resolved_by=?,version=? WHERE id=?`, row.ResolvedAt, row.ResolvedBy, row.Version, id)
+		return row, err
 	})
 }

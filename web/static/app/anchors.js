@@ -1,7 +1,7 @@
 import { el, say } from './dom.js';
 
 export function parseTarget(hash) {
-  const match = /^#(card|file|link|document|block|comment)-([1-9]\d*)$/.exec(hash);
+  const match = /^#(card|file|link|document|block|comment|evidence)-([1-9]\d*)$/.exec(hash);
   if (!match || !Number.isSafeInteger(Number(match[2]))) return null;
   return { kind: match[1], id: Number(match[2]) };
 }

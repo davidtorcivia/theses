@@ -78,7 +78,8 @@ async function loadComments(file, entry) {
         const player = document.querySelector('#drawer audio, #drawer video');
         if (player) player.currentTime = comment.position_ms / 1000;
         else say('Download the recording to view this timestamp.');
-      } }), ' · ' + user(comment.user_id).name + ' · ' + comment.body_md,
+      } }), ' · ' + user(comment.user_id).name + ' · ' + comment.body_md + (comment.resolved_at?' · Resolved':''),
+ canEdit()?el('button',{type:'button',class:'lnk',text:comment.resolved_at?'Reopen':'Resolve',onclick:async(e)=>{e.currentTarget.disabled=true;try{const answer=await api.patch(`/files/${file.id}/comments/${comment.id}`,{resolved:!comment.resolved_at,version:comment.version});changedFile(answer.file);await loadComments(answer.file,entry);}catch(err){say(err.message);loadComments(file,entry);}}}):null,
       canEdit() && comment.user_id === state.me ? el('button', { type: 'button', class: 'lnk', text: 'Delete', onclick: async () => {
         if (!await ask('Delete this recording comment?', '', 'Delete')) return;
         try { const answer = await api.del(`/files/${file.id}/comments/${comment.id}`); entry.revision = answer.file.comment_revision; entry.restoreFocus = true; changedFile(answer.file); await loadComments(answer.file, entry); } catch (err) { say(err.message); }

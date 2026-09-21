@@ -30,6 +30,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/safehttp"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
+	"github.com/davidtorcivia/theses/internal/workflow"
 	"github.com/davidtorcivia/theses/web"
 )
 
@@ -132,11 +133,14 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return board.Defaults{Status: status, Statuses: statuses,
 			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
+	s.api.Workflow = &workflow.Service{Service: s.board.Service}
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
 		return settings.Get[string](set, "defaults.document_template")
 	}, log)
-	s.backups.RestoreFiles = s.docs.WithMirrorPaused
+	s.backups.RestoreFiles = func(ctx context.Context, run func() error) error {
+		return s.api.Workflow.WithPaused(ctx, func() error { return s.docs.WithMirrorPaused(ctx, run) })
+	}
 	s.backups.CheckObject = func(ctx context.Context, restored *settings.Settings, folder, key string, want int64) error {
 		prefix := "storage.primary"
 		if folder == files.Recordings && settings.Get[string](restored, "storage.recordings.bucket") != "" {
@@ -183,6 +187,11 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
 	s.files.ReserveMaintenance = s.backups.ReserveMaintenance
 	s.api.Board, s.api.Files = s.board, s.files
+	s.api.Workflow.Files = s.files
+	s.api.Workflow.WhisperURL = cfg.WhisperURL
+	if err := s.api.Workflow.Recover(context.Background()); err != nil {
+		return nil, fmt.Errorf("recover transcription jobs: %w", err)
+	}
 	s.api.Diagnostics = s.diagnostics
 	mcp.Files(s.mcp, s.files)
 	mcp.Board(s.mcp, s.board, s.files, s.backups.Now)
@@ -349,6 +358,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /shell", s.offlineShell)
 	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
 	mux.HandleFunc("GET /app/search", s.requireUser(s.getSearch))
+	mux.HandleFunc("GET /app/production-plans", s.requireUser(s.getProductionPlans))
 	mux.HandleFunc("GET /app/production", s.requireUser(s.getProduction))
 	mux.HandleFunc("GET /app/my-work", s.requireUser(s.getMyWork))
 	mux.HandleFunc("GET /app/backlinks", s.requireUser(s.getBacklinks))
@@ -393,3 +403,5 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(status)
 	fmt.Fprint(w, body)
 }
+
+func (s *Server) Workflow() *workflow.Service { return s.api.Workflow }

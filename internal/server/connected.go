@@ -129,5 +129,34 @@ func (s *Server) getProduction(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"card": card, "recordings": recordings})
+	plan, err := board.GetProductionPlan(r.Context(), s.db, id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"card": card, "recordings": recordings, "plan": plan})
+}
+
+func (s *Server) getProductionPlans(w http.ResponseWriter, r *http.Request) {
+	me := userOf(r)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT pp.proposition_id,pp.owner_id,pp.next_action,pp.blocker,pp.record_date,pp.edit_date,pp.version FROM production_plans pp JOIN propositions p ON p.id=pp.proposition_id WHERE p.archived_at IS NULL AND (? OR EXISTS(SELECT 1 FROM proposition_members m WHERE m.proposition_id=p.id AND m.user_id=?))`, me.Role == auth.RoleOwner, me.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	defer rows.Close()
+	out := []board.ProductionPlan{}
+	for rows.Next() {
+		var p board.ProductionPlan
+		if err := rows.Scan(&p.Proposition, &p.Owner, &p.NextAction, &p.Blocker, &p.RecordDate, &p.EditDate, &p.Version); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"plans": out})
 }

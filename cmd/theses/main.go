@@ -70,6 +70,9 @@ func run() error {
 	// must not have the file pulled out from under it half way.
 	defer srv.Backups().Stop()
 
+	transcriptionDone := make(chan struct{})
+	go func() { defer close(transcriptionDone); srv.Workflow().Run(ctx) }()
+
 	// The outbox worker stops with ctx. A send caught by the cancellation
 	// leaves its row untouched and goes out again on the next start; the
 	// shutdown path waits here so the goroutine is gone before the process is.
@@ -159,6 +162,7 @@ func run() error {
 		}
 		// Only now, with nothing left to apply a command.
 		stopWatch()
+		<-transcriptionDone
 		<-mailDone
 		<-backupDone
 		<-docsDone
