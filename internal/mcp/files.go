@@ -17,6 +17,7 @@ import (
 // nothing but the database.
 func Files(s *Server, svc *files.Service) {
 	f := &fileTools{Server: s, svc: svc}
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "get_diagnostics", Description: "Reports owner-only operational counts without workspace content or credentials.", Annotations: reads("Read diagnostics")}, f.diagnostics)
 	sdk.AddTool(s.srv, &sdk.Tool{Name: "storage_orphans", Description: "Reports old deleted-file objects eligible for conservative cleanup by an owner.", Annotations: storageHints(true)}, f.orphans)
 	sdk.AddTool(s.srv, &sdk.Tool{Name: "storage_cleanup", Description: "Rechecks and deletes one reported orphan object as an owner.", Annotations: storageHints(false)}, f.cleanup)
 	sdk.AddTool(s.srv, &sdk.Tool{Name: "get_file", Description: "Reads one current or historical file and its metadata.", Annotations: reads("Read a file")}, f.getFile)
@@ -349,4 +350,16 @@ func storageHints(readOnly bool) *sdk.ToolAnnotations {
 	yes := true
 	destructive := !readOnly
 	return &sdk.ToolAnnotations{Title: "Inspect or clean up storage", ReadOnlyHint: readOnly, DestructiveHint: &destructive, OpenWorldHint: &yes}
+}
+
+func (f *fileTools) diagnostics(ctx context.Context, req *sdk.CallToolRequest, in struct{}) (*sdk.CallToolResult, map[string]any, error) {
+	p, err := principal(ctx, auth.ScopeAdmin)
+	if err != nil {
+		return nil, nil, err
+	}
+	report, err := f.api.ReadDiagnostics(ctx, person(req, p))
+	if err != nil {
+		err = f.refusal("read diagnostics", err)
+	}
+	return nil, report, err
 }

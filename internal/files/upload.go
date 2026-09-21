@@ -392,7 +392,12 @@ func (s *Service) presign(ctx context.Context, bucket *blob.Client, row File, mu
 // size the upload declared, renders a thumbnail if it is an image, and only
 // then marks the file ready. Everything but the last step is outside the
 // transaction.
-func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration, width, height int64) (core.Event, error) {
+func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration, width, height int64) (result core.Event, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			s.CompletionFailures.Add(1)
+		}
+	}()
 	row, err := s.readable(ctx, a, id)
 	if err != nil {
 		return core.Event{}, err

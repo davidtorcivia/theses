@@ -7,6 +7,18 @@
   </nav>
   <div class="apane">
     <h2>Settings</h2>
+    <details class="form"><summary>Operational status</summary>
+      <p>Counts contain no document text, user identities, object names, or credentials. Failure counters restart with the process; they are not a current-health verdict.</p>
+      <ul>
+        <li>Notification events waiting to be matched: {{index .Diagnostics "notification_unmatched"}}. A persistent backlog indicates the matcher is stalled.</li>
+        <li>Notification deliveries pending: {{index .Diagnostics "notification_pending"}}; past the retry window: {{index .Diagnostics "notification_failed"}}. Check <a href="#notifications">notification channels</a>.</li>
+        <li>Expired uploads: {{index .Diagnostics "expired_uploads"}}. Re-select the original file in its Files pane to retry.</li>
+        <li>Core permission/conflict refusals since restart: {{index .Diagnostics "core_refusals_since_restart"}}. Resolve stale edits or check membership if this keeps increasing.</li>
+        <li>Failed or rejected upload completion attempts since restart: {{index .Diagnostics "upload_completion_failures_since_restart"}}. Inspect the affected upload for a stale request, permission issue, or <a href="#storage">storage failure</a>.</li>
+        <li>Mirror write failures since restart: {{index .Diagnostics "mirror_write_failures_since_restart"}}. Check disk space, permissions, and server logs if this keeps increasing.</li>
+        <li>{{if index .Diagnostics "backups_enabled"}}{{if index .Diagnostics "backups_stale"}}Backup is stale.{{else}}Backup freshness check passed.{{end}}{{else}}Scheduled backups are disabled.{{end}} Check <a href="#backups">backup and restore verification</a>.</li>
+      </ul>
+    </details>
     {{if not .Section}}{{template "notice" .}}{{end}}
 
     <form class="form" method="post" action="/settings" id="workspace">

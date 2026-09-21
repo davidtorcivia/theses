@@ -61,6 +61,7 @@ func SessionHandler(a *API, svc *files.Service, user func(*http.Request) *store.
 
 func mount(mux *http.ServeMux, prefix string, a *API, svc *files.Service, wrap wrapper) {
 	f := &fileAPI{API: a, svc: svc}
+	mux.HandleFunc("GET "+prefix+"/diagnostics", wrap(auth.ScopeAdmin, f.diagnostics))
 	mux.HandleFunc("GET "+prefix+"/storage/orphans", wrap(auth.ScopeAdmin, f.orphans))
 	mux.HandleFunc("POST "+prefix+"/storage/cleanup", wrap(auth.ScopeAdmin, f.cleanup))
 	mux.HandleFunc("POST "+prefix+"/propositions/{id}/production-template", wrap(auth.ScopeWrite, f.productionTemplate))

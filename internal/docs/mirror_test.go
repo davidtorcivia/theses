@@ -1939,3 +1939,26 @@ func TestImportLeavesABlockThatReadsAsItIsStored(t *testing.T) {
 		})
 	}
 }
+
+func TestMirrorFailureCounterExcludesMissingDocuments(t *testing.T) {
+	f, _ := mirrorFixture(t)
+	ctx := context.Background()
+	before := f.MirrorFailures.Load()
+	if err := f.Mirror(ctx, -1, nil, false); err == nil {
+		t.Fatal("missing document accepted")
+	}
+	if f.MirrorFailures.Load() != before {
+		t.Fatal("missing document counted as write failure")
+	}
+	blocked := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.root = blocked
+	if err := f.Mirror(ctx, f.doc, nil, true); err == nil {
+		t.Fatal("invalid directory accepted")
+	}
+	if f.MirrorFailures.Load() != before+1 {
+		t.Fatal("filesystem failure not counted")
+	}
+}

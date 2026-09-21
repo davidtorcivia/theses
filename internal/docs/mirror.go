@@ -3,6 +3,7 @@ package docs
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/davidtorcivia/theses/internal/core"
 )
 
 // ErrOutside is a mirror path that would land somewhere other than under the
@@ -210,7 +213,12 @@ func hashOf(content []byte) string {
 // left alone. Somebody has edited it and the import for that edit has not run
 // yet; overwriting here would take their work away and the watcher would then
 // see its own write and have nothing to import.
-func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int64]bool, force bool) error {
+func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int64]bool, force bool) (resultErr error) {
+	defer func() {
+		if resultErr != nil && !errors.Is(resultErr, core.ErrNotFound) && !errors.Is(resultErr, sql.ErrNoRows) && !errors.Is(resultErr, context.Canceled) {
+			s.MirrorFailures.Add(1)
+		}
+	}()
 	if s.root == "" {
 		return nil
 	}

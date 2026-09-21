@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -108,8 +109,9 @@ type Reader func(ctx context.Context, q store.Querier, entity string, id int64) 
 
 // Service holds the database and the bus every command publishes on.
 type Service struct {
-	DB  *store.DB
-	Bus *Bus
+	Rejected atomic.Uint64
+	DB       *store.DB
+	Bus      *Bus
 	// publishing keeps SQLite's commit order through delivery to subscribers.
 	publishing sync.Mutex
 	// Now is the clock, replaced in tests.
@@ -152,7 +154,13 @@ type Change struct {
 // or auth.CanDelete) on proposition, which is zero when the command creates the
 // proposition itself.
 func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need string,
-	apply func(context.Context, *sql.Tx) (Change, error)) (Event, error) {
+	apply func(context.Context, *sql.Tx) (Change, error)) (result Event, resultErr error) {
+	defer func() {
+		var conflict *ConflictError
+		if errors.Is(resultErr, ErrForbidden) || errors.As(resultErr, &conflict) {
+			s.Rejected.Add(1)
+		}
+	}()
 	// Inside Together, every command shares the one transaction and neither
 	// commits nor publishes: the outer call does both, once, if all of them
 	// got through.
