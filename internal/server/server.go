@@ -137,6 +137,28 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		return settings.Get[string](set, "defaults.document_template")
 	}, log)
 	s.backups.RestoreFiles = s.docs.WithMirrorPaused
+	s.backups.CheckObject = func(ctx context.Context, restored *settings.Settings, folder, key string, want int64) error {
+		prefix := "storage.primary"
+		if folder == files.Recordings && settings.Get[string](restored, "storage.recordings.bucket") != "" {
+			prefix = "storage.recordings"
+		}
+		cfg, err := bucketConfigFor(ctx, restored, prefix)
+		if err != nil {
+			return err
+		}
+		client, err := blob.New(cfg)
+		if err != nil {
+			return err
+		}
+		size, _, err := client.Head(ctx, key)
+		if err != nil {
+			return err
+		}
+		if size != want {
+			return fmt.Errorf("stored object size differs from backup")
+		}
+		return nil
+	}
 	s.api.Docs, s.hub.Docs = s.docs, s.docs
 	// A new proposition arrives with the three documents every episode has, so
 	// that nobody meets an empty document area and has to guess what goes in it.
@@ -286,6 +308,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /settings/mail/retry", s.requireOwner(s.postMailRetry))
 	mux.HandleFunc("POST /settings/test/backups", s.requireOwner(s.postTestBackupKey))
 	mux.HandleFunc("POST /settings/backups/now", s.requireOwner(s.postBackupNow))
+	mux.HandleFunc("POST /settings/backups/verify", s.requireOwner(s.postVerifyBackup))
 	mux.HandleFunc("POST /settings/backups/restore", s.requireOwner(s.postRestore))
 	mux.HandleFunc("POST /settings/team/role", s.requireOwner(s.postRole))
 	mux.HandleFunc("POST /settings/team/invite", s.requireOwner(s.postInviteCreate))

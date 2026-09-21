@@ -169,4 +169,5 @@ WITH log AS (
 		max(created_at) OVER whole AS newest
 	FROM numbered WINDOW whole AS (PARTITION BY entity_id, span)
 )
-SELECT id, first_id, last_id FROM spans WHERE typed = 1 AND held > 1 AND newest < ?`
+SELECT id, first_id, last_id FROM spans WHERE typed = 1 AND held > 1 AND newest < ?
+ AND last_id <= (SELECT activity_id FROM notification_cursor WHERE id = 1)`

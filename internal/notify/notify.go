@@ -6,9 +6,12 @@ package notify
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/mail"
@@ -92,46 +95,84 @@ func New(db *store.DB, set *settings.Settings, log *slog.Logger, baseURL string)
 	}
 }
 
-// Watch fills the outbox from the bus until ctx is canceled. Nothing here
-// talks to the network: it reads and writes the database and hands the sending
-// to the worker, so an unreachable ntfy server cannot back the bus up.
-//
-// ponytail: the bus is in process, so events applied between a commit and a
-// crash are never matched. The upgrade is a cursor over the activity table
-// replayed by seq on start.
+// Watch treats bus events as wakeups; only committed activity determines work.
 func (s *Service) Watch(ctx context.Context, bus *core.Bus) {
 	sub := bus.Subscribe(0)
 	defer sub.Close()
-	dropped := int64(0)
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
 	for {
+		n, err := s.CatchUp(ctx)
+		if err != nil && ctx.Err() == nil {
+			s.log.Error("notification recovery", "err", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+			}
+			continue
+		}
+		if n == 100 {
+			continue
+		}
 		select {
 		case <-ctx.Done():
-			s.missed(sub, &dropped)
 			return
-		case e, ok := <-sub.C:
+		case _, ok := <-sub.C:
 			if !ok {
 				return
 			}
-			if err := s.Handle(ctx, e); err != nil && ctx.Err() == nil {
-				s.log.Error("notify", "entity", e.Entity, "action", e.Action, "err", err)
-			}
-			s.missed(sub, &dropped)
+		case <-tick.C:
 		}
 	}
 }
 
-// missed says so when the bus has thrown events away since the last look.
-//
-// The bus never blocks, so an emitter faster than this loop loses events rather
-// than waiting for it. Read only at shutdown, that is a gap nobody sees until
-// somebody asks why a notification never arrived.
-func (s *Service) missed(sub *core.Subscription, seen *int64) {
-	n := sub.Dropped()
-	if n <= *seen {
-		return
+// CatchUp commits each event's notifications with its cursor. The database
+// owns the cursor so replacing it during restore also resets this consumer.
+func (s *Service) CatchUp(ctx context.Context) (int, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
 	}
-	s.log.Warn("notifications missed events", "dropped", n-*seen, "total", n)
-	*seen = n
+	defer tx.Rollback()
+	n := 0
+	for ; n < 100; n++ {
+		var e core.Event
+		var before, after string
+		err = tx.QueryRowContext(ctx, `SELECT a.id, coalesce(a.proposition_id, 0), a.actor_kind,
+   CAST(a.actor_id AS INTEGER), coalesce(u.name, ''), coalesce(a.via, ''),
+   a.entity, CAST(a.entity_id AS INTEGER), a.action, coalesce(a.before_json, ''),
+   coalesce(a.after_json, ''), a.created_at
+   FROM activity a LEFT JOIN users u ON a.actor_kind = 'user' AND u.id = a.actor_id
+   WHERE a.id > (SELECT activity_id FROM notification_cursor WHERE id = 1)
+   ORDER BY a.id LIMIT 1`).Scan(&e.Seq, &e.Proposition, &e.Actor.Kind, &e.Actor.ID,
+			&e.Actor.Name, &e.Actor.Via, &e.Entity, &e.EntityID, &e.Action, &before, &after, &e.At)
+		if errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if err != nil {
+			return 0, err
+		}
+		e.Before, e.After = []byte(before), []byte(after)
+		if err := s.queueTx(ctx, tx, e.Actor, Match(e)); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE notification_cursor SET activity_id = ? WHERE id = 1`, e.Seq); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		s.Nudge()
+	}
+	return n, nil
 }
 
 // Handle matches one event and queues whatever it produces.

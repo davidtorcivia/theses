@@ -11,7 +11,7 @@ const DB = 'theses-offline';
 
 // The version is bumped whenever a store is added, because that is what makes
 // the browser run the upgrade on a database that already exists.
-const VERSION = 2;
+const VERSION = 3;
 
 const STORES = {
   outbox: { keyPath: 'n', autoIncrement: true },
@@ -23,6 +23,7 @@ const STORES = {
   // that pane would overwrite them with the nothing it had.
   material: { keyPath: 'proposition' },
   uploads: { keyPath: 'file' },
+  drafts: { keyPath: 'id' },
 };
 
 function open() {
@@ -78,8 +79,10 @@ function open() {
 
 // withStore runs one transaction and answers what the request in it returned.
 async function withStore(name, mode, run) {
+  if (leaving) return null;
   const db = await open();
   if (!db) return null;
+  if (leaving) { db.close(); return null; }
   try {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(name, mode);
@@ -436,3 +439,25 @@ export const forget = (file) => withStore('uploads', 'readwrite', (store) => sto
 export async function uploads() {
   return (await withStore('uploads', 'readonly', (store) => store.getAll())) || [];
 }
+
+export async function sourceDrafts(account, proposition) {
+  if (leaving) return [];
+  const rows = await withStore('drafts', 'readonly', (store) => store.getAll());
+  return rows === null ? null : (rows || []).filter((row) => row.account === account && row.proposition === proposition);
+}
+
+export const keepSourceDraft = (row) => leaving ? Promise.resolve(null)
+  : withStore('drafts', 'readwrite', (store) => leaving ? null : store.put(row));
+export const forgetSourceDraft = (id, expected) => leaving ? Promise.resolve({ removed: false })
+  : withStore('drafts', 'readwrite', (store) => {
+    const result = { removed: false };
+    if (leaving) return result;
+    const req = store.get(id);
+    req.onsuccess = () => {
+      if (!expected || JSON.stringify(req.result) === JSON.stringify(expected)) {
+        store.delete(id);
+        result.removed = true;
+      }
+    };
+    return result;
+  });

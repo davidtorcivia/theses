@@ -190,6 +190,9 @@ func TestCompactFoldsRunsOfTypedSaves(t *testing.T) {
 				writeLogRow(t, s, now, r)
 			}
 
+			if _, err := s.DB.ExecContext(ctx, `UPDATE notification_cursor SET activity_id = (SELECT coalesce(max(id), 0) FROM activity)`); err != nil {
+				t.Fatal(err)
+			}
 			removed, err := s.Compact(ctx, CompactAfter)
 			if err != nil {
 				t.Fatal(err)
@@ -260,5 +263,23 @@ func assertLog(t *testing.T, s *Service, want []kept) {
 		if got[i] != k {
 			t.Errorf("row %d is %v, want %v", i, got[i], k)
 		}
+	}
+}
+
+func TestCompactWaitsForNotificationCursor(t *testing.T) {
+	ctx := context.Background()
+	s := New(store.OpenTemp(t), NewBus())
+	now := time.Now()
+	for i := range 2 {
+		writeLogRow(t, s, now, logRow{entity: "block", entityID: "1", action: "set", actor: "1", ago: 72*time.Hour - time.Duration(i)*time.Second, before: "old", after: "new"})
+	}
+	if n, err := s.Compact(ctx, CompactAfter); err != nil || n != 0 {
+		t.Fatalf("pending notifications: %d, %v", n, err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE notification_cursor SET activity_id = 2`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Compact(ctx, CompactAfter); err != nil || n != 1 {
+		t.Fatalf("processed notifications: %d, %v", n, err)
 	}
 }

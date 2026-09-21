@@ -772,6 +772,9 @@ func TestUndoOfACompactedRunPutsThePreRunTextBack(t *testing.T) {
 	}
 	f.Now = time.Now
 
+	if _, err := f.db.ExecContext(ctx, `UPDATE notification_cursor SET activity_id = (SELECT max(id) FROM activity)`); err != nil {
+		t.Fatal(err)
+	}
 	removed, err := f.Compact(ctx, core.CompactAfter)
 	if err != nil {
 		t.Fatal(err)

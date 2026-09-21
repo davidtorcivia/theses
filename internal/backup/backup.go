@@ -87,12 +87,13 @@ var (
 type Bucket func(context.Context) (blob.Config, error)
 
 type Backup struct {
-	cfg     *config.Config
-	db      *store.DB
-	set     *settings.Settings
-	log     *slog.Logger
-	version string
-	primary Bucket
+	CheckObject func(context.Context, *settings.Settings, string, string, int64) error
+	cfg         *config.Config
+	db          *store.DB
+	set         *settings.Settings
+	log         *slog.Logger
+	version     string
+	primary     Bucket
 	// RestoreFiles pauses the markdown watcher around the database and docs
 	// tree swap, then reconciles the installed tree before writes resume.
 	RestoreFiles func(context.Context, func() error) error
@@ -141,6 +142,10 @@ func (b *Backup) Run(ctx context.Context) (Manifest, error) {
 		return Manifest{}, ErrBusy
 	}
 	defer b.busy.Store(false)
+	return b.run(ctx)
+}
+
+func (b *Backup) run(ctx context.Context) (Manifest, error) {
 	m, err := b.archive(ctx)
 	b.record(ctx, m, err)
 	if err != nil {
@@ -153,15 +158,16 @@ func (b *Backup) Run(ctx context.Context) (Manifest, error) {
 // Now starts one archive in the background. An archive outlives the request
 // that asked for it, so the page reports what it did the next time it is loaded.
 func (b *Backup) Now(ctx context.Context) error {
-	if b.busy.Load() {
+	if !b.busy.CompareAndSwap(false, true) {
 		return ErrBusy
 	}
 	run, cancel := context.WithTimeout(context.WithoutCancel(ctx), runTimeout)
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
+		defer b.busy.Store(false)
 		defer cancel()
-		if _, err := b.Run(run); err != nil {
+		if _, err := b.run(run); err != nil {
 			b.log.Error("backup", "err", err)
 		}
 	}()
@@ -189,16 +195,17 @@ func (b *Backup) LastRestore() string {
 // the request that asked for it: the archive has to come down, be decrypted,
 // be checked and be unpacked before any file changes place.
 func (b *Backup) RestoreNow(ctx context.Context, key string, actorID int64) error {
-	if b.busy.Load() {
+	if !b.busy.CompareAndSwap(false, true) {
 		return ErrBusy
 	}
 	run, cancel := context.WithTimeout(context.WithoutCancel(ctx), runTimeout)
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
+		defer b.busy.Store(false)
 		defer cancel()
 		msg := "Restored " + path.Base(key) + "."
-		if err := b.Restore(run, key, actorID); err != nil {
+		if err := b.restore(run, key, actorID); err != nil {
 			msg = "The restore failed and nothing was changed: " + err.Error()
 			if errors.Is(err, ErrPartial) {
 				msg = "Partly restored " + path.Base(key) + ": " + err.Error() +

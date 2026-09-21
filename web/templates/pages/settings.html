@@ -143,6 +143,7 @@
     <form class="form" method="post" action="/settings/test/backups">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       {{if .BackupResult}}<p class="notice{{if .BackupFailed}} bad{{end}}">{{.BackupResult}}</p>{{end}}
+      {{if .Backups.Verify}}<p class="notice">{{.Backups.Verify}}</p>{{end}}
       {{if .Backups.Restore}}<p class="notice">{{.Backups.Restore}}</p>{{end}}
       <p class="small dim">{{.Backups.State}}{{if .Backups.Running}} One is running now.{{end}}{{if .Backups.Failure}} Last failure: <span class="mono">{{.Backups.Failure}}</span>{{end}}</p>
       <div class="tests">
@@ -155,7 +156,7 @@
         {{range $i, $e := .Backups.Entries}}<li>
           <span class="mono">{{$e.Name}}</span>
           <span class="mono">{{$e.When}} · {{$e.Size}}{{if not $e.Complete}} · no manifest beside it, so it cannot be restored{{end}}</span>
-          {{if $e.Complete}}<button class="lnk" type="button" data-dialog="restore-{{$i}}">Restore</button>{{end}}
+          {{if $e.Complete}}<button class="lnk" type="submit" name="key" value="{{$e.Key}}" formaction="/settings/backups/verify">Verify restore</button><button class="lnk" type="button" data-dialog="restore-{{$i}}">Restore</button>{{end}}
         </li>{{else}}<li><span class="mono dim">Nothing under {{$.Backups.Prefix}} yet.</span></li>{{end}}
       </ul>
     </form>
