@@ -359,6 +359,12 @@ try {
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),personalKey);
   const headers={Authorization:'Bearer '+personalKey};
   assert.equal((await context.request.get(fixture.url+'/api/v1/me',{headers})).status(),200);
+  await page.getByText('Agent instructions: SKILLS.md',{exact:true}).click();
+  const guideURL=await page.locator('#agent-guide-url').inputValue();
+  await page.getByRole('button',{name:'Copy agent guide URL',exact:true}).click();
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),guideURL);
+  assert.match(guideURL,/\/SKILLS\.md$/);
+  await page.getByText('Agent instructions: SKILLS.md',{exact:true}).click();
   await page.getByText('Connect Claude Desktop',{exact:true}).click();
   const config=JSON.parse(await page.locator('#desktop-mcp-config').textContent());
   assert.ok(config.mcpServers.theses.args.includes('auto'));

@@ -250,6 +250,9 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle("GET /static/", s.assets)
+	for path := range agentDocumentPaths {
+		mux.HandleFunc("GET "+path, s.getAgentDocument)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintln(w, "theses", s.version)
