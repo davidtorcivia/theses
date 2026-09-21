@@ -169,8 +169,8 @@ do not mark a file complete before its upload succeeds.
 - 500/503 or a lost connection: reconcile uncertain writes using their retry
   key; do not create duplicates. A service dependency may be unavailable.
 
-Ordinary REST JSON requests are limited to 64 KiB. MCP allows 4 MiB plus
-64 KiB for the envelope. REST transcript replacement also allows a 4 MiB plus
+Ordinary REST JSON requests are limited to 64 KiB; document source writes
+accept a 1 MiB JSON body. MCP allows 4 MiB plus 64 KiB for the envelope. REST transcript replacement also allows a 4 MiB plus
 64 KiB JSON envelope; transcript content remains limited to 4 MiB. JSON escaping
 counts toward the envelope size. Use documented pagination rather than assuming
 the first page is complete. Some browser-only integrations have no API/MCP route.

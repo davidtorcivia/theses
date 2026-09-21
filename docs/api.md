@@ -48,7 +48,7 @@ from.
 | 403 | the token does not have the scope the route needs, the person it belongs to no longer has the standing that scope implies, or the row is somebody else's note |
 | 404 | no such endpoint, no such settings key, or a thing that is not there or that the token's owner may not touch |
 | 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone |
-| 413 | an ordinary REST JSON body exceeds 64 KiB; MCP permits 4 MiB plus 64 KiB for its envelope. The REST transcript endpoint has its own larger limit and decoding errors return 400. |
+| 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes. MCP permits 4 MiB plus 64 KiB. REST transcript replacement permits the same larger envelope but reports decoding/size failures as 400. |
 | 422 | the body is JSON and the rules refuse it: a title that is empty or too long, a kind or a question that is not on the list, a size no upload may be |
 | 429 | over 300 requests a minute for one token |
 | 500 | a fault on the server; the detail is in its log, not in the response |
@@ -451,9 +451,9 @@ nothing to line up, so this is a stretch of changed text long enough that
 placing it would be a table of a million cells: roughly a thousand paragraphs
 rewritten in one request. Send it in pieces.
 
-The body may be a megabyte, rather than the sixty four kilobytes every other
-body here is held to, because this one is a whole document. Past that it is
-`413`.
+Document source writes accept a JSON body up to 1 MiB, rather than the ordinary
+64 KiB REST limit. A larger source body returns `413`. Transcript replacement
+has a separate limit described below.
 
 `Idempotency-Key` is honored. A request sent again because its answer never
 arrived is answered without applying anything a second time, and that answer
@@ -579,9 +579,11 @@ for a bearer token, and under `/app` for the browser, which carries a session
 cookie and no token. `/app/links`, `/app/files/{id}/parts` and the rest are the
 same handlers, the same bodies and the same statuses. A session has no scope,
 so what a browser may do is the role of the person signed in, which every
-command checks either way. The document and notification routes have no `/app`
-twin: the browser writes documents over the websocket and reads their history
-from `GET /documents/{id}/revisions`.
+command checks either way. Document source writes, snapshots and the workflow
+routes below also have `/app` twins. Other block/document edits use the
+websocket or `/app/commands`; document history is read from
+`GET /documents/{id}/revisions`. Notification preferences use profile forms
+rather than a matching `/app` route.
 
 ## `GET /api/v1/links?proposition=`
 
@@ -605,7 +607,8 @@ citation built from its fields, and the kinds a link may be.
 Scope `write`. The body is JSON with a `proposition` and a `url`. The page is
 read before the answer comes back, so the row already carries its title,
 author, year and kind. Anything that is not an http or an https address is
-`422`. The answer is the link row, as the list reports one.
+`422`. The answer is the link row with an additional top-level `event` carrying
+the committed command sequence.
 
 ```
 POST /api/v1/links
@@ -617,13 +620,13 @@ POST /api/v1/links
 Scope `read` to read one, `write` to change or remove it. A PATCH changes the
 fields it names, `title`, `author`, `year`, `kind`, `note_md` and `question`,
 and leaves the rest as they were. A kind outside the list, and a question that
-is not `I`, `II`, `III`, `IV` or empty, are `422`. A DELETE answers
-`{"deleted": true}`.
+is not `I`, `II`, `III`, `IV` or empty, are `422`. PATCH returns the link row
+with a top-level `event`; DELETE returns `{"deleted": true, "event": {...}}`.
 
 ## `POST /api/v1/links/{id}/refetch`
 
-Scope `write`. Reads the page again and answers with the link as it then
-stands. What the fetch finds replaces what is on the row, which is why this is
+Scope `write`. Reads the page again and answers with the current link row and
+its top-level `event`. What the fetch finds replaces what is on the row, which is why this is
 a button and not a background job.
 
 ## `GET /api/v1/files?proposition=`
@@ -762,6 +765,8 @@ object keeps the key it was written under, so a link already handed out goes on
 working. A move between folders that live in different buckets is `422`:
 download it and upload it again.
 
+Returns `{"file": {...}, "event": {...}}`.
+
 Notes and tags are optional `note_md` and `tags` fields. Updating either requires the current `metadata_version`; stale or omitted versions return `409` with the current version. Tags are comma-separated, normalized to lowercase, limited to 12 tags of 32 characters, and reject tabs and line breaks. Notes are indexed for search. Metadata changes can be undone independently of later renames.
 
 ## `GET /api/v1/files/{id}`
@@ -807,7 +812,7 @@ the link have to be on the same proposition; anything else is `404`. Attaching
 twice leaves one attachment.
 
 ```json
-{"card": 7, "action": "attach"}
+{"card": 7, "action": "attach", "event": {"seq": 413, "entity": "card", "action": "attach"}}
 ```
 
 ## `POST DELETE /api/v1/cards/{card}/files/{id}`
@@ -1411,6 +1416,7 @@ expose their fields directly. Supply exactly one of `document` or `file` to
 and `text`; import `text` with `format` instead when using TXT, SRT or VTT.
 MCP requests allow 4 MiB plus 64 KiB for the envelope; transcript content still
 has its own 4 MiB limit. Ordinary REST bodies remain limited to 64 KiB;
+document source writes accept 1 MiB.
 `PUT /api/v1/files/{id}/transcript` accepts a JSON envelope up to 4 MiB plus
 64 KiB. JSON escaping counts toward the envelope size. An oversized or malformed
 REST transcript body returns 400; content validation failures return 422.
