@@ -29,6 +29,8 @@ jobs:
           npm ci --ignore-scripts
           npx playwright install --with-deps chromium
           npm audit --audit-level=high
+      - name: Build production image
+        run: docker build --build-arg VERSION="${{ github.sha }}" -t theses:ci .
       - name: Browser workflow
         run: npm run test:browser
       - name: Click feedback budget
