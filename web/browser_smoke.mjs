@@ -24,8 +24,27 @@ try {
       await page.waitForTimeout(100);
     }
   };
+  const toggleActivity = async () => {
+    const button = page.locator('#activitytab');
+    await button.click();
+    await page.waitForFunction(() => document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true' && !document.querySelector('#drawer').hidden);
+    await button.click();
+    await page.locator('#drawer').waitFor({ state: 'hidden' });
+    assert.equal(await button.getAttribute('aria-expanded'), 'false');
+    await button.focus(); await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
+    await page.keyboard.press('Space');
+    await page.locator('#drawer').waitFor({ state: 'hidden' });
+    assert.equal(await button.evaluate(node => node === document.activeElement), true);
+  };
   await visit('/show');
   await page.locator('#board').waitFor();
+  await toggleActivity();
+  for (const selector of ['#newprop', '.ws.showpin']) {
+    const control = page.locator(selector);
+    await control.hover();
+    assert.match(await control.evaluate(node => getComputedStyle(node.querySelector('.t') || node).textDecorationLine), /underline/);
+  }
   assert.equal(await page.locator('.tabs [data-tab=notes]').count(), 0);
   await page.locator('#docmode').click();
   await page.locator('#docsrc').fill('# Research\n\nDurable draft');
@@ -59,6 +78,13 @@ try {
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.goBack(); await page.locator('#drawer h2').waitFor();
   await page.goForward(); await page.locator('#drawer').waitFor({ state: 'hidden' });
+  await linked.click(); await page.locator('#activitytab').click();
+  await page.waitForFunction(() => location.hash === '#activity' && document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.locator('#drawer').waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => document.activeElement?.id === 'activitytab');
+  await page.reload(); await page.locator('#board').waitFor();
+  await page.locator('#drawer').waitFor({ state: 'hidden' });
   await page.locator('#filter-view').selectOption('list');
   await page.locator('#filter-query').fill('Plan');
   await page.waitForTimeout(300); await page.reload();
@@ -75,7 +101,14 @@ try {
   await waitAsync(async ({id,next}) => { const html=await (await fetch(location.pathname)).text();const document=new DOMParser().parseFromString(html,'text/html');const payload=JSON.parse(document.querySelector('#payload').textContent);return payload.board.cards.some(c=>c.id===id&&String(c.column_id)===next); }, {id:movedID,next});
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByText('Production calendar', { exact: true }).click(); await page.getByRole('table').waitFor();
-  await visit('/p/' + fixture.proposition);
+  await visit('/p/' + fixture.proposition + '#activity');
+  await page.waitForFunction(() => document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
+  await page.locator('#activitytab').click();
+  await page.locator('#drawer').waitFor({ state: 'hidden' });
+  assert.notEqual(new URL(page.url()).hash, '#activity');
+  await toggleActivity();
+  await page.locator('.ws.showpin').hover();
+  assert.match(await page.locator('.ws.showpin .t').evaluate(node => getComputedStyle(node).textDecorationLine), /underline/);
   await page.getByText('Production readiness', { exact: true }).click();
   await page.getByRole('button', { name: 'Create production checklist', exact: true }).click();
   await page.locator('#drawer h2').filter({ hasText: 'Production checklist' }).waitFor();
@@ -89,6 +122,7 @@ try {
   await page.getByRole('button', { name: 'Close', exact: true }).click();
 
   await visit('/p/' + fixture.proposition + '#files');
+  await toggleActivity();
   // The fake S3 server is loopback-only; CORS is supplied at this test boundary.
   let failed = false;
   await context.route('**/browser-fixture/**', async route => {
@@ -112,6 +146,8 @@ try {
   const anonymous = await browser.newContext();
   const denied = await anonymous.newPage(); await denied.goto(fileURL);
   assert.match(denied.url(), /\/login/); await anonymous.close();
+  await page.locator('#activitytab').click();
+  await page.waitForFunction(() => location.hash === '#activity' && document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await visit('/show'); await page.locator('#board').waitFor();
   await page.evaluate(() => navigator.serviceWorker.ready);

@@ -287,6 +287,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .ws .menu button:hover{color:var(--y)}
 .railfoot{background:var(--y);border-top:1px solid var(--k);padding:.7rem 14px}
 #newprop{font-weight:700}
+#newprop:hover,#newprop:focus-visible,.ws.showpin:hover .t,.ws.showpin:focus-visible .t{text-decoration:underline;text-underline-offset:.2em}
 #newform{border-bottom:2px solid var(--k);margin-top:.4rem}
 #newform input{font-weight:600}
 #work,#admin{padding:1.4rem 1.6rem 4rem}

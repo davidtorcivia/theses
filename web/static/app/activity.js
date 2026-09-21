@@ -5,7 +5,7 @@
 // It lives in the drawer the cards and the links use, because it is the same
 // thing: one column beside the work, closed with Escape.
 
-import { el, initials, say } from './dom.js';
+import { $, el, initials, say } from './dom.js';
 import { state, user, emit, canEdit, unresolvedCard } from './state.js';
 import { send, again, letGo, resend, Conflict } from './net.js';
 import { gone } from './docs.js';
@@ -16,6 +16,7 @@ export function openPanel() {
     say('Choose keep mine or take theirs before opening activity.');
     return false;
   }
+  if (state.openCard || state.openLink || state.openFile) history.replaceState(null, '', '#activity');
   state.panel = true;
   state.openCard = state.openLink = state.openFile = null;
   seen = -1; expanded = false;
@@ -24,6 +25,7 @@ export function openPanel() {
 }
 
 export function closePanel() {
+  const returnFocus = state.panel && $('#drawer')?.contains(document.activeElement);
   clearTimeout(timer); timer = 0;
   state.panel = false;
   // The settings page's Activity tab links to this hash. Left on the address
@@ -33,6 +35,7 @@ export function closePanel() {
     history.replaceState(null, '', location.pathname + location.search);
   }
   emit();
+  if (returnFocus) requestAnimationFrame(() => $('#activitytab')?.focus());
 }
 
 // seen is the stream position the list was read at. Every applied event moves
