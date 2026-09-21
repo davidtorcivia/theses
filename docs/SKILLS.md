@@ -130,7 +130,7 @@ Subscribed Google/Apple calendars are read-only and refresh on their own schedul
   an overwrite by dropping version fields. Document source writes can return
   HTTP 200 with nonempty `conflicts`; inspect the full response before reporting
   success and preserve any unsaved text.
-- Give each intended command a fresh `Idempotency-Key` (1–64 ASCII letters,
+- Give each intended command a fresh `Idempotency-Key` (1 to 64 ASCII letters,
   digits, hyphens or underscores). Retry an uncertain write with the same key
   and exactly the same payload. A reused key with changed content replays the
   old operation. Keys are shared across a user's tokens and expire after 24
@@ -169,9 +169,11 @@ do not mark a file complete before its upload succeeds.
 - 500/503 or a lost connection: reconcile uncertain writes using their retry
   key; do not create duplicates. A service dependency may be unavailable.
 
-Ordinary REST JSON requests are limited to 64 KiB. MCP allows 4 MiB plus
-64 KiB for the envelope; transcript imports have a 4 MiB content limit. Use documented pagination rather than assuming the
-first page is complete. Some browser-only integrations have no API/MCP route.
+Ordinary REST JSON requests are limited to 64 KiB; document source writes
+accept a 1 MiB JSON body. MCP allows 4 MiB plus 64 KiB for the envelope. REST transcript replacement also allows a 4 MiB plus
+64 KiB JSON envelope; transcript content remains limited to 4 MiB. JSON escaping
+counts toward the envelope size. Use documented pagination rather than assuming
+the first page is complete. Some browser-only integrations have no API/MCP route.
 Do not assume Pinecast publishing is connected: no Pinecast publishing API is
 provided by this guide. Deleting, publishing, bulk changes and administrative
 operations require authorization from the user as well as server permissions.

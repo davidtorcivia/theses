@@ -44,11 +44,11 @@ from.
 | Status | When |
 | --- | --- |
 | 400 | the body is not JSON, does not have the field the route reads, or carries an `Idempotency-Key` that is not a key |
-| 401 | no `Authorization: Bearer` header, or the token is unknown or revoked |
+| 401 | no `Authorization: Bearer` header, or the token is unknown, expired or revoked |
 | 403 | the token does not have the scope the route needs, the person it belongs to no longer has the standing that scope implies, or the row is somebody else's note |
 | 404 | no such endpoint, no such settings key, or a thing that is not there or that the token's owner may not touch |
 | 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone |
-| 413 | the request body is over 64 KiB, which `/api/v1` and `/mcp` both allow |
+| 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes. MCP permits 4 MiB plus 64 KiB. REST transcript replacement permits the same larger envelope but reports decoding/size failures as 400. |
 | 422 | the body is JSON and the rules refuse it: a title that is empty or too long, a kind or a question that is not on the list, a size no upload may be |
 | 429 | over 300 requests a minute for one token |
 | 500 | a fault on the server; the detail is in its log, not in the response |
@@ -119,8 +119,8 @@ response body:
 
 - a route that answers with an `event` answers with the first one's event, with
   `"replayed": true` on it;
-- the attachment routes answer `{"card": …, "action": "attach"}` as they always
-  do, read off that event;
+- the attachment routes answer `{"card": …, "action": "attach", "event": …}`,
+  read off that event;
 - `PUT /api/v1/documents/{id}/source` answers `{"base": [], "conflicts": [],
   "merged": [], "replayed": true}`. It is many commands in one transaction and nothing
   remembers what the first answer said, so a caller that means to write more
@@ -164,8 +164,8 @@ token sees its own owner's address in `/me` and no one else's.
 
 ## `GET /api/v1/search?q=&limit=`
 
-Scope `read`. Full text search over cards, document blocks, links, files and
-comments, plus propositions and people matched by name. `limit` is per kind,
+Scope `read`. Full text search over cards, document blocks, links, files,
+transcripts, evidence and comments, plus propositions and people matched by name. `limit` is per kind,
 10 by default and 50 at most. Results are limited to the propositions the
 token's owner is a member of; an owner searches every one. People are found by
 anyone who may search at all, because a person belongs to no proposition.
@@ -196,7 +196,7 @@ letter or digit in it returns no groups at all.
 ```
 
 Kinds, in the order they are returned: `proposition`, `card`, `block`, `link`,
-`file`, `comment`, `user`. A kind with no hits is left out. A block's `title` is
+`file`, `transcript`, `evidence`, `comment`, `user`. A kind with no hits is left out. A block's `title` is
 the document it is in; a comment's is the card it is on. Snippets are plain
 text with an ellipsis where they were cut.
 
@@ -451,9 +451,9 @@ nothing to line up, so this is a stretch of changed text long enough that
 placing it would be a table of a million cells: roughly a thousand paragraphs
 rewritten in one request. Send it in pieces.
 
-The body may be a megabyte, rather than the sixty four kilobytes every other
-body here is held to, because this one is a whole document. Past that it is
-`413`.
+Document source writes accept a JSON body up to 1 MiB, rather than the ordinary
+64 KiB REST limit. A larger source body returns `413`. Transcript replacement
+has a separate limit described below.
 
 `Idempotency-Key` is honored. A request sent again because its answer never
 arrived is answered without applying anything a second time, and that answer
@@ -579,9 +579,11 @@ for a bearer token, and under `/app` for the browser, which carries a session
 cookie and no token. `/app/links`, `/app/files/{id}/parts` and the rest are the
 same handlers, the same bodies and the same statuses. A session has no scope,
 so what a browser may do is the role of the person signed in, which every
-command checks either way. The document and notification routes have no `/app`
-twin: the browser writes documents over the websocket and reads their history
-from `GET /documents/{id}/revisions`.
+command checks either way. Document source writes, snapshots and the workflow
+routes below also have `/app` twins. Other block/document edits use the
+websocket or `/app/commands`; document history is read from
+`GET /documents/{id}/revisions`. Notification preferences use profile forms
+rather than a matching `/app` route.
 
 ## `GET /api/v1/links?proposition=`
 
@@ -605,7 +607,8 @@ citation built from its fields, and the kinds a link may be.
 Scope `write`. The body is JSON with a `proposition` and a `url`. The page is
 read before the answer comes back, so the row already carries its title,
 author, year and kind. Anything that is not an http or an https address is
-`422`. The answer is the link row, as the list reports one.
+`422`. The answer is the link row with an additional top-level `event` carrying
+the committed command sequence.
 
 ```
 POST /api/v1/links
@@ -617,13 +620,13 @@ POST /api/v1/links
 Scope `read` to read one, `write` to change or remove it. A PATCH changes the
 fields it names, `title`, `author`, `year`, `kind`, `note_md` and `question`,
 and leaves the rest as they were. A kind outside the list, and a question that
-is not `I`, `II`, `III`, `IV` or empty, are `422`. A DELETE answers
-`{"deleted": true}`.
+is not `I`, `II`, `III`, `IV` or empty, are `422`. PATCH returns the link row
+with a top-level `event`; DELETE returns `{"deleted": true, "event": {...}}`.
 
 ## `POST /api/v1/links/{id}/refetch`
 
-Scope `write`. Reads the page again and answers with the link as it then
-stands. What the fetch finds replaces what is on the row, which is why this is
+Scope `write`. Reads the page again and answers with the current link row and
+its top-level `event`. What the fetch finds replaces what is on the row, which is why this is
 a button and not a background job.
 
 ## `GET /api/v1/files?proposition=`
@@ -715,7 +718,8 @@ Clients must use the returned row and download endpoint rather than retaining
 the upload key as the completed object's location.
 
 ```json
-{"file": {"id": 9, "name": "tides.md", "state": "ready", "size": 12}}
+{"file": {"id": 9, "name": "tides.md", "state": "ready", "size": 12},
+ "event": {"seq": 412, "entity": "file", "action": "complete", "after": {"...": "..."}}}
 ```
 
 A completion sent before every part arrived, a second completion, and one for
@@ -761,6 +765,8 @@ object keeps the key it was written under, so a link already handed out goes on
 working. A move between folders that live in different buckets is `422`:
 download it and upload it again.
 
+Returns `{"file": {...}, "event": {...}}`.
+
 Notes and tags are optional `note_md` and `tags` fields. Updating either requires the current `metadata_version`; stale or omitted versions return `409` with the current version. Tags are comma-separated, normalized to lowercase, limited to 12 tags of 32 characters, and reject tabs and line breaks. Notes are indexed for search. Metadata changes can be undone independently of later renames.
 
 ## `GET /api/v1/files/{id}`
@@ -769,11 +775,11 @@ Scope `read`. Returns `{"file": {...}}` for a current or historical version, sub
 
 ## `GET POST /api/v1/files/{id}/comments`
 
-GET requires `read` and returns `{"comments": [...]}` ordered by timestamp. POST requires `write` and accepts `{"body_md":"Cut this pause","position_ms":3000}`. Only ready files in Recordings accept comments. Timestamps must be nonnegative, at most 24 hours, and within the known recording duration. POST accepts `Idempotency-Key` and returns `{"file": {...}}` with an advanced `comment_revision`.
+GET requires `read` and returns `{"comments": [...]}` ordered by timestamp. POST requires `write` and accepts `{"body_md":"Cut this pause","position_ms":3000}`. Only ready files in Recordings accept comments. Timestamps must be nonnegative, at most 24 hours, and within the known recording duration. POST accepts `Idempotency-Key` and returns `{"file": {...}, "event": {...}}` with an advanced `comment_revision`.
 
 ## `DELETE /api/v1/files/{id}/comments/{comment}`
 
-Scope `write`. Deletes only the caller's own comment and returns `{"deleted":true}`. Archived proposition restrictions apply.
+Scope `write`. Deletes only the caller's own comment and returns `{"deleted":true,"file":{...},"event":{...}}`. The returned file carries the advanced `comment_revision`. Archived proposition restrictions apply.
 
 ## `POST /api/v1/propositions/{id}/production-template`
 
@@ -806,7 +812,7 @@ the link have to be on the same proposition; anything else is `404`. Attaching
 twice leaves one attachment.
 
 ```json
-{"card": 7, "action": "attach"}
+{"card": 7, "action": "attach", "event": {"seq": 413, "entity": "card", "action": "attach"}}
 ```
 
 ## `POST DELETE /api/v1/cards/{card}/files/{id}`
@@ -1228,14 +1234,16 @@ they are the same function.
 `/mcp` is a streamable HTTP MCP endpoint. It takes the same
 `Authorization: Bearer` header and the same scopes, and it is stateless: every
 POST is authenticated on its own. Only POST is served; GET and DELETE are 405. A
-POST body over 64 KiB is refused with 413, as on `/api/v1`. A token that the
+POST body over 4 MiB plus 64 KiB is refused with 413. A token that the
 tool's scope does not cover is a tool error rather than an HTTP status, since
 one endpoint serves every tool.
 
 | Tool | Scope | What it does |
 | --- | --- | --- |
 | `whoami` | any | Reports the token this connection is using and the person it belongs to. |
-| `search` | `read` | Searches cards, documents, links, files, comments, propositions and people. |
+| `search` | `read` | Searches cards, documents, links, files, transcripts, evidence, comments, propositions and people. |
+| `get_show` | `read` | Reads the shared Show workspace and its resource IDs. |
+| `get_diagnostics` | `admin` | Reports aggregate operational counts for workspace owners. |
 | `list_users` | `read` | Lists everyone in the workspace. |
 | `get_settings` | `admin` | Lists the workspace settings, with secrets reported as set rather than returned. |
 | `set_setting` | `admin` | Changes one workspace setting. |
@@ -1291,9 +1299,11 @@ the `Idempotency-Key` header above and takes the same 1 to 64 letters, digits,
 hyphens or underscores. A call an agent never saw the answer to is made again
 under the same key and returns the id of the thing the first call made rather
 than making a second: `create_proposition`, `create_card`, `comment`,
-`create_document`, `append_block`, `insert_after_heading` and `add_link`. The
-tools that set a field take none, because setting it twice sets it to what it
-already holds.
+`create_document`, `append_block`, `insert_after_heading`, `add_link` and
+`add_file_comment`. `write_document` also accepts a key for its source-write
+transaction. Workflow mutation keys are described in the parity section below.
+Other tools may omit retry keys; inspect each tool schema rather than assuming
+all writes support them.
 
 `replace_block` takes the `base_version` that `read_document` reported and
 merges in what somebody else wrote since; left out, it reads the block and
@@ -1405,7 +1415,11 @@ expose their fields directly. Supply exactly one of `document` or `file` to
 `request_review`. Transcript `segments` contain `start_ms`, `end_ms`, `speaker`
 and `text`; import `text` with `format` instead when using TXT, SRT or VTT.
 MCP requests allow 4 MiB plus 64 KiB for the envelope; transcript content still
-has its own 4 MiB limit. Ordinary REST bodies remain limited to 64 KiB.
+has its own 4 MiB limit. Ordinary REST bodies remain limited to 64 KiB;
+document source writes accept 1 MiB.
+`PUT /api/v1/files/{id}/transcript` accepts a JSON envelope up to 4 MiB plus
+64 KiB. JSON escaping counts toward the envelope size. An oversized or malformed
+REST transcript body returns 400; content validation failures return 422.
 
 ## Recover deleted content
 
