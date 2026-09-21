@@ -14,7 +14,7 @@ Ordinary browser API requests have a 30-second deadline; Drive import allows the
 
 ## Validation
 
-The full Go suite, vet, formatting and JavaScript syntax checks pass. All 17 Node test files pass. Race checks cover realtime, core, notifications, backups, files and workflow packages. Dependency checks report no reachable Go vulnerabilities and no npm vulnerabilities; the existing unused-package module advisory remains outside imported code.
+The full Go suite, vet, formatting and JavaScript syntax checks pass. All 17 Node test files pass. Pull-request race checks cover realtime, core, notifications, backups, files and workflow packages; the merged release passed the full repository race suite. Dependency checks report no reachable Go vulnerabilities and no npm vulnerabilities; the existing unused-package module advisory remains outside imported code.
 
 Chromium covers complete workflows, offline recovery, committed requests whose responses are lost, same-session and reload draft recovery, restored content conflicts, browser-storage failure/retry, named dialogs, touch emulation, and 320/390/768/1024-pixel recovery layouts. These checks do not replace physical-device or screen-reader testing.
 

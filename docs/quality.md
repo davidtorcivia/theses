@@ -1,6 +1,6 @@
 # Release checks
 
-Run `go vet ./...`, `go test ./...`, `node --test web/*_test.mjs`, and the JavaScript syntax checks in `.github/workflows/ci.yml`. Pull requests also run the race detector on commands, realtime, notifications, backups, and files; main runs it across all packages.
+Run `go vet ./...`, `go test ./...`, `node --test web/*_test.mjs`, and the JavaScript syntax checks in `.github/workflows/ci.yml`. Pull requests also run the race detector on commands, realtime, notifications, backups, files, and workflow; main runs it across all packages.
 
 The browser suite uses a temporary database, synthetic accounts, an in-process S3 fake, and an ephemeral loopback HTTP server. It never connects to an existing deployment. Install the development-only dependency with `npm ci`, install Chromium with `npx playwright install --with-deps chromium`, then run `npm run test:browser`. `PLAYWRIGHT_MODULE` and `BROWSER_EXECUTABLE` can select an already installed Playwright module and Chromium executable. The app runtime remains a single Go binary with no Node dependency.
 

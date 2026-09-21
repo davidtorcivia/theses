@@ -17,7 +17,7 @@ Click **Add to calendar** or a day number to add an all-day event or a dated tas
 Open **Calendar sync** from the production calendar or Profile. Create a private subscription URL and copy it before leaving the page. The database stores only its SHA-256 hash. The same URL works in multiple clients; replacing it invalidates the previous URL, and revoking it disables further downloads. Restoring a backup revokes all calendar subscriptions to prevent old links from becoming valid again. Create a new link, remove the old subscribed calendar, and add the new URL after a restore. Clients may retain events from the old calendar.
 
 - Google Calendar on a computer: **Other calendars + → From URL**, paste the URL, then **Add calendar** ([Google instructions](https://support.google.com/calendar/answer/37100)).
-- Apple Calendar on Mac: **File → New Calendar Subscription**, paste the URL, and choose the **iCloud** account for availability on other devices ([Apple instructions](https://support.apple.com/guide/calendar/subscribe-to-calendars-icl1022/mac)).
+- Apple Calendar on Mac: **File → New Calendar Subscription**, paste the URL, and choose **iCloud** under **Location** for availability on other devices ([Apple instructions](https://support.apple.com/en-la/102301)).
 
 This is a read-only iCalendar subscription. Edit dates in Theses. Refresh timing is controlled by the calendar client and can be delayed; importing a downloaded file does not subscribe to future changes. The server must be reachable from the calendar provider. Holiday overlays are not included, so clients can use their own holiday calendars.
 

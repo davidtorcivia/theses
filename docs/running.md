@@ -2,9 +2,9 @@
 
 ## Environment
 
-Six variables are the whole bootstrap. Everything else the owner sets on
-`/settings`, where it lives in the database. `.env.example` carries the same
-list with the reasoning beside each one.
+Six core variables bootstrap the app. Workspace configuration lives in the
+database and is edited on `/settings`. `.env.example` documents the core
+variables; optional runtime and transcription settings are described below.
 
 | Variable | What it is |
 | --- | --- |
@@ -17,11 +17,11 @@ list with the reasoning beside each one.
 
 Generate both keys with `openssl rand -hex 32`. Startup refuses a weak one.
 
-`THESES_DEV` and `THESES_LOG_LEVEL` are optional and read by the binary.
+`THESES_DEV`, `THESES_LOG_LEVEL`, and `THESES_WHISPER_URL` are optional and read by the binary. The last enables a trusted local inference endpoint; see [transcription.md](transcription.md) for the optional Compose service, model directory, device group and resource limits.
 `THESES_BIND_HOST`, `THESES_PORT` and `THESES_VERSION` are read by
-`docker-compose.yml` and by nothing else. `/settings` lists the variables the
-binary reads, read-only under Environment, with a line each on why it cannot
-be edited there.
+`docker-compose.yml` and by nothing else. `/settings` lists the core bootstrap
+variables read-only under Environment. Optional transcription is configured by
+the operator, outside that form.
 
 `TZ` sets the container's local time zone. `internal/config` never reads it;
 the Go runtime does, which is what puts a local offset on the Date header of
@@ -79,8 +79,10 @@ development, so nothing has to be cleared between edits.
 Before every commit:
 
 ```sh
-gofmt -l . && go vet ./... && go test ./...
+test -z "$(gofmt -l .)" && go vet ./... && go test ./... && node --test web/*_test.mjs
 ```
+
+See [quality.md](quality.md) for JavaScript syntax checks, browser tests, races, dependency checks and the production image gate.
 
 ## Documents on disk
 
@@ -115,10 +117,11 @@ restore away, since an import keeps a `pre-import` revision before it writes.
 
 ## Background work
 
-Six goroutines run beside the server and stop with it: the mail outbox, the
-nightly backup, the markdown mirror and its watcher, the upload sweep, and the
-notifier's two, one filling the notification outbox from every applied command
-and one emptying it with bounded retries.
+Background workers handle the mail outbox, nightly backup, markdown mirror
+and watcher, housekeeping, notification matching and delivery, and optional
+local transcription. Notification matching catches up from committed activity
+through a durable cursor; delivery uses bounded retries. Workers drain or stop
+with the server. Transcription runs one job at a time when configured.
 
 The sweep runs at startup and every hour after. It abandons an upload that has
 been silent for 48 hours, which is 48 hours since anybody last asked for part
@@ -127,8 +130,8 @@ with it.
 
 The notifier also runs one pass a day, a few minutes before the digest time set
 on `/settings`: the cards due tomorrow, the cards that have just gone overdue,
-and a release day tomorrow. The day it ran is recorded before the work, so a
-restart an hour later does not send everything again.
+and a release day tomorrow. Reminder intents and their daily marker commit together, so a
+restart an hour later does not queue the same daily pass again.
 
 ## Deploying over a running version
 
@@ -146,16 +149,17 @@ the old modules until it is reloaded, as it did before any of this. What it
 cannot do is come back tomorrow and still be served them.
 
 The one thing a deploy does not carry with it is the store browsers keep
-offline work in, which is at version 2 from this version on: rolling back to a
-build older than this one leaves whatever anybody had queued unreadable in
-their browser, though untouched, until the newer build is served again.
+offline work in. Its current schema is version 4, including source drafts and
+saved preferences. Rolling back to a build that opens a lower IndexedDB
+version leaves queued work unreadable, though untouched, until a compatible
+build is served again. Recover or export unsaved work before such a rollback.
 
 ## Health
 
 `GET /healthz` answers 200 and the version as soon as the process is up. `GET
 /readyz` runs the readiness checks and answers 503 with the failing check
 named: the database, the object store, and the age of the newest backup, which
-fails once it is over 36 hours old.
+fails once it is over 36 hours old when nightly backups are enabled. Enabled backups also fail readiness until one has succeeded; disabled backups skip the age check.
 
 ## Backups
 
@@ -165,14 +169,36 @@ uploads it with a manifest of counts, schema version and mirror revisions. The
 destination is a prefix of the primary bucket, written with a second key that
 can write and list but not delete, so neither a stolen application key nor a
 bad settings change can take the history with it. Retention is the bucket's
-own lifecycle and object lock rather than a delete from the app; thirty
-archives are kept by default.
+own lifecycle and Object Lock rather than a delete from the app. The retention
+setting defaults to 30 days and expresses the intended bucket policy; configure
+that policy at the storage provider. The app does not enforce a 30-archive cap.
+Archives contain database and markdown data, not the file objects themselves;
+protect the primary and recordings buckets separately.
 
 Restore runs from `/settings`, after a confirmation that names the archive and
 its date. It stops writes, swaps the database, rewrites the mirror and starts
 the watcher again. The archive is encrypted to the same key that encrypts the
 stored secrets, so a restore needs `THESES_SECRET_KEY`, which the running app
-needs anyway.
+needs anyway. Restoring clears API keys and calendar subscription credentials
+so previously revoked secrets cannot become valid again. Recreate keys and
+subscriptions after a restore. Interrupted transcription jobs require explicit
+retry. The app retains replaced files under timestamped aside paths; inspect
+any partial-restore error before retrying or removing those files.
+
+## Deleted content recovery
+
+**Activity → Recently deleted** restores individual cards, documents, links,
+completed files, evidence and calendar events for seven days after deletion.
+This applies to deletions made with recovery enabled, not older deletion
+history. Restoring requires delete permission on the original workspace. A
+conflicting restore is refused atomically. File bytes must still exist in the
+bucket. Proposition deletion, individual comments/checklists and incomplete
+uploads are outside this feature. See [recovery boundaries](agent-recovery.md#boundaries).
+
+The owner storage-cleanup preview lists recorded, app-owned unreferenced keys
+with a seven-day grace period. Cleanup rechecks references, protects active
+trash, and shares a maintenance reservation with restore. It does not discover
+every orphan in a bucket or replace backups.
 
 ## Draft and notification recovery
 

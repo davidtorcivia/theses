@@ -1,5 +1,7 @@
 # Follow-up application audit, 2026-09-20
 
+Historical release report. Findings and limits below describe this audit at the time, not the current application. Later releases added durable source drafts and notification matching, browser CI and performance fixtures, and deleted-item recovery. See [Running](running.md), [Quality](quality.md) and [Recovery](agent-recovery.md) for current behavior.
+
 This audit covers account security, HTTP/API boundaries, storage configuration,
 backup recovery, board commands, document import, notification delivery,
 browser editing, offline session handling, keyboard access, and desktop/mobile

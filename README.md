@@ -6,11 +6,11 @@ The shared **Show** workspace at `/show` holds the overall kanban, notes and fil
 
 ## Status
 
-Pre-alpha. Under active development; parts of this document and the docs it links describe what is being built.
+Under active development. The guides below describe implemented behavior; dated audit reports record historical findings and validation. See [workflow and recovery boundaries](docs/agent-recovery.md#boundaries) for current limitations.
 
 ## How it works
 
-One Go binary and one process, with SQLite as the only database. Files go from the browser straight to S3-compatible object storage over presigned URLs, so no upload passes through the server. Documents are block lists in the database, merged three ways on the server and mirrored to markdown on disk. Six environment variables bootstrap the process and the owner configures the rest in the UI, where credentials are encrypted at rest. Every page is served under a strict CSP: no inline scripts, no third-party JavaScript, fonts self-hosted.
+The app runs as one Go binary with SQLite as its only database. Browser uploads go straight to S3-compatible object storage over presigned URLs. Drive imports copy through the app, and optional local transcription sends recordings to a separate operator-controlled Whisper service. Documents are block lists in the database, merged three ways on the server and mirrored to markdown on disk. Six core environment variables bootstrap the process; optional runtime settings are documented in [Running](docs/running.md). The owner configures workspace settings in the UI, where credentials are encrypted at rest. Every page is served under a strict CSP: no inline scripts, no third-party JavaScript, fonts self-hosted.
 
 ## Quickstart
 
@@ -26,13 +26,21 @@ Put the two keys in `.env` and set `THESES_BASE_URL` to the absolute public URL,
 docker compose up -d
 ```
 
-Open it. The first visit is `/setup`: it creates the owner account, enrolls an authenticator and signs you in. Every other route redirects there until an owner exists.
+Open it. The first visit is `/setup`: it creates the owner account, enrolls an authenticator and signs you in. Workspace pages redirect there until an owner exists; health endpoints and public agent guides remain available.
 
 ## Docs
 
 - [Running](docs/running.md): environment variables, Compose, a reverse proxy in front, health endpoints, what to back up.
 - [Settings](docs/settings.md): what each section of `/settings` configures, including the bucket CORS rule and SMTP.
 - [Routes](docs/routes.md): every route the browser sees.
-- [API](docs/api.md): `/api/v1` and `/mcp`, tokens and scopes.
+- [Workflows](docs/workflows.md): Show notes, My work, production plans, research, recording and reviews.
+- [Calendar](docs/calendar.md): events, tasks, U.S. holidays and Google/iCloud subscriptions.
+- [Transcription](docs/transcription.md): optional local Whisper, speaker-label limits and Pinecast handoff.
+- [Connections](docs/connections.md): personal keys, expiry and Claude Desktop setup.
+- [Agent guide](docs/SKILLS.md): practical REST/MCP workflows, permissions and retries. Also served publicly at `/SKILLS.md`.
+- [API](docs/api.md): `/api/v1` and `/mcp`, request contracts, tokens and scopes. Also served at `/api.md`; connection instructions are at `/connections.md`.
+- [Recovery](docs/agent-recovery.md): recently deleted content, safe retries, validation and limitations.
+- [Quality](docs/quality.md): local checks, CI, browser tests and measured performance.
+- Historical audits: [initial](docs/audit.md) and [follow-up](docs/audit-followup.md).
 
 MIT.

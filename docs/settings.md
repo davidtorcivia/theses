@@ -112,12 +112,14 @@ whoever pressed it. Native Google Docs, Sheets and Slides files are not listed,
 because they have no file to copy until they are exported. Disconnect throws
 the token away and keeps the client id, so connecting again is one button.
 
-**Transistor**, publish out. Paste an API key and the show's id; testing with
+**Pinecast** is a manual publishing handoff: when no legacy Transistor key is configured, proposition settings link to the Pinecast dashboard. Prepare audio, show notes and transcript exports here, then upload and schedule there. There is no Pinecast API connection, credential field or automatic publishing in this build. See [workflows.md](workflows.md).
+
+**Transistor**, optional legacy publishing. Paste an API key and the show's id; testing with
 the show field empty prints the shows the key reaches, with their ids, so the
 id can be read off the page. The last field is the status at which a
 proposition may be published, which is `released` unless it is changed. A
-proposition that has reached it gets a Publish section on its own settings
-page: a document for the show notes, defaulting to the one called Show notes,
+connected installation shows a Publish section on proposition settings; its
+publish action becomes available at the configured status. Choose a document for the show notes, defaulting to the one called Show notes,
 and a recording from the Recordings folder for the audio. Publishing creates
 the episode with the proposition's title and blurb, the notes rendered to HTML,
 and a presigned link to the recording that lasts a day, which is how Transistor
@@ -125,10 +127,9 @@ fetches a file out of a private bucket. The episode id is kept on the
 proposition, so publishing again updates that episode instead of making
 another, and the page links to it.
 
-**Riverside** and **Descript** are not built. The interface the two above
-implement is what they would implement; nothing of them ships.
+**Riverside** and **Descript** integrations are not implemented.
 
-**Webhooks** are below the two of them: the workspace fires those whoever
+**Webhooks** are below the integration rows: the workspace fires those whoever
 caused the thing, which is how a chat room or anything else is wired up without
 an integration of its own. Each has a URL, a secret each message is signed with
 when one is set, the events it fires on, and optionally one column: a card move
@@ -138,9 +139,11 @@ that refuses says so on the spot.
 
 ## Backups
 
-The destination, the time of day the nightly run starts, how many archives to
-keep, a button that runs one now, and the list of archives with a restore
-beside each. See [running.md](running.md) for what an archive contains and
+The destination, nightly schedule, intended retention in days, a manual-run
+button, and archive verification and restore controls. Configure lifecycle and
+Object Lock retention at the bucket provider; the app does not delete archives
+to enforce the setting. Verify restore checks an isolated copy without replacing
+the workspace. Restoring revokes API keys and calendar subscription credentials. See [running.md](running.md) for what an archive contains and
 what a restore does.
 
 ## Team
@@ -151,7 +154,18 @@ link is also shown once on the page, for the owner to pass on by hand; neither
 link is written to the activity log. Resending mints a new token and kills the
 old link.
 
-Each user creates and revokes personal API/MCP keys in **Profile → API & MCP**. The owner workspace page lists all active keys with the owning account and can revoke any of them. Keys are shown once and carry the intersection of their selected scopes and the account's current permissions. Restoring a backup clears API keys and calendar subscription credentials to avoid reactivating revoked secrets. See [connection setup](connections.md) and [api.md](api.md).
+Each user creates and revokes personal API/MCP keys in **Profile → API & MCP**. The owner workspace page lists all unrevoked keys, including expired ones, with the owning account and can revoke any of them. Keys are shown once and carry the intersection of their selected scopes and the account's current permissions. Choose 7, 30, 90 or 365 days, or no expiry; new forms default to 30 days. Existing keys retain their lifetime. Expiry and permission changes apply on the next REST or MCP request, including an initialized MCP session. Restoring a backup clears API keys and calendar subscription credentials to avoid reactivating revoked secrets. See [connection setup](connections.md) and [api.md](api.md).
+
+## Operations and personal settings
+
+Owner settings include aggregate diagnostics and the storage-cleanup preview.
+Process-lifetime failure counters are historical counts, not current-health
+alarms; see [quality.md](quality.md). Cleanup only considers recorded app-owned
+keys, waits seven days, and rechecks references and active trash before removal.
+
+Each account configures notification channels, quiet hours, personal API/MCP
+keys and its read-only calendar subscription in Profile. Calendar subscriptions
+are separate credentials from API keys; see [calendar.md](calendar.md).
 
 ## Environment
 
