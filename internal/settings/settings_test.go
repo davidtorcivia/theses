@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -157,6 +158,81 @@ func TestSetValidates(t *testing.T) {
 	}
 }
 
+func TestSetManyValidatesBeforeWriting(t *testing.T) {
+	ctx := context.Background()
+	s := open(t, store.OpenTemp(t), key)
+	if err := s.Set(ctx, "mail.host", []string{"old.example"}, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := s.SetManyAs(ctx, map[string][]string{
+		"mail.host": {"new.example"},
+		"mail.port": {"70000"},
+	}, User(0))
+	if err == nil {
+		t.Fatal("an invalid batch was accepted")
+	}
+	if got := Get[string](s, "mail.host"); got != "old.example" {
+		t.Errorf("mail.host = %q after rejected batch", got)
+	}
+}
+
+func TestSetManyRollsBackRowsActivityAndCache(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_second_setting
+		BEFORE INSERT ON settings WHEN NEW.key = 'workspace.episode_start'
+		BEGIN SELECT RAISE(FAIL, 'fail second setting'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.SetManyAs(ctx, map[string][]string{
+		"workspace.name":          {"New workspace"},
+		"workspace.episode_start": {"12"},
+	}, User(0))
+	if !errors.Is(err, ErrStorage) {
+		t.Fatalf("SetManyAs returned %v, want ErrStorage", err)
+	}
+	if got := Get[string](s, "workspace.name"); got != "Workspace" {
+		t.Errorf("cached workspace.name = %q after rollback", got)
+	}
+	if got := Get[int](s, "workspace.episode_start"); got != 1 {
+		t.Errorf("cached workspace.episode_start = %d after rollback", got)
+	}
+	if s.IsSet("workspace.name") || s.IsSet("workspace.episode_start") {
+		t.Error("rolled-back settings are marked set in the cache")
+	}
+	var rows, activity int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM settings
+		WHERE key IN ('workspace.name', 'workspace.episode_start')`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM activity
+		WHERE entity = 'setting' AND entity_id IN ('workspace.name', 'workspace.episode_start')`).Scan(&activity); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 || activity != 0 {
+		t.Fatalf("rollback left %d setting rows and %d activity rows", rows, activity)
+	}
+}
+
+func TestInternalSettingsOnlyAcceptSystemWrites(t *testing.T) {
+	ctx := context.Background()
+	s := open(t, store.OpenTemp(t), key)
+	if err := s.Set(ctx, "backups.last_ok_at", []string{"2000000000"}, 0); err == nil {
+		t.Fatal("a user changed scheduler state")
+	}
+	if got := Get[int](s, "backups.last_ok_at"); got != 0 {
+		t.Errorf("backups.last_ok_at = %d after rejected write", got)
+	}
+	if err := s.SetAs(ctx, "backups.last_ok_at", []string{"2000000000"}, System()); err != nil {
+		t.Fatalf("system write: %v", err)
+	}
+	if got := Get[int](s, "backups.last_ok_at"); got != 2000000000 {
+		t.Errorf("backups.last_ok_at = %d after system write", got)
+	}
+}
+
 func TestIntegerSettingsAreBounded(t *testing.T) {
 	ctx := context.Background()
 	s := open(t, store.OpenTemp(t), key)
@@ -268,5 +344,60 @@ func TestConcurrentWritesLeaveTheCacheMatchingTheRow(t *testing.T) {
 	}
 	if cached := Get[string](s, "workspace.name"); stored != `"`+cached+`"` {
 		t.Errorf("the row holds %s and the cache holds %q", stored, cached)
+	}
+}
+
+func TestBlockedSettingsWriteDoesNotBlockCacheReads(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	db := store.OpenTemp(t)
+	s := open(t, db, key)
+
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Set(ctx, "workspace.name", []string{"After the lock"}, 0)
+	}()
+	// The settings writer is waiting for SQLite's write lock here.
+	select {
+	case err := <-done:
+		t.Fatalf("settings write finished while another write transaction was open: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	read := make(chan string, 1)
+	go func() { read <- Get[string](s, "workspace.name") }()
+	select {
+	case got := <-read:
+		if got != "Workspace" {
+			t.Fatalf("cache read while writer waited = %q", got)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("a database wait blocked a settings cache read")
+	}
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal("settings write did not finish after the database lock was released")
+	}
+	if got := Get[string](s, "workspace.name"); got != "After the lock" {
+		t.Fatalf("cache after write = %q", got)
+	}
+	var stored string
+	if err := db.QueryRowContext(ctx,
+		`SELECT value_json FROM settings WHERE key = 'workspace.name'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != `"After the lock"` {
+		t.Fatalf("stored value after write = %s", stored)
 	}
 }

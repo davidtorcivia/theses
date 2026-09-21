@@ -333,17 +333,43 @@ func TestPasswordResetLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := f.UsePasswordReset(ctx, token)
+	got, err := f.PasswordResetUser(ctx, token)
 	if err != nil || got.ID != u.ID {
-		t.Fatalf("UsePasswordReset = %v, %v", got, err)
+		t.Fatalf("PasswordResetUser = %v, %v", got, err)
 	}
-	if _, err := f.UsePasswordReset(ctx, token); !errors.Is(err, ErrTokenInvalid) {
+	hash, err := HashPassword("a different long password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.ResetPassword(ctx, token, hash); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.UserByID(ctx, f.db, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !CheckPassword(after.PasswordHash, "a different long password") {
+		t.Error("the reset did not change the password")
+	}
+	if after.SessionEpoch != u.SessionEpoch+1 {
+		t.Errorf("session epoch = %d, want %d", after.SessionEpoch, u.SessionEpoch+1)
+	}
+	var actions int
+	if err := f.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM activity WHERE entity = 'user' AND entity_id = ? AND action = 'password-reset'`, u.ID).
+		Scan(&actions); err != nil {
+		t.Fatal(err)
+	}
+	if actions != 1 {
+		t.Errorf("password reset activity rows = %d, want 1", actions)
+	}
+	if _, err := f.PasswordResetUser(ctx, token); !errors.Is(err, ErrTokenInvalid) {
 		t.Errorf("a spent token returned %v", err)
 	}
 
 	token, _ = f.CreatePasswordReset(ctx, u.ID)
 	f.now = f.now.Add(ResetValidity + time.Minute)
-	if _, err := f.UsePasswordReset(ctx, token); !errors.Is(err, ErrTokenExpired) {
+	if _, err := f.PasswordResetUser(ctx, token); !errors.Is(err, ErrTokenExpired) {
 		t.Errorf("an hour old token returned %v", err)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -32,6 +33,8 @@ type Service struct {
 	*core.Service
 	Bucket func(ctx context.Context, folder string) (*blob.Client, error)
 	HTTP   *http.Client
+	// ponytail: serialize upload setup, not file bytes; use per-key locks if setup throughput matters.
+	createMu sync.Mutex
 }
 
 // New registers this package's entities with core and returns the service. It

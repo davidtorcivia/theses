@@ -9,11 +9,12 @@
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
-import { send, newKey, where, onCarets, onAnswer, caughtUp, count, chosen, Conflict, Offline } from './net.js';
+import { send, newKey, where, onCarets, onAnswer, caughtUp, catchUp, count, chosen, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { retext, unqueue, file } from './offline.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
+import { retainReplay } from './source.js';
 import * as undo from './undo.js';
 import { movable, carrying } from './drag.js';
 
@@ -759,6 +760,7 @@ function source(doc) {
     // must not take the caret, the scroll or the words out from under the
     // person writing. beforeRender and afterRender put the caret and the
     // scroll back across the move.
+    if (src.notice) wrap.append(el('p', { class: 'notice', text: src.notice }));
     if (moved(doc, src)) {
       wrap.append(el('p', { class: 'notice',
         text: 'This document has changed since you opened its markdown. Saving merges what you have written into theirs, paragraph by paragraph.' }));
@@ -839,6 +841,8 @@ function reopen(doc) {
     scroll: 0,
     focused: false,
     key: '',
+    notice: '',
+    clean: area.value,
   };
   sources.set(doc.id, src);
   area.addEventListener('input', () => { src.text = area.value; });
@@ -897,22 +901,18 @@ async function writeSource(doc) {
   src.key = '';
   if (answer.replayed) {
     // The attempt that was never answered had in fact gone through. Nothing
-    // remembers what it answered, so the markdown is read again from the
-    // document, which is what it wrote.
-    //
-    // ponytail: what that loses is this person's wording of any paragraph the
-    // first attempt could not take, because the conflict list went with the
-    // answer nobody saw and reading again replaces the text with the
-    // document's, where such a paragraph reads as the other person left it.
-    // The upgrade is remembering the first answer beside the key.
-    say('That save had already gone through. This is the document as it now reads.');
+    // remembers what it answered. Keep the markdown in the textarea: the
+    // first answer may have contained conflicts, and replacing it with the
+    // document would silently discard this person's wording of those blocks.
+    // The current document is the base for a deliberate second save.
+    await catchUp();
     const back = fresh(doc.id);
-    if (back) {
-      reopen(back);
-      emit();
-    }
+    if (back) retainReplay(src, back);
+    say('That save had already gone through. Your markdown is still here.');
+    emit();
     return;
   }
+  src.notice = '';
   src.base = answer.base || src.base;
   const left = (answer.conflicts || []).length;
   if (!left) {
@@ -2359,6 +2359,18 @@ function arrived() {
 // in it, so at most the timer's ceiling is lost, while one whose insert has
 // gone up and not been answered has nothing of what was typed since, which is
 // the whole of that flight.
+function hasUnsavedText() {
+  if (Object.keys(state.conflict).length) return true;
+  if ([...sources.values()].some((src) => src.text !== src.clean)) return true;
+  return [...work.values()].some((w) => w.text !== w.sent || w.flight || w.status !== 'ok');
+}
+
+addEventListener('beforeunload', (e) => {
+  if (!hasUnsavedText()) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
+
 addEventListener('pagehide', () => {
   if (editing) {
     const w = work.get(editing.id);

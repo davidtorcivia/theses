@@ -74,7 +74,18 @@ export const state = {
   materialFailed: false,
 };
 
+// unresolvedCard is true while a card text conflict still needs an explicit
+// keep-mine or take-theirs answer, whether IndexedDB kept it or this tab is the
+// only place it could be held.
+export function unresolvedCard(id) {
+  if (!id) return false;
+  return Object.values(state.conflict).some((row) => row.card === id)
+    || state.refused.some((row) => row.args && row.args.card === id
+      && (row.cmd === 'card.title' || row.cmd === 'card.description'));
+}
+
 export function boot(payload) {
+  recent.clear();
   state.me = payload.me;
   state.workspace = payload.workspace;
   state.timezone = payload.timezone || '';
@@ -91,6 +102,7 @@ export function boot(payload) {
   sortProps();
   state.open = payload.open || 0;
   loadBoard(payload.board);
+  snapshotSeq = state.seq;
   loadDocuments(payload.documents);
   // Opening a proposition is enough to have it on this device. Without this the
   // snapshot was only ever written by an applied event, so a proposition that
@@ -137,6 +149,7 @@ export async function material() {
   if (Date.now() - lastTried < retryAfter) return;
   lastTried = Date.now();
   const proposition = state.open;
+  const since = state.seq;
   state.loaded = proposition;
   try {
     const [links, files, attached] = await Promise.all([
@@ -152,6 +165,9 @@ export async function material() {
     state.folders = files.folders || [];
     state.kinds = links.kinds || [];
     state.attachments = { links: attached.links || [], files: attached.files || [] };
+    for (const ev of recent.values()) {
+      if (ev.proposition === proposition && ev.seq > since && materialEntities.has(ev.entity)) apply({ ...ev, seq: 0 });
+    }
     state.materialFailed = false;
     // This is the only thing that knows the links and files of a proposition,
     // so it is the only thing that writes them.
@@ -167,6 +183,7 @@ export async function material() {
     });
     emit();
   } catch (err) {
+    if (state.open !== proposition) return;
     // The mark is cleared so another go is possible, and the stamp above is
     // what keeps that from being every render. The pane says it could not read
     // them rather than saying there are none.
@@ -273,8 +290,38 @@ export function hold(on) {
 
 // apply moves the state forward by one event. Every payload is the whole row as
 // the server has it, so applying an event twice is applying it once.
+const recent = new Map();
+let snapshotSeq = 0;
+const materialEntities = new Set(['link', 'file', 'card_link', 'card_file']);
+
+function eventKey(ev) {
+  const row = ev.after || ev.before || {};
+  const id = ev.entity === 'card_link' ? `${row.card_id}:${row.link_id}`
+    : ev.entity === 'card_file' ? `${row.card_id}:${row.file_id}` : ev.entity_id;
+  return `${ev.proposition}:${ev.entity}:${id}`;
+}
+
+function parentOf(ev) {
+  const row = ev.after || ev.before || {};
+  if (ev.entity === 'comment' || ev.entity === 'checklist_item') return ['card', row.card_id];
+  if (ev.entity === 'member') return ['proposition', row.proposition_id];
+  return [];
+}
+
 export function apply(ev) {
   if (!ev) return;
+  if (ev.seq > 0) {
+    const key = eventKey(ev);
+    const [parent, id] = parentOf(ev);
+    const floor = ev.proposition === state.open && !materialEntities.has(ev.entity) ? snapshotSeq : 0;
+    const previous = Math.max(floor, recent.get(key)?.seq || 0,
+      recent.get(`${ev.proposition}:${parent}:${id}`)?.seq || 0);
+    if (ev.seq <= previous) {
+      settleReplayed(ev);
+      return;
+    }
+    recent.set(key, ev);
+  }
   if (ev.seq > state.seq && ev.proposition === state.open) state.seq = ev.seq;
   const now = ev.after || null;
   const was = ev.before || null;
@@ -409,6 +456,15 @@ export function apply(ev) {
       else if (at < 0) list.push(now);
       else list[at] = now;
       break;
+    }
+  }
+  // Parent payloads include their children; retain child events newer than them.
+  if (ev.seq > 0 && ev.after && (ev.entity === 'card' || ev.entity === 'proposition')) {
+    for (const child of recent.values()) {
+      const [parent, id] = parentOf(child);
+      if (child.proposition === ev.proposition && parent === ev.entity && id === ev.entity_id && child.seq > ev.seq) {
+        apply({ ...child, seq: 0 });
+      }
     }
   }
   remember();

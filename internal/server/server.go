@@ -61,9 +61,11 @@ type Server struct {
 
 	// hasUsers latches once the owner exists, so the setup gate costs one query.
 	hasUsers atomic.Bool
-	pending  *pendingStore
-	checks   []Check
-	handler  http.Handler
+	// ponytail: one publication at a time; use per-proposition guards if parallel publishing is needed.
+	publishing atomic.Bool
+	pending    *pendingStore
+	checks     []Check
+	handler    http.Handler
 
 	api *api.API
 	mcp *mcp.Server
@@ -252,6 +254,7 @@ func (s *Server) routes() http.Handler {
 	// answers on a connection the handler chain never gets to write to.
 	mux.Handle("GET /ws", s.hub.Handler())
 	mux.HandleFunc("GET /api/events", s.hub.Events)
+	mux.HandleFunc("POST /app/commands", s.requireUser(s.hub.Commands))
 
 	// The same stream for a token, at the path the plan names. It is more
 	// specific than the API's own /api/v1/ pattern, so it wins the match, and

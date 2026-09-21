@@ -257,6 +257,9 @@ func TestGetSettingsReturnsNoSecret(t *testing.T) {
 	}
 	var seen bool
 	for _, s := range out.Settings {
+		if s.Key == "backups.last_ok_at" || s.Key == "notify.last_tick" {
+			t.Errorf("internal state is in the settings listing: %+v", s)
+		}
 		if s.Key == "mail.password" {
 			seen = true
 			if !s.Secret || !s.Set || s.Value != nil {
@@ -266,6 +269,10 @@ func TestGetSettingsReturnsNoSecret(t *testing.T) {
 	}
 	if !seen {
 		t.Error("mail.password is missing from the listing")
+	}
+	if res := h.call(h.connect(auth.ScopeAdmin), "set_setting",
+		setSettingArgs{Key: "notify.last_tick", Value: "20990101"}, nil); !res.IsError {
+		t.Error("an MCP client changed scheduler state")
 	}
 }
 

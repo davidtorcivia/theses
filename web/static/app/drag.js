@@ -41,6 +41,14 @@ export function carrying() {
   return was;
 }
 
+export function scrollParent(node) {
+  for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+    const overflow = getComputedStyle(parent).overflowY;
+    if (/(auto|scroll)/.test(overflow) && parent.scrollHeight > parent.clientHeight) return parent;
+  }
+  return null;
+}
+
 // Any next press clears it, whether or not what is pressed can be carried. A
 // row that asks the question without being movable, which an archived one is,
 // would otherwise answer for a drag that ended somewhere else entirely. In the
@@ -124,6 +132,7 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
     let zone = null;
     let on = false;
     let edge = 0;
+    const scroller = scrollParent(node);
     let frame = 0;
     let timer = holds ? setTimeout(start, PRESS) : 0;
 
@@ -218,12 +227,11 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
     // A finger at the edge of a phone cannot reach the column below the fold,
     // so the page comes to it. The pointer holds still while this runs and the
     // board moves under it, so the row is placed again on every frame.
-    //
-    // ponytail: the window is what moves. A list in a panel that scrolls on its
-    // own, which the rail is on a phone, stays where it is; give the panel the
-    // scroll when somebody has more propositions than a screen holds.
     function tick() {
-      if (edge) { scrollBy(0, edge); place(); }
+      if (edge) {
+        if (scroller) scroller.scrollTop += edge; else scrollBy(0, edge);
+        place();
+      }
       frame = requestAnimationFrame(tick);
     }
 
@@ -237,7 +245,8 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
       }
       follow();
       place();
-      edge = mouse ? 0 : at.y < EDGE ? -SPEED : at.y > innerHeight - EDGE ? SPEED : 0;
+      const bounds = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+      edge = mouse ? 0 : at.y < bounds.top + EDGE ? -SPEED : at.y > bounds.bottom - EDGE ? SPEED : 0;
     }
 
     function up(ev) {

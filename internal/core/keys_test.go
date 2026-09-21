@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,90 @@ func TestTheSameKeyTwiceAppliesOnce(t *testing.T) {
 	}
 	if string(second.After) != string(first.After) {
 		t.Errorf("the replayed payload is %s, want %s", second.After, first.After)
+	}
+}
+
+func TestAReplayChecksTheOriginalPropositionAgain(t *testing.T) {
+	k, ada, _ := newKeyed(t)
+	ctx := context.Background()
+	if _, err := k.s.DB.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, auth.RoleEditor, ada.ID); err != nil {
+		t.Fatal(err)
+	}
+	makeProposition := func(title string) int64 {
+		t.Helper()
+		res, err := k.s.DB.ExecContext(ctx, `INSERT INTO propositions
+			(number, title, status, position, created_at)
+			VALUES ((SELECT coalesce(max(number), 0) + 1 FROM propositions), ?, 'idea', ?, 0)`, title, title)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := k.s.DB.ExecContext(ctx,
+			`INSERT INTO proposition_members (proposition_id, user_id) VALUES (?, ?)`, id, ada.ID); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	one, two := makeProposition("One"), makeProposition("Two")
+	write := func(ctx context.Context, proposition int64) (Event, error) {
+		return k.s.Do(ctx, ada, proposition, auth.CanEdit,
+			func(context.Context, *sql.Tx) (Change, error) {
+				return Change{Entity: "proposition", EntityID: proposition, Action: "edit",
+					Before: map[string]any{"title": "before"}, After: map[string]any{"title": "after"}}, nil
+			})
+	}
+
+	keyed, err := WithKey(ctx, "old-proposition")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := write(keyed, one); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.s.DB.ExecContext(ctx,
+		`DELETE FROM proposition_members WHERE proposition_id = ? AND user_id = ?`, one, ada.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := WithKey(ctx, "old-proposition")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := write(again, two); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("replaying an event from a proposition the actor left gave %v, want ErrForbidden", err)
+	}
+}
+
+func TestAReplayOfADetachedDeleteStillNeedsDeleteStanding(t *testing.T) {
+	k, ada, _ := newKeyed(t)
+	ctx := context.Background()
+	deleted := func(ctx context.Context, need string) (Event, error) {
+		return k.s.Do(ctx, ada, 0, need, func(context.Context, *sql.Tx) (Change, error) {
+			return Change{Entity: "proposition", EntityID: 7, Action: "delete",
+				Before: map[string]any{"id": 7}, Detached: true}, nil
+		})
+	}
+
+	keyed, err := WithKey(ctx, "owner-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deleted(keyed, auth.CanDelete); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.s.DB.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, auth.RoleEditor, ada.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := WithKey(ctx, "owner-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deleted(again, auth.CanEdit); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("replaying an owner delete after demotion gave %v, want ErrForbidden", err)
 	}
 }
 

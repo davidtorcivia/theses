@@ -43,40 +43,13 @@ func (f *fileAPI) addLink(w http.ResponseWriter, r *http.Request, a core.Actor) 
 	f.answerLink(w, r, a, e)
 }
 
-// editLink changes the fields the body names and leaves the rest as they were.
-// The command takes the whole set, because that is what a form posts, so the
-// row is read first and the body laid over it: a body naming one field is not a
-// way to clear the other five.
+// editLink changes only the fields the body names.
 func (f *fileAPI) editLink(w http.ResponseWriter, r *http.Request, a core.Actor) {
-	var in struct {
-		Title    *string `json:"title"`
-		Author   *string `json:"author"`
-		Year     *string `json:"year"`
-		Kind     *string `json:"kind"`
-		Note     *string `json:"note_md"`
-		Question *string `json:"question"`
-	}
+	var in files.LinkPatch
 	if !f.read(w, r, &in) {
 		return
 	}
-	was, err := f.svc.ReadLink(r.Context(), a, path(r, "id"))
-	if err != nil {
-		f.refuse(w, r, err)
-		return
-	}
-	edit := files.Edit{
-		Title: was.Title, Author: was.Author, Year: was.Year,
-		Kind: was.Kind, Note: was.Note, Question: some(was.Question),
-	}
-	for _, field := range []struct{ into, from *string }{
-		{&edit.Title, in.Title}, {&edit.Author, in.Author}, {&edit.Year, in.Year},
-		{&edit.Kind, in.Kind}, {&edit.Note, in.Note}, {&edit.Question, in.Question},
-	} {
-		if field.from != nil {
-			*field.into = *field.from
-		}
-	}
-	e, err := f.svc.EditLink(r.Context(), a, was.ID, edit)
+	e, err := f.svc.PatchLink(r.Context(), a, path(r, "id"), in)
 	if err != nil {
 		f.refuse(w, r, err)
 		return

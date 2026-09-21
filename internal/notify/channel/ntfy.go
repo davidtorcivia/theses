@@ -32,10 +32,6 @@ func (t Ntfy) Send(ctx context.Context, n Note) error {
 	// An account types this server, so it goes through the same check as a
 	// webhook: nothing else stops it naming an admin port on the box.
 	endpoint := strings.TrimSuffix(server, "/") + "/" + t.Topic
-	ctx, err := checkURL(ctx, "ntfy", endpoint, t.allowPrivate)
-	if err != nil {
-		return err
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(n.Body))
 	if err != nil {
 		return fmt.Errorf("ntfy: %w", err)
@@ -52,7 +48,7 @@ func (t Ntfy) Send(ctx context.Context, n Note) error {
 	if t.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+t.Token)
 	}
-	resp, err := client.Do(req)
+	resp, err := destinationClient(t.allowPrivate).Do(req)
 	if err != nil {
 		return fmt.Errorf("ntfy: %w", err)
 	}

@@ -17,6 +17,19 @@ let socket = null;
 let next = 1;
 let backoff = 500;
 const waiting = new Map();
+let streamProposition = 0;
+let streamSeq = null;
+let httpLive = false;
+let pollTimer = 0;
+let polling = false;
+
+function streamCursor() {
+  if (streamSeq === null || streamProposition !== state.open) {
+    streamProposition = state.open;
+    streamSeq = state.seq;
+  }
+  return streamSeq;
+}
 
 // reverts holds the function that puts a queued command's guess back, by the
 // outbox key it was filed under. A command that never went up has been drawn
@@ -85,6 +98,7 @@ export function connect() {
   // the network is back asks for one now, and either can arrive while the other
   // is already in the air.
   if (socket && socket.readyState !== WebSocket.CLOSED) return;
+  streamCursor();
   // A workspace with nothing in it still opens a socket, because creating the
   // first proposition goes through it.
   const url = new URL('/ws', location.href);
@@ -93,6 +107,9 @@ export function connect() {
 
   socket = new WebSocket(url);
   socket.addEventListener('open', async () => {
+    clearTimeout(pollTimer);
+    pollTimer = 0;
+    httpLive = false;
     backoff = 500;
     state.connected = true;
     emit();
@@ -116,7 +133,7 @@ export function connect() {
   });
   socket.addEventListener('message', (e) => receive(JSON.parse(e.data)));
   socket.addEventListener('close', () => {
-    state.connected = false;
+    state.connected = httpLive;
     caught = false;
     // A command that was in flight when the socket went is not lost: it goes to
     // the back of the outbox and replays with the rest. The server may have
@@ -125,17 +142,27 @@ export function connect() {
     // the name the first attempt used, and a server that has already done it
     // answers with what it did rather than doing it again.
     for (const [id, task] of waiting) {
+      if (task.transport !== 'ws') continue;
       waiting.delete(id);
       // A command this tab made goes to the back of the outbox and replays with
       // the rest. A command that was already being replayed out of the outbox is
       // still in it, so it is refused here and the drain leaves it where it is.
-      if (task.row) { task.queue(); task.resolve(null); } else { task.reject(new Offline()); }
+      if (task.row) {
+        task.queue().then((n) => {
+          if (n) task.resolve(null);
+          else { task.revert(); task.reject(new Offline()); }
+        });
+      } else {
+        task.reject(new Offline());
+      }
     }
     emit();
+    schedulePoll(0);
     stillSignedIn();
     setTimeout(connect, backoff);
     backoff = Math.min(backoff * 2, 15000);
   });
+  schedulePoll(2000);
 }
 
 function receive(m) {
@@ -249,7 +276,8 @@ const places = (people) => people.map((p) => {
 // as well as the socket's state, because a socket that has not noticed the
 // network is gone yet would swallow the command rather than queue it.
 function down() {
-  return !navigator.onLine || !socket || socket.readyState !== WebSocket.OPEN;
+  return !navigator.onLine
+    || ((!socket || socket.readyState !== WebSocket.OPEN) && !httpLive);
 }
 
 // send applies the command here, then either sends it or keeps it. It resolves
@@ -304,7 +332,8 @@ async function keep(row, key, revert) {
 
 function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
   return new Promise((resolve, reject) => {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    const ws = socket && socket.readyState === WebSocket.OPEN;
+    if (!ws && !httpLive) {
       if (revert) revert();
       reject(new Offline());
       return;
@@ -314,6 +343,7 @@ function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
       resolve,
       reject,
       row,
+      transport: ws ? 'ws' : 'http',
       revert: revert || (() => {}),
       // The socket going while this is in the air files it under the same name
       // it would have been queued under, so a command that must not fold over
@@ -323,9 +353,44 @@ function ship(cmd, args, revert, row, key, fold = target(cmd, args)) {
       // have applied it before the socket went, and nothing in the tab may now
       // treat it as a command that has not happened. It goes up again under its
       // own name, and the answer to that is what settles it.
-      queue: () => { if (row) offline.queue({ ...row, sending: true }, fold).then(count); },
+      queue: async () => {
+        if (!row) return 0;
+        const n = await offline.queue({ ...row, sending: true }, fold);
+        await count();
+        return n;
+      },
     });
-    socket.send(JSON.stringify({ id, cmd, key, args }));
+    const message = { id, cmd, key, args };
+    if (ws) {
+      socket.send(JSON.stringify(message));
+      return;
+    }
+    answered(api.post('/commands', message), replyWait).then(receive).catch(async (err) => {
+      const task = waiting.get(id);
+      if (!task) return;
+      waiting.delete(id);
+      if (err.status === 0 || err instanceof Offline) {
+        if (!task.row && socket && socket.readyState === WebSocket.OPEN) {
+          ship(cmd, args, null, null, key, fold).then(task.resolve, task.reject);
+          return;
+        }
+        httpLive = false;
+        state.connected = Boolean(socket && socket.readyState === WebSocket.OPEN);
+        if (!state.connected) caught = false;
+        if (task.row) {
+          const n = await task.queue();
+          if (n) task.resolve(null);
+          else { task.revert(); task.reject(new Offline()); }
+        } else {
+          task.reject(new Offline());
+        }
+        emit();
+        if (state.connected) replay(); else schedulePoll(2000);
+        return;
+      }
+      task.revert();
+      task.reject(err);
+    });
   });
 }
 
@@ -394,7 +459,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // worth trying again; everything else is the server's answer and stands.
 function transient(err) {
   if (err instanceof Conflict) return false;
-  if (err.status >= 500 || err.status === 401) return true;
+  if (err.status >= 500 || err.status === 401 || err.status === 429) return true;
   return /too many changes|wait a moment/i.test(err.message || '');
 }
 
@@ -503,6 +568,7 @@ function answered(promise, wait) {
 // socket, so the attempt this cuts in front of does nothing when it comes.
 addEventListener('online', () => {
   if (socket && socket.readyState === WebSocket.OPEN) { replay(); return; }
+  schedulePoll(0);
   // Never the first socket: start says which proposition it is for, and a page
   // that has not reached it yet is about to open one of its own.
   if (!socket) return;
@@ -517,6 +583,11 @@ addEventListener('online', () => {
 // what was in flight back in the outbox, forgets the read, and leaves the
 // reconnection to read the stream again over a socket that carries.
 addEventListener('offline', () => {
+  httpLive = false;
+  caught = false;
+  state.connected = false;
+  clearTimeout(pollTimer);
+  pollTimer = 0;
   if (socket) socket.close();
 });
 
@@ -720,26 +791,86 @@ function stillSignedIn() {
 // answering nothing would hold either of them for the life of the page, which
 // is the same thing answered guards every command against.
 //
-// Two of these can be in the air at once, one from each of those. Both ask from
-// the same sequence number, so the later but shorter answer can draw an older
-// row over a newer one, which the next event or reconnect puts right. Queueing
-// them behind one another was worse: one read that never settled took every
-// later one with it.
-async function catchUp() {
+// Only completed stream pages advance this cursor. A socket acknowledgment can
+// name a later event while earlier changes are still missing.
+const pollReplyWait = 30000;
+
+export async function catchUp(wait = false) {
   if (!state.open) return false;
+  const proposition = state.open;
+  let since = streamCursor();
+  const signal = AbortSignal.timeout?.(wait ? pollReplyWait : replyWait);
   try {
-    const res = await fetch(`/api/events?proposition=${state.open}&since=${state.seq}&wait=0`, {
-      headers: { Accept: 'application/json' },
-      // Optional because a browser without it is one that waits as it did
-      // before, which is the old behavior rather than a broken one.
-      signal: AbortSignal.timeout?.(replyWait),
-    });
-    if (!res.ok) return false;
-    const body = await res.json();
-    for (const ev of body.events || []) apply(ev);
-    return true;
+    for (;;) {
+      const res = await fetch(`/api/events?proposition=${proposition}&since=${since}&wait=${wait ? 1 : 0}`, {
+        headers: { Accept: 'application/json' }, signal,
+      });
+      if (!res.ok || state.open !== proposition) return false;
+      const body = await res.json();
+      const events = body.events || [];
+      let next = since;
+      for (const ev of events) {
+        apply(ev);
+        next = Math.max(next, ev.seq);
+      }
+      streamSeq = Math.max(streamSeq, next);
+      if (events.length < 200) return true;
+      if (next <= since) return false;
+      since = next;
+      wait = false;
+    }
   } catch {
     // Offline, or a read nobody answered in time. The next open tries again.
     return false;
   }
+}
+
+export async function fallbackOnce() {
+  if (!navigator.onLine || (socket && socket.readyState === WebSocket.OPEN)) return false;
+  let ok = false;
+  if (state.open) {
+    ok = await catchUp(httpLive);
+  } else {
+    try {
+      await answered(api.get('/search?q=&limit=1'), replyWait);
+      ok = true;
+    } catch {
+      ok = false;
+    }
+  }
+  if (!ok || (socket && socket.readyState === WebSocket.OPEN)) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      httpLive = false;
+      caught = false;
+      state.connected = false;
+      emit();
+    }
+    return false;
+  }
+  const cameBack = !httpLive;
+  httpLive = true;
+  caught = true;
+  state.connected = true;
+  if (state.fromCache) {
+    location.reload();
+    return true;
+  }
+  if (cameBack) {
+    emit();
+    retryMaterial();
+    replay();
+  }
+  return true;
+}
+
+function schedulePoll(delay) {
+  if (pollTimer || polling || !navigator.onLine
+      || (socket && socket.readyState === WebSocket.OPEN)) return;
+  pollTimer = setTimeout(async () => {
+    pollTimer = 0;
+    polling = true;
+    const ok = await fallbackOnce();
+    polling = false;
+    schedulePoll(ok && state.open ? 0 : 2000);
+  }, delay);
 }

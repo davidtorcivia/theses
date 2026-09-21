@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,8 @@ const (
 	ResetValidity  = time.Hour
 	APITokenPrefix = "thes_"
 )
+
+var ErrAPITokenInput = errors.New("invalid API token")
 
 // API token scopes.
 const (
@@ -99,13 +102,22 @@ func (a *Auth) CreatePasswordReset(ctx context.Context, userID int64) (string, e
 	return base64.RawURLEncoding.EncodeToString(token), nil
 }
 
-// UsePasswordReset spends a reset token and returns the user it belongs to.
-func (a *Auth) UsePasswordReset(ctx context.Context, token string) (*store.User, error) {
+// PasswordResetUser validates a reset token without spending it. The reset
+// form calls this before bcrypt so a made-up token cannot buy expensive work.
+func (a *Auth) PasswordResetUser(ctx context.Context, token string) (*store.User, error) {
+	r, err := a.passwordReset(ctx, a.db, token)
+	if err != nil {
+		return nil, err
+	}
+	return store.UserByID(ctx, a.db, r.UserID)
+}
+
+func (a *Auth) passwordReset(ctx context.Context, q store.Querier, token string) (*store.PasswordReset, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
 		return nil, ErrTokenInvalid
 	}
-	r, err := store.PasswordResetByTokenHash(ctx, a.db, a.mac(raw))
+	r, err := store.PasswordResetByTokenHash(ctx, q, a.mac(raw))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, ErrTokenInvalid
 	}
@@ -118,27 +130,58 @@ func (a *Auth) UsePasswordReset(ctx context.Context, token string) (*store.User,
 	if r.ExpiresAt <= a.Now().Unix() {
 		return nil, ErrTokenExpired
 	}
-	spent, err := store.UsePasswordReset(ctx, a.db, r.ID)
+	return r, nil
+}
+
+// ResetPassword atomically spends the token, changes the password, records the
+// event and invalidates every existing browser session.
+func (a *Auth) ResetPassword(ctx context.Context, token, hash string) error {
+	tx, err := a.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return err
+	}
+	defer tx.Rollback()
+	r, err := a.passwordReset(ctx, tx, token)
+	if err != nil {
+		return err
+	}
+	spent, err := store.UsePasswordReset(ctx, tx, r.ID)
+	if err != nil {
+		return err
 	}
 	if !spent {
-		return nil, ErrTokenInvalid
+		return ErrTokenInvalid
 	}
-	return store.UserByID(ctx, a.db, r.UserID)
+	if err := store.SetPasswordHash(ctx, tx, r.UserID, hash); err != nil {
+		return err
+	}
+	id := strconv.FormatInt(r.UserID, 10)
+	if err := store.InsertActivity(ctx, tx, "user", id, "", "user", id, "password-reset", "", ""); err != nil {
+		return err
+	}
+	if err := store.BumpSessionEpoch(ctx, tx, r.UserID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // CreateAPIToken returns the clear token once; only its HMAC is stored.
 func (a *Auth) CreateAPIToken(ctx context.Context, userID int64, name string, scopes []string) (string, error) {
+	return a.CreateAPITokenWith(ctx, a.db, userID, name, scopes)
+}
+
+// CreateAPITokenWith is CreateAPIToken on a caller's transaction, so the
+// one-time credential and its activity row can commit together.
+func (a *Auth) CreateAPITokenWith(ctx context.Context, q store.Querier, userID int64, name string, scopes []string) (string, error) {
 	if strings.TrimSpace(name) == "" {
-		return "", fmt.Errorf("a token needs a name")
+		return "", fmt.Errorf("%w: a token needs a name", ErrAPITokenInput)
 	}
 	if len(scopes) == 0 {
-		return "", fmt.Errorf("a token needs at least one scope")
+		return "", fmt.Errorf("%w: a token needs at least one scope", ErrAPITokenInput)
 	}
 	for _, s := range scopes {
 		if !validScopes[s] {
-			return "", fmt.Errorf("%q is not a scope", s)
+			return "", fmt.Errorf("%w: %q is not a scope", ErrAPITokenInput, s)
 		}
 	}
 	token, err := randomToken()
@@ -146,7 +189,7 @@ func (a *Auth) CreateAPIToken(ctx context.Context, userID int64, name string, sc
 		return "", err
 	}
 	clear := APITokenPrefix + base64.RawURLEncoding.EncodeToString(token)
-	if _, err := store.CreateAPIToken(ctx, a.db, userID, name, a.mac([]byte(clear)), strings.Join(scopes, " ")); err != nil {
+	if _, err := store.CreateAPIToken(ctx, q, userID, name, a.mac([]byte(clear)), strings.Join(scopes, " ")); err != nil {
 		return "", fmt.Errorf("create api token: %w", err)
 	}
 	return clear, nil

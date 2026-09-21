@@ -11,12 +11,17 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"path"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 )
 
 // put uploads bytes to a presigned URL the way the browser does, with the
@@ -80,11 +85,139 @@ func TestSmallUploadGoesInOnePut(t *testing.T) {
 	if !row.Ready() {
 		t.Fatalf("state %q after complete", row.State)
 	}
+	if row.ObjectKey == up.File.ObjectKey {
+		t.Fatal("ready file still uses the writable upload key")
+	}
+	put(t, up.URL, up.Headers, bytes.Repeat([]byte("x"), len(body)))
+	reader, err := f.bucket.Get(ctx, row.ObjectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("expired workflow changed ready bytes: %q, %v", got, err)
+	}
+	f.abandon(ctx, up.File)
+	if current, err := GetFile(ctx, f.db, row.ID); err != nil || !current.Ready() {
+		t.Fatalf("stale cleanup removed the ready file: %+v, %v", current, err)
+	}
 	if _, err := f.DownloadURL(ctx, f.who["guest"], row.ID); err != nil {
 		t.Fatalf("a member may download: %v", err)
 	}
 	if _, err := f.DownloadURL(ctx, f.who["outsider"], row.ID); !errors.Is(err, core.ErrNotFound) {
 		t.Fatalf("a stranger downloading: %v, want not found", err)
+	}
+}
+
+func TestConcurrentSmallCompletionsKeepOnlyTheWinningCopy(t *testing.T) {
+	f := setup(t)
+	backend := s3mem.New()
+	if err := backend.CreateBucket("theses"); err != nil {
+		t.Fatal(err)
+	}
+	fake := gofakes3.New(backend).Server()
+	ready := make(chan struct{})
+	var copies atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "" {
+			if copies.Add(1) == 2 {
+				close(ready)
+			}
+			select {
+			case <-ready:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	bucket, err := blob.New(blob.Config{
+		Provider: "s3", Endpoint: srv.URL, Region: "us-east-1",
+		Bucket: "theses", AccessKey: "key", SecretKey: "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.bucket = bucket
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body := []byte("tide tables\n")
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "tides.txt", "Documents", int64(len(body)), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.URL, up.Headers, body)
+
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0)
+			results <- err
+		}()
+	}
+	var succeeded, refused int
+	for range 2 {
+		var result error
+		select {
+		case result = <-results:
+		case <-ctx.Done():
+			t.Fatal("concurrent completions did not finish")
+		}
+		switch err := result; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrState):
+			refused++
+		default:
+			t.Fatalf("Complete: %v", err)
+		}
+	}
+	if succeeded != 1 || refused != 1 || copies.Load() != 2 {
+		t.Fatalf("completions: succeeded=%d refused=%d copies=%d", succeeded, refused, copies.Load())
+	}
+	row, err := GetFile(ctx, f.db, up.File.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := bucket.List(ctx, path.Dir(up.File.ObjectKey)+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 1 || objects[0].Key != row.ObjectKey {
+		t.Fatalf("objects after concurrent completion: %+v; winner %q", objects, row.ObjectKey)
+	}
+}
+
+func TestFailedSmallCompletionRemovesOnlyItsCopy(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	body := []byte("tide tables\n")
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "tides.txt", "Documents", int64(len(body)), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.URL, up.Headers, body)
+	if _, err := f.db.ExecContext(ctx, `CREATE TRIGGER fail_file_complete
+		BEFORE INSERT ON activity WHEN NEW.entity = 'file' AND NEW.action = 'complete'
+		BEGIN SELECT RAISE(FAIL, 'fail completion'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0); err == nil {
+		t.Fatal("Complete succeeded despite the failing activity write")
+	}
+	row, err := GetFile(ctx, f.db, up.File.ID)
+	if err != nil || row.State != stateUploading || row.ObjectKey != up.File.ObjectKey {
+		t.Fatalf("row after failed completion: %+v, %v", row, err)
+	}
+	objects, err := f.bucket.List(ctx, path.Dir(up.File.ObjectKey)+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 1 || objects[0].Key != up.File.ObjectKey {
+		t.Fatalf("objects after failed completion: %+v", objects)
 	}
 }
 
@@ -902,5 +1035,168 @@ func TestAKeyedCreateSentTwiceSignsOneSmallFile(t *testing.T) {
 	}
 	if files != 1 {
 		t.Errorf("%d file rows, want 1", files)
+	}
+}
+
+func TestUploadReplayUsesCurrentFile(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	keyed := func() context.Context {
+		ctx, err := core.WithKey(ctx, "upload-retry")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ctx
+	}
+	first, err := f.Create(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.Create(keyed(), f.who["editor"], f.prop, "changed.wav", Recordings, blob.PartSize+1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.URL == "" || again.File.ID != first.File.ID || again.Headers["Content-Length"] != "3" {
+		t.Fatalf("replay changed upload parameters: %+v", again)
+	}
+	put(t, again.URL, again.Headers, []byte("abc"))
+	if _, err := f.Complete(ctx, f.who["editor"], first.File.ID, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Create(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, 0); !errors.Is(err, ErrState) {
+		t.Fatalf("ready file can be overwritten through replay: %v", err)
+	}
+	if _, err := f.Delete(ctx, f.who["editor"], first.File.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Create(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, 0); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("deleted file can be recreated in storage: %v", err)
+	}
+}
+
+func TestUploadReplayChecksOriginalMembership(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	keyed := func() context.Context {
+		ctx, err := core.WithKey(ctx, "upload-access")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ctx
+	}
+	if _, err := f.Create(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.board.AddMember(ctx, f.who["owner"], f.other, f.who["editor"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.board.RemoveMember(ctx, f.who["owner"], f.prop, f.who["editor"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Create(keyed(), f.who["editor"], f.other, "notes.txt", "Documents", 3, 0); !errors.Is(err, core.ErrForbidden) {
+		t.Fatalf("replay signs a file after membership was removed: %v", err)
+	}
+}
+
+func TestCompleteResumesAfterMultipartWasAssembled(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, blob.PartSize+1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.Parts[0].URL, nil, bytes.Repeat([]byte("a"), blob.PartSize))
+	put(t, up.Parts[1].URL, nil, []byte("b"))
+	_, multipart, err := f.Service.upload(ctx, up.File.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts, err := f.second.ListParts(ctx, up.File.ObjectKey, multipart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.second.CompleteMultipart(ctx, up.File.ObjectKey, multipart, parts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0); err != nil {
+		t.Fatalf("retry after successful assembly: %v", err)
+	}
+}
+
+func TestFolderMoveDistinguishesStorageEndpoints(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	row := f.upload(t, "notes.txt", "Documents", []byte("abc"))
+	// A different S3 service can have a bucket with the same name.
+	f.second, _ = buckets(t)
+	if _, err := f.EditFile(ctx, f.who["editor"], row.ID, row.Name, Recordings); !errors.Is(err, ErrCrossBucket) {
+		t.Fatalf("move to the same bucket name on another endpoint: %v", err)
+	}
+	f.second = f.bucket
+	if _, err := f.EditFile(ctx, f.who["editor"], row.ID, row.Name, Recordings); err != nil {
+		t.Fatalf("move between folders sharing a bucket: %v", err)
+	}
+}
+
+func TestSmallUploadCanResumeAndPatchOnlyNamedFields(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	up, err := f.Create(ctx, f.who["editor"], f.prop, "original.txt", "Documents", 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := f.Parts(ctx, f.who["editor"], up.File.ID, 0)
+	if err != nil || resumed.URL == "" {
+		t.Fatalf("resume: %+v, %v", resumed, err)
+	}
+	put(t, resumed.URL, resumed.Headers, []byte("abc"))
+	if _, err := f.Complete(ctx, f.who["editor"], up.File.ID, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	name, folder := "renamed.txt", "Reading"
+	if _, err := f.PatchFile(ctx, f.who["editor"], up.File.ID, &name, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.PatchFile(ctx, f.who["editor"], up.File.ID, nil, &folder); err != nil {
+		t.Fatal(err)
+	}
+	row, err := GetFile(ctx, f.db, up.File.ID)
+	if err != nil || row.Name != name || row.Folder != folder {
+		t.Fatalf("patch: %+v, %v", row, err)
+	}
+}
+
+func TestConcurrentUploadRetriesStartOneMultipart(t *testing.T) {
+	f := setup(t)
+	const attempts = 12
+	start := make(chan struct{})
+	answers := make(chan error, attempts)
+	for range attempts {
+		go func() {
+			<-start
+			ctx, err := core.WithKey(context.Background(), "same-upload")
+			if err == nil {
+				_, err = f.Create(ctx, f.who["editor"], f.prop, "session.wav", Recordings, blob.PartSize+1, 0)
+			}
+			answers <- err
+		}()
+	}
+	close(start)
+	for range attempts {
+		select {
+		case err := <-answers:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("concurrent upload retries did not finish")
+		}
+	}
+	var count int
+	if err := f.db.QueryRowContext(context.Background(), `SELECT count(*) FROM uploads`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("%d multipart uploads started for one command", count)
 	}
 }

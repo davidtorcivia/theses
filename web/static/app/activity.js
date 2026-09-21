@@ -6,16 +6,21 @@
 // thing: one column beside the work, closed with Escape.
 
 import { el, initials, say } from './dom.js';
-import { state, user, emit, canEdit } from './state.js';
+import { state, user, emit, canEdit, unresolvedCard } from './state.js';
 import { send, again, letGo, resend, Conflict } from './net.js';
 import { gone } from './docs.js';
 import * as api from './api.js';
 
 export function openPanel() {
+  if (unresolvedCard(state.openCard)) {
+    say('Choose keep mine or take theirs before opening activity.');
+    return false;
+  }
   state.panel = true;
   state.openCard = state.openLink = state.openFile = null;
   seen = -1;
   emit();
+  return true;
 }
 
 export function closePanel() {
@@ -142,8 +147,12 @@ function takeRowBack(row) {
   return el('button', {
     class: 'lnk quiet', type: 'button', text: 'undo',
     onclick: (e) => {
-      e.currentTarget.disabled = true;
-      send('undo', { activity: row.seq }).catch((err) => say(err.message));
+      const button = e.currentTarget;
+      button.disabled = true;
+      send('undo', { activity: row.seq }).catch((err) => {
+        say(err.message);
+        button.disabled = false;
+      });
     },
   });
 }
@@ -185,7 +194,8 @@ function takeRunBack(group) {
   return el('button', {
     class: 'lnk quiet', type: 'button', text: 'undo',
     onclick: (e) => {
-      e.currentTarget.disabled = true;
+      const button = e.currentTarget;
+      button.disabled = true;
       // whole, because that text was stored exactly as it was typed once
       // already, edges and blank lines included, and putting it back is putting
       // back what was there rather than writing something new.
@@ -197,9 +207,12 @@ function takeRunBack(group) {
       // any other set made from a version somebody has moved past.
       send('block.set', { block: last.entity_id, base: last.after.version, text: was, whole: true },
         state.open, { fold: '' })
-        .catch((err) => say(err instanceof Conflict
-          ? 'That block has changed too much since for those saves to be taken back.'
-          : err.message));
+        .catch((err) => {
+          say(err instanceof Conflict
+            ? 'That block has changed too much since for those saves to be taken back.'
+            : err.message);
+          button.disabled = false;
+        });
     },
   });
 }

@@ -23,10 +23,6 @@ type Webhook struct {
 }
 
 func (w Webhook) Send(ctx context.Context, n Note) error {
-	ctx, err := checkURL(ctx, "webhook", w.URL, w.allowPrivate)
-	if err != nil {
-		return err
-	}
 	event := n.Event
 	if event == "" {
 		event = "notification"
@@ -54,7 +50,7 @@ func (w Webhook) Send(ctx context.Context, n Note) error {
 		mac.Write(body)
 		req.Header.Set("X-Theses-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
-	resp, err := client.Do(req)
+	resp, err := destinationClient(w.allowPrivate).Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook: %w", err)
 	}

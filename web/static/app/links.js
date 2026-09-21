@@ -3,10 +3,15 @@
 // copy the citation.
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
-import { state, user, emit, hold, canEdit, material } from './state.js';
-import { send, queueLink } from './net.js';
+import { state, user, emit, hold, canEdit, material, unresolvedCard } from './state.js';
+import { send, queueLink, where } from './net.js';
 import { anchorOf } from './docs.js';
+import { openCard } from './drawer.js';
+import { activate } from './keys.js';
 import * as api from './api.js';
+
+let focusNext = 0;
+let returnTo = 0;
 
 export function renderLinks(pane) {
   material().catch((err) => say(err.message));
@@ -72,9 +77,7 @@ function addLine() {
       // free, because every payload is the whole row.
       const at = state.links.findIndex((l) => l.id === link.id);
       if (at < 0) state.links.unshift(link); else state.links[at] = link;
-      state.openLink = link.id;
-      state.openCard = state.openFile = null;
-      emit();
+      openLink(link.id);
     } catch (err) {
       say(err.message);
       field.disabled = false;
@@ -141,6 +144,7 @@ function row(link) {
     if (e.target.tagName === 'A') return;
     openLink(link.id);
   });
+  activate(li, () => openLink(link.id));
   return li;
 }
 
@@ -195,10 +199,17 @@ export function when(unix) {
 }
 
 export function openLink(id) {
+  if (unresolvedCard(state.openCard)) {
+    say('Choose keep mine or take theirs before opening a link.');
+    return false;
+  }
   state.openLink = id;
   state.openCard = null;
   state.openFile = null;
+  focusNext = id;
+  where('');
   emit();
+  return true;
 }
 
 // redraw keeps the caret where it was: the pane is rebuilt from scratch on
@@ -228,7 +239,7 @@ export function renderLinkDrawer(drawer) {
 
   const heading = el('h2', { text: link.title || shortURL(link.url), spellcheck: 'false' });
   if (canEdit()) {
-    heading.addEventListener('click', () => {
+    const edit = () => {
       if (heading.isContentEditable) return;
       hold(true);
       editable(heading, link.title, (value) => {
@@ -236,8 +247,10 @@ export function renderLinkDrawer(drawer) {
         if (value === null || value === link.title) { emit(); return; }
         save(link, { title: value });
       });
-    });
-  }
+    };
+    heading.addEventListener('click', edit);
+    activate(heading, edit);
+  } else heading.tabIndex = -1;
   drawer.append(heading);
   drawer.append(el('p', { class: 'src' },
     el('a', { href: link.url, target: '_blank', rel: 'noopener noreferrer', text: host(link.url) + ' ↗' })));
@@ -290,12 +303,22 @@ export function renderLinkDrawer(drawer) {
     }));
   }
   drawer.append(buttons);
+  if (focusNext === link.id) {
+    focusNext = 0;
+    queueMicrotask(() => heading.focus());
+  }
   return true;
 }
 
 function close() {
+  returnTo = state.openLink;
   state.openLink = null;
   emit();
+  requestAnimationFrame(() => {
+    const row = returnTo && document.querySelector(`#llist .row[data-id="${returnTo}"]`);
+    returnTo = 0;
+    if (row) row.focus();
+  });
 }
 
 // sendToDoc puts the citation at the end of one of the proposition's documents.
@@ -358,7 +381,7 @@ function props(link) {
 function field(link, name, value, placeholder) {
   const dd = el('dd', {}, value ? document.createTextNode(value) : el('span', { class: 'dim', text: placeholder }));
   if (!canEdit()) return dd;
-  dd.addEventListener('click', () => {
+  const edit = () => {
     if (dd.isContentEditable) return;
     hold(true);
     clear(dd);
@@ -367,7 +390,9 @@ function field(link, name, value, placeholder) {
       if (typed === null || typed === value) { emit(); return; }
       save(link, { [name]: typed });
     });
-  });
+  };
+  dd.addEventListener('click', edit);
+  activate(dd, edit);
   return dd;
 }
 
@@ -378,7 +403,7 @@ function note(link) {
     text: link.note_md,
   });
   if (!canEdit()) return p;
-  p.addEventListener('click', () => {
+  const edit = () => {
     if (p.isContentEditable) return;
     hold(true);
     editable(p, link.note_md, (value) => {
@@ -386,7 +411,9 @@ function note(link) {
       if (value === null || value === link.note_md) { emit(); return; }
       save(link, { note_md: value });
     });
-  });
+  };
+  p.addEventListener('click', edit);
+  activate(p, edit);
   return p;
 }
 
@@ -401,7 +428,7 @@ function usedIn(link) {
     list.append(el('li', {},
       el('a', {
         href: '#board', text: card.title,
-        onclick: (e) => { e.preventDefault(); location.hash = 'board'; },
+        onclick: (e) => { e.preventDefault(); location.hash = 'board'; openCard(join.card_id); },
       }),
       canEdit() ? el('span', { class: 'dim', text: ' · ' }) : null,
       canEdit() ? el('button', {
@@ -421,16 +448,12 @@ async function detach(card, link) {
   }
 }
 
-// save writes one or more fields. Every field the row has goes with it, because
-// the command takes the whole set: sending one would clear the rest.
+// save writes only the fields that changed. The route patches each field in
+// place, so sending an older copy of the rest could overwrite somebody else's
+// edit made while this drawer was open.
 async function save(link, change) {
-  const body = {
-    title: link.title, author: link.author, year: link.year,
-    kind: link.kind, note_md: link.note_md, question: link.question || '',
-    ...change,
-  };
   try {
-    apply(await api.patch('/links/' + link.id, body));
+    apply(await api.patch('/links/' + link.id, change));
   } catch (err) {
     say(err.message);
   }

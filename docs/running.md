@@ -55,6 +55,13 @@ and any client could choose its own rate limit bucket.
 
 ## Local development
 
+Pending database migrations run at startup. Migration `005_email_nocase.sql`
+makes nonempty email addresses unique without regard to ASCII case and allows
+multiple accounts with no email address. Existing case-variant duplicates make
+that migration roll back and startup stop; resolve those account addresses in
+the previous version before upgrading. Existing user IDs and their related
+records are preserved.
+
 ```sh
 cp .env.example .env
 set -a; . ./.env; set +a

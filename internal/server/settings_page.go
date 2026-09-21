@@ -477,18 +477,20 @@ func (s *Server) envRows() []envRow {
 func (s *Server) postSettings(w http.ResponseWriter, r *http.Request) {
 	me := userOf(r)
 	section := r.PostFormValue("section")
+	values := map[string][]string{}
 	for _, d := range settings.Registry {
-		values, ok := r.PostForm[d.Key]
+		raw, ok := r.PostForm[d.Key]
 		if !ok {
 			continue
 		}
-		if d.Secret && strings.TrimSpace(strings.Join(values, "")) == "" {
+		if d.Secret && strings.TrimSpace(strings.Join(raw, "")) == "" {
 			continue // an empty secret field means keep what is stored
 		}
-		if err := s.settings.Set(r.Context(), d.Key, values, me.ID); err != nil {
-			s.back(w, r, settingsTo(section, false), map[string]any{"Error": err.Error()})
-			return
-		}
+		values[d.Key] = raw
+	}
+	if err := s.settings.SetManyAs(r.Context(), values, settings.User(me.ID)); err != nil {
+		s.back(w, r, settingsTo(section, false), map[string]any{"Error": err.Error()})
+		return
 	}
 	http.Redirect(w, r, settingsTo(section, true), http.StatusSeeOther)
 }
@@ -836,12 +838,18 @@ func (s *Server) logInvite(who string) {
 
 func (s *Server) postTokenCreate(w http.ResponseWriter, r *http.Request) {
 	scopes := strings.Fields(r.PostFormValue("scopes"))
-	token, err := s.auth.CreateAPIToken(r.Context(), userOf(r).ID, strings.TrimSpace(r.PostFormValue("name")), scopes)
+	name := strings.TrimSpace(r.PostFormValue("name"))
+	var token string
+	err := s.write(r, "api_token", name, "create", "", strings.Join(scopes, " "), func(q store.Querier) error {
+		var err error
+		token, err = s.auth.CreateAPITokenWith(r.Context(), q, userOf(r).ID, name, scopes)
+		return err
+	})
 	if err != nil {
-		s.back(w, r, "/settings#tokens", map[string]any{"Error": err.Error()})
-		return
-	}
-	if err := s.activity(r.Context(), userOf(r).ID, "api_token", r.PostFormValue("name"), "create", "", r.PostFormValue("scopes")); err != nil {
+		if errors.Is(err, auth.ErrAPITokenInput) {
+			s.back(w, r, "/settings#tokens", map[string]any{"Error": err.Error()})
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}

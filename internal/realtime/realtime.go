@@ -326,15 +326,24 @@ func (c *client) wants(e core.Event) bool {
 	return c.canRead(e.Proposition)
 }
 
-// forward carries the bus to one tab. A drop means this tab's view has a hole
-// in it, and it is told so there and then: at teardown the socket is already
-// gone and the frame goes nowhere.
+// forward carries the bus to one tab. Reconnecting after a drop reloads both
+// missed rows and the memberships that decide which rows it may receive.
 func (c *client) forward(sub *core.Subscription) {
-	var dropped int64
 	for e := range sub.C {
-		if d := sub.Dropped(); d > dropped {
-			dropped = d
-			c.send(message{Type: "gap"})
+		if sub.Dropped() > 0 {
+			// A dropped membership event can leave cached authorization too wide;
+			// reconnecting rebuilds it before another event is considered.
+			c.close()
+			return
+		}
+		if e.Entity == "proposition" && e.Action == "delete" {
+			// Send the deletion before clearing its id; any replacement with that id
+			// then needs membership of its own.
+			if c.wants(e) {
+				c.send(message{Type: "event", Event: &e})
+			}
+			c.membership(e)
+			continue
 		}
 		c.membership(e)
 		if c.wants(e) {
@@ -357,6 +366,16 @@ func (c *client) membership(e core.Event) {
 		c.mu.Lock()
 		c.member[e.Proposition] = true
 		c.mu.Unlock()
+		return
+	}
+	if e.Entity == "proposition" && e.Action == "delete" {
+		c.mu.Lock()
+		delete(c.member, e.Proposition)
+		owner := c.owner
+		c.mu.Unlock()
+		if !owner && e.Proposition == c.proposition {
+			c.close()
+		}
 		return
 	}
 	if e.Entity != "member" || e.EntityID != c.user.ID {
@@ -459,7 +478,9 @@ func (c *client) send(v any) {
 func (c *client) close() {
 	c.closeOnce.Do(func() {
 		close(c.done)
-		c.ws.Close()
+		if c.ws != nil {
+			c.ws.Close()
+		}
 	})
 }
 

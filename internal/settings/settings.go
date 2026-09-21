@@ -25,6 +25,7 @@ type Settings struct {
 	db   *store.DB
 	aead cipher.AEAD
 
+	writeMu sync.Mutex
 	mu      sync.RWMutex
 	values  map[string]any  // non-secret values that have been set
 	present map[string]bool // every key that has a row, secrets included
@@ -56,6 +57,9 @@ func Open(ctx context.Context, db *store.DB, secretKey []byte) (*Settings, error
 func (s *Settings) Reload(ctx context.Context) error { return s.reload(ctx) }
 
 func (s *Settings) reload(ctx context.Context) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value_json, secret FROM settings`)
 	if err != nil {
 		return fmt.Errorf("read settings: %w", err)
@@ -211,78 +215,116 @@ func (s *Settings) Set(ctx context.Context, key string, values []string, actorID
 // SetAs is Set for a change that is not a person at a form: the API and MCP
 // record the token or the client that made it.
 func (s *Settings) SetAs(ctx context.Context, key string, values []string, actor Actor) error {
-	def, ok := Lookup(key)
-	if !ok {
-		return fmt.Errorf("settings: unknown key %s", key)
-	}
+	return s.SetManyAs(ctx, map[string][]string{key: values}, actor)
+}
 
-	parsed, err := parse(def, values)
-	if err != nil {
-		return err
-	}
+type prepared struct {
+	def           Def
+	parsed        any
+	stored, after string
+}
 
-	stored, after := "", ""
-	if def.Secret {
-		secret := parsed.(string)
-		if secret == "" {
-			return fmt.Errorf("%s: cannot be blanked; leave the field empty to keep the stored value", def.Label)
+// SetManyAs validates every value before writing any of them, then stores the
+// rows and their activity together. Registry order makes the activity stable.
+func (s *Settings) SetManyAs(ctx context.Context, values map[string][]string, actor Actor) error {
+	ready := make([]prepared, 0, len(values))
+	seen := 0
+	for _, def := range Registry {
+		raw, ok := values[def.Key]
+		if !ok {
+			continue
 		}
-		if stored, err = s.Seal(key, secret); err != nil {
+		seen++
+		p, err := s.prepare(def, raw, actor)
+		if err != nil {
 			return err
 		}
-		after = `{"set":true}`
-	} else {
-		b, err := json.Marshal(parsed)
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrStorage, err)
-		}
-		stored, after = string(b), string(b)
+		ready = append(ready, p)
 	}
-
-	// The row and the cache are written under one lock, so that two writers of
-	// the same key cannot commit in one order and update the cache in the other
-	// and leave the two disagreeing. Writes are rare and readers hold the lock
-	// for a map lookup, so the wait costs nothing worth measuring, and no caller
-	// reads a setting while holding a database connection, which is what could
-	// turn this into a deadlock on the pool.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	before := ""
-	if old, err := store.GetSetting(ctx, s.db, key); err == nil {
-		if def.Secret {
-			before = `{"set":true}`
-		} else {
-			if old.ValueJSON == stored {
-				return nil // saving a form leaves most fields as they were
+	if seen != len(values) {
+		for key := range values {
+			if _, ok := Lookup(key); !ok {
+				return fmt.Errorf("settings: unknown key %s", key)
 			}
-			before = old.ValueJSON
 		}
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("%w: read %s: %w", ErrStorage, key, err)
+	}
+	if len(ready) == 0 {
+		return nil
 	}
 
+	// Keep writers and reloads in database/cache order without holding the cache
+	// lock while SQLite may be waiting for another transaction.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 	defer tx.Rollback()
-	if err := store.PutSetting(ctx, tx, key, stored, def.Secret, actor.UserID); err != nil {
-		return fmt.Errorf("%w: save %s: %w", ErrStorage, key, err)
-	}
-	if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID, actor.Via,
-		"setting", key, "set", before, after); err != nil {
-		return fmt.Errorf("%w: %w", ErrStorage, err)
+	applied := make([]prepared, 0, len(ready))
+	for _, p := range ready {
+		before := ""
+		if old, err := store.GetSetting(ctx, tx, p.def.Key); err == nil {
+			if p.def.Secret {
+				before = `{"set":true}`
+			} else {
+				if old.ValueJSON == p.stored {
+					continue
+				}
+				before = old.ValueJSON
+			}
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: read %s: %w", ErrStorage, p.def.Key, err)
+		}
+		if err := store.PutSetting(ctx, tx, p.def.Key, p.stored, p.def.Secret, actor.UserID); err != nil {
+			return fmt.Errorf("%w: save %s: %w", ErrStorage, p.def.Key, err)
+		}
+		if err := store.InsertActivity(ctx, tx, actor.Kind, actor.ID, actor.Via,
+			"setting", p.def.Key, "set", before, p.after); err != nil {
+			return fmt.Errorf("%w: %w", ErrStorage, err)
+		}
+		applied = append(applied, p)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
-
-	s.present[key] = true
-	if !def.Secret {
-		s.values[key] = parsed
+	s.mu.Lock()
+	for _, p := range applied {
+		s.present[p.def.Key] = true
+		if !p.def.Secret {
+			s.values[p.def.Key] = p.parsed
+		}
 	}
+	s.mu.Unlock()
 	return nil
+}
+
+func (s *Settings) prepare(def Def, values []string, actor Actor) (prepared, error) {
+	if def.Internal && actor.Kind != "system" {
+		return prepared{}, fmt.Errorf("%s is maintained by the system", def.Label)
+	}
+	parsed, err := parse(def, values)
+	if err != nil {
+		return prepared{}, err
+	}
+	p := prepared{def: def, parsed: parsed}
+	if def.Secret {
+		secret := parsed.(string)
+		if secret == "" {
+			return prepared{}, fmt.Errorf("%s: cannot be blanked; leave the field empty to keep the stored value", def.Label)
+		}
+		if p.stored, err = s.Seal(def.Key, secret); err != nil {
+			return prepared{}, err
+		}
+		p.after = `{"set":true}`
+		return p, nil
+	}
+	b, err := json.Marshal(parsed)
+	if err != nil {
+		return prepared{}, fmt.Errorf("%w: %w", ErrStorage, err)
+	}
+	p.stored, p.after = string(b), string(b)
+	return p, nil
 }
 
 func parse(def Def, values []string) (any, error) {

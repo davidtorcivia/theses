@@ -205,6 +205,7 @@ var errorPages = map[int]struct {
 }{
 	http.StatusNotFound:              {code: "404", headline: "Not found.", actText: "Sign in", art: []string{"22"}},
 	http.StatusForbidden:             {code: "403", headline: "No access.", actText: "Sign in as someone else", art: []string{"04"}},
+	http.StatusConflict:              {code: "409", headline: "That account already exists.", actText: "Sign in", art: []string{"22"}},
 	http.StatusRequestEntityTooLarge: {code: "413", headline: "That was too large.", actText: "Try again", art: []string{"13"}, retry: true},
 	http.StatusInternalServerError:   {code: "500", headline: "Something broke.", actText: "Try again", art: []string{"10"}, retry: true},
 }
@@ -279,7 +280,7 @@ func (s *Server) restoringPage(w http.ResponseWriter, r *http.Request) {
 // same 500 page as any other error page, and falls back to a static string only
 // when that template will not render either.
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
-	s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+	s.log.Error("request failed", "method", r.Method, "path", logPath(r), "err", err)
 	// Not signedIn, whatever the cookie says: the action on 500 is to try the
 	// same address again, and asking the database that has just failed who this
 	// is would only fail again.

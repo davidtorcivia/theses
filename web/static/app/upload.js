@@ -1,34 +1,79 @@
 // The upload. Bytes go from the browser to the bucket and never through the
 // app: the server hands out presigned URLs and is told afterwards. What is in
-// flight is kept in IndexedDB keyed by the file id, so a reload picks up where
-// it left off by asking the server which parts the bucket is still missing.
+// flight is kept in IndexedDB keyed by the file id, so a reload can ask for the
+// same file again and pick up where the bucket stopped.
 
 import * as api from './api.js';
 import * as offline from './offline.js';
 
-// remember and forget keep the note of what is in flight, in the same database
-// as the outbox and the cached proposition. The file handle itself is stored: a
-// browser keeps a File across a reload as long as the file on disk has not
-// changed, which is what makes a resume possible without asking the person to
-// find it again. A browser with storage blocked answers nothing and the upload
-// runs without the resume.
+// IndexedDB gets only small metadata. Storing the File itself can consume the
+// site's whole quota before the first byte reaches the bucket. The live File
+// stays in memory for automatic retries in this tab; after a reload the person
+// is asked to choose it again.
 export const remember = offline.remember;
 export const forget = offline.forget;
-export const pending = offline.uploads;
+const handles = new Map();
+const newKey = () => crypto.randomUUID ? crypto.randomUUID()
+  : [...crypto.getRandomValues(new Uint8Array(16))]
+    .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+const note = (file) => ({
+  name: file.name,
+  size: file.size,
+  type: file.type || '',
+  last_modified: file.lastModified || 0,
+});
+
+const withoutHandle = (row) => {
+  const clean = { ...row };
+  delete clean.handle;
+  return clean;
+};
+
+export async function pending() {
+  const rows = await offline.uploads();
+  return rows.map((row) => {
+    // Read uploads written by the previous release once, then replace their
+    // large stored File with metadata when they next resume.
+    if (row.handle) handles.set(row.file, row.handle);
+    return { ...row, handle: row.handle || handles.get(row.file) || null };
+  });
+}
 
 // start uploads one file and returns the row the server marked ready. hooks
 // takes started, called with the row as soon as it exists so the list can show
 // it filling up, and progress, called with a fraction between 0 and 1.
-export async function start(proposition, me, file, folder, replace, hooks) {
+export async function start(proposition, me, file, folder, replace, hooks, queued = null) {
+  let idem = queued && queued.idem;
+  if (queued && !idem) {
+    idem = newKey();
+    const kept = await remember({ ...withoutHandle(queued), idem });
+    if (kept === null) {
+      throw new api.Refused('This browser could not save upload progress. The file was not sent; free browser storage and try again.', 0);
+    }
+  }
+  idem ||= newKey();
   const up = await api.post('/files', {
     proposition,
     name: file.name,
     folder,
     size: file.size,
     replace: replace || 0,
-  });
-  await remember({ file: up.file.id, handle: file, folder, proposition, me });
+  }, { 'Idempotency-Key': idem });
+  const row = { file: up.file.id, folder, proposition, me, replace: replace || 0, ...note(file) };
+  handles.set(row.file, file);
   hooks.started(up.file);
+  const kept = await remember(row);
+  if (kept === null) {
+    throw new api.Refused('This browser could not save upload progress. The file was not sent; add it again after freeing browser storage.', 0);
+  }
+  // The offline placeholder stays recoverable until the server upload is
+  // safely recorded under its real id.
+  if (queued) {
+    await forget(queued.file);
+    handles.delete(queued.file);
+    if (hooks.remembered) hooks.remembered();
+  }
   return carryOn(up, file, hooks.progress);
 }
 
@@ -40,23 +85,51 @@ let held = 0;
 
 export async function hold(proposition, me, file, folder, replace) {
   const id = -(Date.now() * 1000 + (++held % 1000));
-  const kept = await remember({
-    file: id, handle: file, folder, proposition, me, replace: replace || 0, queued: true,
-  });
+  handles.set(id, file);
+  const kept = await remember({ file: id, folder, proposition, me,
+    replace: replace || 0, queued: true, idem: newKey(), ...note(file) });
   // A browser that will not keep it cannot promise to send it later, and a file
   // promised and then dropped is worse than one refused out loud.
+  if (kept === null) handles.delete(id);
   return kept === null ? 0 : id;
+}
+
+// use verifies a reselected file before attaching its bytes to a saved upload.
+// name, size and modification time are stable across the browser file picker;
+// old rows have only a stored handle and are accepted through resume below.
+export async function use(row, file) {
+  if (!sameFile(row, file)) {
+    throw new api.Refused('Choose the original file: its name, size, or modification time does not match.', 0);
+  }
+  const saved = { ...withoutHandle(row), ...note(file) };
+  handles.set(row.file, file);
+  const kept = await remember(saved);
+  if (kept === null) {
+    handles.delete(row.file);
+    throw new api.Refused('This browser could not save that file for resuming. Free browser storage and try again.', 0);
+  }
+  return { ...saved, handle: file };
+}
+
+export function sameFile(row, file) {
+  return (!row.name || row.name === file.name)
+    && (!Number.isFinite(row.size) || row.size === file.size)
+    && (!row.last_modified || row.last_modified === file.lastModified);
 }
 
 // resume picks an upload up again from whatever the bucket already holds. The
 // file has to be the same one: its size is checked, because a presigned URL was
 // signed for that many bytes.
 export async function resume(row, hooks) {
-  const file = row.handle;
+  const file = row.handle || handles.get(row.file);
   const up = await api.get('/files/' + row.file + '/parts');
   if (!file || file.size !== up.file.size) {
     throw new api.Refused('That file has changed since the upload started. Add it again.', 0);
   }
+  // Migrate a legacy row that stored the File itself after it has proved to be
+  // the right one. If storage is unavailable the old row remains intact.
+  if (row.handle) await remember({ ...withoutHandle(row), ...note(file) });
+  handles.set(row.file, file);
   hooks.started(up.file);
   return carryOn(up, file, hooks.progress);
 }
@@ -75,6 +148,7 @@ async function carryOn(up, file, onProgress) {
   }
   const done = await api.post('/files/' + id + '/complete', await measure(file));
   await forget(id);
+  handles.delete(id);
   return done.file;
 }
 

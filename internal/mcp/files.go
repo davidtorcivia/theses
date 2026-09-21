@@ -127,7 +127,7 @@ func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in ad
 	if err != nil {
 		return nil, files.Link{}, err
 	}
-	e, err := f.svc.AddLink(ctx, a, in.Proposition, in.URL)
+	e, err := f.svc.AddLinkWithNote(ctx, a, in.Proposition, in.URL, in.Note, in.Question)
 	if err != nil {
 		return nil, files.Link{}, f.refusal("add the link", err)
 	}
@@ -137,19 +137,6 @@ func (f *fileTools) addLink(ctx context.Context, req *sdk.CallToolRequest, in ad
 	link, err := f.svc.ReadLink(ctx, a, e.EntityID)
 	if err != nil {
 		return nil, files.Link{}, f.refusal("read the link back", err)
-	}
-	// The note and the question are the agent's own words about the link, so
-	// they are a second command rather than part of the fetch.
-	if in.Note != "" || in.Question != "" {
-		if _, err := f.svc.EditLink(ctx, a, link.ID, files.Edit{
-			Title: link.Title, Author: link.Author, Year: link.Year, Kind: link.Kind,
-			Note: in.Note, Question: in.Question,
-		}); err != nil {
-			return nil, files.Link{}, f.refusal("save the note", err)
-		}
-		if link, err = f.svc.ReadLink(ctx, a, link.ID); err != nil {
-			return nil, files.Link{}, f.refusal("read the link back", err)
-		}
 	}
 	return nil, link, nil
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 )
 
@@ -52,7 +53,7 @@ func (s *Service) Run(ctx context.Context) {
 	// applied while the mirror is catching up is waiting on the channel rather
 	// than missed by both.
 	sub := s.Bus.Subscribe(0)
-	defer sub.Close()
+	defer func() { sub.Close() }()
 
 	// A debounced import is held in a set rather than sent down a channel: a
 	// channel with room for sixteen drops the seventeenth, and a dropped import
@@ -95,6 +96,15 @@ func (s *Service) Run(ctx context.Context) {
 		case e, ok := <-sub.C:
 			if !ok {
 				return
+			}
+			if sub.Dropped() > 0 {
+				// Subscribe first so changes during the rescan wait on the new channel;
+				// events queued around the drop are no longer ordered and are discarded.
+				old := sub
+				sub = s.Bus.Subscribe(0)
+				old.Close()
+				s.reconcile(ctx, watcher)
+				continue
 			}
 			s.applied(ctx, watcher, e)
 		case ev, ok := <-watcher.Events:
@@ -192,8 +202,18 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher) []stri
 			// stops the next command writing over an edit made while the
 			// process was down. A file that could not be read is one of these
 			// too, because unread is unknown.
+			d, err := GetDocument(ctx, s.DB, id)
+			if err != nil {
+				s.log.Warn("document not mirrored", "document", id, "err", err)
+				continue
+			}
+			generation, err := s.documentGeneration(ctx, id, d.Proposition)
+			if err != nil {
+				s.log.Warn("document generation not read", "document", id, "err", err)
+				continue
+			}
 			s.mu.Lock()
-			s.written[path] = mirrored{document: id}
+			s.written[path] = mirrored{document: id, proposition: d.Proposition, generation: generation}
 			s.mu.Unlock()
 			s.watch(watcher, filepath.Dir(path))
 			found = append(found, path)
@@ -206,6 +226,89 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher) []stri
 		s.watch(watcher, filepath.Dir(path))
 	}
 	return found
+}
+
+// reconcile rebuilds mirrors after a bus hole. A tracked file stays attached
+// only while its document, proposition, create event and path all match.
+func (s *Service) reconcile(ctx context.Context, watcher *fsnotify.Watcher) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT d.id, d.proposition_id,
+		coalesce((SELECT max(a.id) FROM activity a
+			WHERE a.proposition_id = d.proposition_id AND a.entity = 'document'
+				AND a.entity_id = CAST(d.id AS TEXT) AND a.action = 'create'), 0)
+		FROM documents d`)
+	if err != nil {
+		s.log.Error("document mirrors not reconciled", "err", err)
+		return
+	}
+	type mirrorRow struct {
+		proposition int64
+		generation  int64
+		path        string
+	}
+	live := map[int64]mirrorRow{}
+	for rows.Next() {
+		var document, proposition, generation int64
+		if err := rows.Scan(&document, &proposition, &generation); err != nil {
+			rows.Close()
+			s.log.Error("document mirrors not reconciled", "err", err)
+			return
+		}
+		live[document] = mirrorRow{proposition: proposition, generation: generation}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		s.log.Error("document mirrors not reconciled", "err", err)
+		return
+	}
+	if err := rows.Close(); err != nil {
+		s.log.Error("document mirrors not reconciled", "err", err)
+		return
+	}
+	for document, row := range live {
+		_, path, err := s.paths(ctx, document)
+		if err != nil {
+			s.log.Warn("document path not reconciled", "document", document, "err", err)
+			return
+		}
+		row.path = path
+		live[document] = row
+	}
+
+	s.mu.Lock()
+	var remove []string
+	for path, m := range s.written {
+		current, ok := live[m.document]
+		switch {
+		case !ok:
+			remove = append(remove, path)
+			delete(s.written, path)
+		case current.proposition != m.proposition || current.generation != m.generation || path != current.path:
+			// Preserve edited stale files, but detach them from the replacement row.
+			content, err := readMirror(path)
+			if errors.Is(err, os.ErrNotExist) || err == nil && m.hash != "" && hashOf(content) == m.hash {
+				remove = append(remove, path)
+			}
+			delete(s.written, path)
+		}
+	}
+	s.mu.Unlock()
+	for _, path := range remove {
+		if err := within(s.root, path); err != nil {
+			continue
+		}
+		if err := waitOut(func() error { return os.Remove(path) }); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.log.Warn("stale document mirror not removed", "err", err)
+		}
+	}
+	for document := range live {
+		if err := s.Mirror(ctx, document, nil, false); err != nil {
+			s.log.Warn("document not reconciled", "document", document, "err", err)
+			continue
+		}
+		if dir, _, err := s.paths(ctx, document); err == nil && watcher != nil {
+			s.watch(watcher, dir)
+		}
+	}
 }
 
 // wasLegacy reports a file that is what the version before this one would have
@@ -236,6 +339,17 @@ func (s *Service) applied(ctx context.Context, watcher *fsnotify.Watcher, e core
 	}
 	var document int64
 	switch e.Entity {
+	case "proposition":
+		if e.Action != "delete" {
+			return
+		}
+		var proposition board.Proposition
+		if err := json.Unmarshal(e.Before, &proposition); err != nil || proposition.Number == 0 {
+			s.log.Warn("deleted proposition not unmirrored", "proposition", e.EntityID)
+			return
+		}
+		s.UnmirrorProposition(proposition.Number)
+		return
 	case "document":
 		document = e.EntityID
 		if e.Action == "delete" {

@@ -120,8 +120,11 @@ type timer struct {
 }
 
 type mirrored struct {
-	document int64
-	hash     string
+	document    int64
+	proposition int64
+	// generation distinguishes reused document ids by their create activity.
+	generation int64
+	hash       string
 	// conflicted is the blocks the last import of this file could not take
 	// from it. It is remembered so that a write made for some other change
 	// keeps the markers rather than quietly rubbing them out.

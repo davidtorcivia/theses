@@ -2,11 +2,17 @@ package realtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"strconv"
 
+	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
+	"github.com/davidtorcivia/theses/internal/store"
 )
 
 // commands is the whole client surface. Every one of them is a board command
@@ -121,21 +127,52 @@ func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 		h.announce(c.proposition)
 		return
 	}
+	c.send(h.execute(ctx, c.user, cmd))
+}
+
+// Commands is the session-authenticated fallback, mounted behind the CSRF guard.
+func (h *Hub) Commands(w http.ResponseWriter, r *http.Request) {
+	user, err := h.auth.SessionUser(r.Context(), r)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "sign in first"})
+		return
+	}
+	if !h.auth.Allow(auth.BucketSocket, strconv.FormatInt(user.ID, 10)) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many changes at once; wait a moment"})
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFrame))
+	var cmd command
+	if err != nil {
+		var large *http.MaxBytesError
+		status := http.StatusBadRequest
+		if errors.As(err, &large) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeJSON(w, status, map[string]string{"error": "that command body could not be read"})
+		return
+	}
+	if json.Unmarshal(raw, &cmd) != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that was not a command"})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.execute(r.Context(), user, cmd))
+}
+
+func (h *Hub) execute(ctx context.Context, user *store.User, cmd command) message {
 	if cmd.Key != "" {
 		keyed, err := core.WithKey(ctx, cmd.Key)
 		if err != nil {
-			c.send(message{Type: "error", ID: cmd.ID, Error: reason(err)})
-			return
+			return message{Type: "error", ID: cmd.ID, Error: reason(err)}
 		}
 		ctx = keyed
 	}
-	actor := core.Actor{Kind: core.KindUser, ID: c.user.ID, Name: c.user.Name}
+	actor := core.Actor{Kind: core.KindUser, ID: user.ID, Name: user.Name}
 	run := h.docsCommand(cmd.Cmd)
 	if run == nil {
 		board, ok := commands[cmd.Cmd]
 		if !ok {
-			c.send(message{Type: "error", ID: cmd.ID, Error: "there is no such command"})
-			return
+			return message{Type: "error", ID: cmd.ID, Error: "there is no such command"}
 		}
 		run = func(ctx context.Context, a core.Actor, v args) (core.Event, error) {
 			return board(ctx, h.board, a, v)
@@ -145,12 +182,12 @@ func (h *Hub) dispatch(ctx context.Context, c *client, cmd command) {
 	var conflict *core.ConflictError
 	switch {
 	case errors.As(err, &conflict):
-		c.send(message{Type: "conflict", ID: cmd.ID, Conflict: conflict})
+		return message{Type: "conflict", ID: cmd.ID, Conflict: conflict}
 	case err != nil:
-		h.log.Warn("command refused", "cmd", cmd.Cmd, "user", c.user.Handle, "err", err)
-		c.send(message{Type: "error", ID: cmd.ID, Error: reason(err)})
+		h.log.Warn("command refused", "cmd", cmd.Cmd, "user", user.Handle, "err", err)
+		return message{Type: "error", ID: cmd.ID, Error: reason(err)}
 	default:
-		c.send(message{Type: "ack", ID: cmd.ID, Event: &e})
+		return message{Type: "ack", ID: cmd.ID, Event: &e}
 	}
 }
 

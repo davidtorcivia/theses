@@ -260,6 +260,21 @@ func TestPublishSendsTheEpisodeAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestConcurrentPublishIsRefusedBeforeCreatingAnotherEpisode(t *testing.T) {
+	h, fake, id := publishable(t)
+	at := strconv.FormatInt(id, 10)
+	form := h.publishForm(t, at)
+	h.srv.publishing.Store(true)
+	defer h.srv.publishing.Store(false)
+	res, body := h.post("/p/"+at+"/publish", form)
+	if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "a publication is already in progress") {
+		t.Fatalf("concurrent publish: %d, %s", res.StatusCode, firstNotice(body))
+	}
+	if calls := fake.made(); len(calls) != 0 {
+		t.Fatalf("concurrent publish reached provider: %v", calls)
+	}
+}
+
 func TestPublishRefusals(t *testing.T) {
 	h, _, id := publishable(t)
 	at := strconv.FormatInt(id, 10)

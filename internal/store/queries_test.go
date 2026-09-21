@@ -20,6 +20,56 @@ func newUser(t *testing.T, db *DB, handle string) int64 {
 	return id
 }
 
+func TestEmailAddressesAreUniqueIgnoringCase(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+	ada := &User{
+		Handle: "ada", Email: "Ada@Example.com", Name: "Ada",
+		Initials: "AL", Colour: "#111", Role: "owner", PasswordHash: "x",
+	}
+	if _, err := CreateUser(ctx, db, ada); err != nil {
+		t.Fatal(err)
+	}
+	grace := &User{
+		Handle: "grace", Email: "ADA@example.COM", Name: "Grace",
+		Initials: "GH", Colour: "#222", Role: "editor", PasswordHash: "x",
+	}
+	if _, err := CreateUser(ctx, db, grace); err == nil {
+		t.Fatal("CreateUser accepted a differently-cased copy of an existing email")
+	}
+
+	grace.Email = "grace@example.com"
+	id, err := CreateUser(ctx, db, grace)
+	if err != nil {
+		t.Fatalf("create second user with a distinct email: %v", err)
+	}
+	grace.ID = id
+	if err := UpdateProfile(ctx, db, grace.ID, grace.Handle, grace.Name, grace.Initials, grace.Colour,
+		"ADA@example.COM"); err == nil {
+		t.Fatal("UpdateProfile accepted a differently-cased copy of an existing email")
+	}
+	after, err := UserByID(ctx, db, grace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Email != grace.Email {
+		t.Errorf("failed update changed email to %q, want %q", after.Email, grace.Email)
+	}
+}
+
+func TestMoreThanOneAccountMayHaveNoEmailAddress(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+	for _, handle := range []string{"ada", "grace"} {
+		if _, err := CreateUser(ctx, db, &User{
+			Handle: handle, Email: "", Name: handle,
+			Initials: "XX", Colour: "#111", Role: "editor", PasswordHash: "x",
+		}); err != nil {
+			t.Fatalf("create addressless user %q: %v", handle, err)
+		}
+	}
+}
+
 func TestClaimTOTPStepRejectsReplay(t *testing.T) {
 	ctx := context.Background()
 	db := OpenTemp(t)

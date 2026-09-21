@@ -4,9 +4,16 @@
 import { $, $$, el, initials } from './dom.js';
 import { state } from './state.js';
 
-export function closePicker() {
+let pickerAnchor = null;
+const outside = () => closePicker();
+
+export function closePicker(restore = false) {
+  document.removeEventListener('click', outside);
   const open = $('#picker');
   if (open) open.remove();
+  if (pickerAnchor) pickerAnchor.setAttribute('aria-expanded', 'false');
+  if (restore && pickerAnchor) pickerAnchor.focus();
+  pickerAnchor = null;
 }
 
 function place(picker, rect) {
@@ -15,11 +22,26 @@ function place(picker, rect) {
 }
 
 function row(person, on, onPick) {
-  return el('button', { type: 'button', class: on ? 'on' : '', onclick: (e) => { e.stopPropagation(); onPick(person); } },
+  return el('button', { type: 'button', role: 'option', 'aria-selected': String(on),
+    class: on ? 'on' : '', onclick: (e) => { e.stopPropagation(); onPick(person); } },
     initials(person),
     el('span', { class: 'n', text: person.name }),
     el('span', { class: 'mono role', text: here(person.id) ? 'here' : person.role }),
     el('span', { class: 'st' }));
+}
+
+function keyboard(picker, restore) {
+  picker.addEventListener('keydown', (e) => {
+    const choices = [...picker.querySelectorAll('button')];
+    const at = choices.indexOf(document.activeElement);
+    let next = -1;
+    if (e.key === 'ArrowDown') next = Math.min(choices.length - 1, at + 1);
+    if (e.key === 'ArrowUp') next = Math.max(0, at < 0 ? 0 : at - 1);
+    if (e.key === 'Home') next = 0;
+    if (e.key === 'End') next = choices.length - 1;
+    if (next >= 0) { e.preventDefault(); choices[next]?.focus(); }
+    if (e.key === 'Escape') { e.preventDefault(); closePicker(restore); }
+  });
 }
 
 function here(id) {
@@ -30,16 +52,22 @@ function here(id) {
 // go on one card in a row.
 export function openPicker(anchor, assigned, toggle) {
   closePicker();
+  pickerAnchor = anchor;
+  anchor.setAttribute('aria-haspopup', 'listbox');
+  anchor.setAttribute('aria-expanded', 'true');
   const on = new Set(assigned);
-  const picker = el('div', { id: 'picker', role: 'listbox' },
-    el('div', { class: 'pt mono', text: 'Assign · click to toggle' }));
+  const picker = el('div', { id: 'picker', role: 'listbox', 'aria-multiselectable': 'true' },
+    el('div', { class: 'pt mono', text: 'Assign · choose to toggle' }));
   for (const person of state.users.values()) {
     picker.append(row(person, on.has(person.id), (p) => {
       const now = !on.has(p.id);
       if (now) on.add(p.id); else on.delete(p.id);
       toggle(p, now);
       for (const b of $$('button', picker)) {
-        if (Number(b.dataset.u) === p.id) b.classList.toggle('on', now);
+        if (Number(b.dataset.u) === p.id) {
+          b.classList.toggle('on', now);
+          b.setAttribute('aria-selected', String(now));
+        }
       }
     }));
     picker.lastChild.dataset.u = person.id;
@@ -47,7 +75,9 @@ export function openPicker(anchor, assigned, toggle) {
   picker.addEventListener('click', (e) => e.stopPropagation());
   document.body.append(picker);
   place(picker, anchor.getBoundingClientRect());
-  setTimeout(() => document.addEventListener('click', closePicker, { once: true }), 0);
+  keyboard(picker, true);
+  picker.querySelector('button')?.focus();
+  setTimeout(() => document.addEventListener('click', outside, { once: true }), 0);
 }
 
 // mentionable offers the account names as somebody types @ into a field, in a
@@ -69,11 +99,9 @@ export function mentionable(field) {
       u.handle.startsWith(q) || u.name.toLowerCase().startsWith(q) || u.initials.toLowerCase().startsWith(q));
     if (!hits.length) return;
 
-    const picker = el('div', { id: 'picker' }, el('div', { class: 'pt mono', text: 'Mention' }));
+    const picker = el('div', { id: 'picker', role: 'listbox' }, el('div', { class: 'pt mono', text: 'Mention' }));
     for (const person of hits) {
-      const button = row(person, false, () => {});
-      button.addEventListener('mousedown', (e) => {
-        e.preventDefault();
+      const choose = () => {
         const at = caret();
         const before = read().slice(0, at).replace(/@[a-z0-9-]*$/i, '@' + person.handle + ' ');
         const rest = before + read().slice(at);
@@ -86,11 +114,16 @@ export function mentionable(field) {
           field.focus();
         }
         closePicker();
+      };
+      const button = row(person, false, choose);
+      button.addEventListener('mousedown', (e) => {
+        e.preventDefault();
       });
       picker.append(button);
     }
     document.body.append(picker);
     place(picker, field.getBoundingClientRect());
+    keyboard(picker, false);
   });
 
   field.addEventListener('keydown', (e) => {
@@ -99,7 +132,11 @@ export function mentionable(field) {
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
       const first = picker.querySelector('button');
-      if (first) first.dispatchEvent(new MouseEvent('mousedown', { cancelable: true }));
+      if (first) first.click();
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      picker.querySelector('button')?.focus();
     }
     if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
   });

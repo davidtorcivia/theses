@@ -264,3 +264,30 @@ func TestCanonicalURLIsNotBelieved(t *testing.T) {
 		t.Fatalf("canonical_url is %q; a page's own value is not a web address", link.CanonicalURL)
 	}
 }
+
+func TestLinkPatchesKeepOtherFields(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	e, err := f.AddLink(ctx, f.who["editor"], f.prop, page(t, "<title>Original</title>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, kind, question := "Research note", "paper", "II"
+	for _, patch := range []LinkPatch{{Note: &note}, {Kind: &kind}, {Question: &question}} {
+		if _, err := f.PatchLink(ctx, f.who["editor"], e.EntityID, patch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row, err := GetLink(ctx, f.db, e.EntityID)
+	if err != nil || row.Title != "Original" || row.Note != note || row.Kind != kind || row.Question == nil || *row.Question != question {
+		t.Fatalf("patch: %+v, %v", row, err)
+	}
+	empty := ""
+	if _, err := f.PatchLink(ctx, f.who["editor"], e.EntityID, LinkPatch{Question: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	row, err = GetLink(ctx, f.db, e.EntityID)
+	if err != nil || row.Question != nil || row.Note != note {
+		t.Fatalf("clear: %+v, %v", row, err)
+	}
+}

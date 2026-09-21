@@ -2,8 +2,8 @@ package files
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -85,9 +85,14 @@ const partBatch = 64
 // both.
 func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 	name, folder string, size, replace int64) (Upload, error) {
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
 	row, bucket, again, err := s.record(ctx, a, proposition, name, folder, size, replace)
 	if err != nil {
 		return Upload{}, err
+	}
+	if row.State != stateUploading {
+		return Upload{}, ErrState
 	}
 
 	out := Upload{File: row, ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}
@@ -96,8 +101,8 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 	// through that, so signing the type of the raw one would sign
 	// octet-stream for a file the list calls markdown.
 	kind := contentType(row.Name)
-	if size <= blob.PartSize {
-		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, kind, size, uploadTTL)
+	if row.Size <= blob.PartSize {
+		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, kind, row.Size, uploadTTL)
 		if err != nil {
 			return Upload{}, err
 		}
@@ -135,6 +140,9 @@ func (s *Service) Create(ctx context.Context, a core.Actor, proposition int64,
 		(file_id, multipart_id, created_at, expires_at) VALUES (?, ?, ?, ?)`,
 		row.ID, multipart, s.now(), s.Now().Add(abandonAt).Unix())
 	if err != nil {
+		if abortErr := bucket.AbortMultipart(context.WithoutCancel(ctx), row.ObjectKey, multipart); abortErr != nil {
+			slog.Warn("unrecorded multipart upload not aborted", "file", row.ID, "err", abortErr)
+		}
 		return Upload{}, err
 	}
 	if out.UploadID, err = res.LastInsertId(); err != nil {
@@ -223,13 +231,19 @@ func (s *Service) record(ctx context.Context, a core.Actor, proposition int64,
 	if err != nil {
 		return File{}, nil, false, err
 	}
-	// A request that arrived under a key this caller had already spent applied
-	// nothing, so the closure above never ran and row is still empty. The row it
-	// made the first time is the after of the event that came back, which is
-	// what the rest of the upload is built from: the same file, signed again.
+	// Replays use current permissions and metadata before granting storage access.
 	if e.Replayed {
-		if err := json.Unmarshal(e.After, &row); err != nil {
-			return File{}, nil, false, fmt.Errorf("files: read back the file a key already made: %w", err)
+		if e.Entity != "file" || e.Action != "create" {
+			return File{}, nil, false, ErrState
+		}
+		if row, err = s.readable(ctx, a, e.EntityID); err != nil {
+			return File{}, nil, false, err
+		}
+		if err := s.mayWrite(ctx, a, row.Proposition); err != nil {
+			return File{}, nil, false, err
+		}
+		if bucket, err = s.bucket(ctx, row.Folder); err != nil {
+			return File{}, nil, false, err
 		}
 	}
 	return row, bucket, e.Replayed, nil
@@ -261,11 +275,18 @@ func (s *Service) Parts(ctx context.Context, a core.Actor, id int64, after int) 
 	if after >= partCount(row.Size) {
 		return Upload{}, ErrPart
 	}
-	// ponytail: a file small enough for one PUT has no uploads row, so this
-	// answers not found and the browser drops its note and waits for the sweep
-	// to clear the row. A resume for those is a second presigned PUT, which is
-	// a branch here and a branch in the client, for an upload that is by
-	// definition under 64 MiB.
+	if row.Size <= blob.PartSize {
+		bucket, err := s.bucket(ctx, row.Folder)
+		if err != nil {
+			return Upload{}, err
+		}
+		url, headers, err := bucket.PresignPut(ctx, row.ObjectKey, contentType(row.Name), row.Size, uploadTTL)
+		if err != nil {
+			return Upload{}, err
+		}
+		return Upload{File: row, URL: url, Headers: headers,
+			ExpiresAt: s.Now().Add(uploadTTL).Unix(), TTLSeconds: int64(uploadTTL.Seconds())}, nil
+	}
 	uploadID, multipart, err := s.upload(ctx, row.ID)
 	if err != nil {
 		return Upload{}, err
@@ -316,7 +337,14 @@ func (s *Service) abandon(ctx context.Context, row File) {
 		slog.Warn("could not read the upload of a file being abandoned", "file", row.ID, "err", err)
 	}
 	if _, err := s.file(ctx, actor, row.ID, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, row.ID)
+		current, err := GetFile(ctx, tx, row.ID)
+		if err != nil {
+			return err
+		}
+		if current.State != stateUploading || current.ObjectKey != row.ObjectKey {
+			return ErrState
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, row.ID)
 		return err
 	}); err != nil {
 		slog.Warn("could not remove a file that could not be finished", "file", row.ID, "err", err)
@@ -399,22 +427,48 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		if n, err := claimed.RowsAffected(); err != nil || n != 1 {
 			return core.Event{}, ErrSwept
 		}
-		held, err := bucket.ListParts(ctx, row.ObjectKey, multipart)
-		if err != nil {
-			return core.Event{}, err
+		// Assembly can succeed before its response or the database update fails.
+		// An existing object is verified below without reusing the consumed upload.
+		_, _, headErr := bucket.Head(ctx, row.ObjectKey)
+		if headErr != nil && !errors.Is(headErr, blob.ErrNotFound) {
+			return core.Event{}, headErr
 		}
-		// CompleteMultipart refuses a gap but not a short tail, so a completion
-		// sent before the last parts arrived would assemble a truncated object
-		// and throw the upload away with it. The count is checked here, while
-		// the parts are still there to go on uploading to.
-		if len(held) != partCount(row.Size) {
-			return core.Event{}, ErrState
-		}
-		if err := bucket.CompleteMultipart(ctx, row.ObjectKey, multipart, held); err != nil {
-			return core.Event{}, err
+		if errors.Is(headErr, blob.ErrNotFound) {
+			held, err := bucket.ListParts(ctx, row.ObjectKey, multipart)
+			if err != nil {
+				return core.Event{}, err
+			}
+			// CompleteMultipart refuses a gap but not a short tail, so a completion
+			// sent before the last parts arrived would assemble a truncated object
+			// and throw the upload away with it. The count is checked here, while
+			// the parts are still there to go on uploading to.
+			if len(held) != partCount(row.Size) {
+				return core.Event{}, ErrState
+			}
+			if err := bucket.CompleteMultipart(ctx, row.ObjectKey, multipart, held); err != nil {
+				return core.Event{}, err
+			}
 		}
 	}
 
+	source := row
+	committed := false
+	if row.Size <= blob.PartSize {
+		// A PUT URL remains writable until expiry. Finalize to a unique key so
+		// neither that URL nor another completion can overwrite the ready object.
+		row.ObjectKey = path.Join(path.Dir(row.ObjectKey), rand.Text(), path.Base(row.ObjectKey))
+		defer func() {
+			if !committed {
+				s.forget(context.WithoutCancel(ctx), row, "")
+			}
+		}()
+		if err := bucket.Copy(ctx, source.ObjectKey, row.ObjectKey); err != nil {
+			if errors.Is(err, blob.ErrNotFound) {
+				return core.Event{}, ErrState
+			}
+			return core.Event{}, err
+		}
+	}
 	stored, _, err := bucket.Head(ctx, row.ObjectKey)
 	if errors.Is(err, blob.ErrNotFound) {
 		return core.Event{}, ErrState
@@ -431,7 +485,7 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		// one, has already been assembled into it: there is nothing left to go
 		// on uploading to. Both are cleared so that the same file can be added
 		// again, rather than leaving a row stuck at uploading forever.
-		s.abandon(ctx, row)
+		s.abandon(ctx, source)
 		return core.Event{}, ErrSize
 	}
 	// Duration and dimensions are what the browser measured, so they are a
@@ -442,17 +496,17 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		width, height = w, h
 	}
 
-	return s.do(ctx, a, row.Proposition, auth.CanEdit, "file", "complete", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	event, err := s.do(ctx, a, row.Proposition, auth.CanEdit, "file", "complete", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		was, err := GetFile(ctx, tx, id)
 		if err != nil {
 			return core.Change{}, err
 		}
-		if was.State != stateUploading {
+		if was.State != stateUploading || was.ObjectKey != source.ObjectKey || was.Folder != source.Folder {
 			return core.Change{}, ErrState
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE files
-			SET state = ?, duration_ms = ?, width = ?, height = ? WHERE id = ?`,
-			stateReady, null(duration), null(width), null(height), id); err != nil {
+			SET state = ?, object_key = ?, duration_ms = ?, width = ?, height = ? WHERE id = ?`,
+			stateReady, row.ObjectKey, null(duration), null(width), null(height), id); err != nil {
 			return core.Change{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM uploads WHERE file_id = ?`, id); err != nil {
@@ -464,6 +518,13 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		}
 		return core.Change{Entity: "file", EntityID: id, Action: "complete", Before: was, After: now}, nil
 	})
+	if err == nil && !event.Replayed {
+		committed = true
+		if row.ObjectKey != source.ObjectKey {
+			s.forget(context.WithoutCancel(ctx), source, "")
+		}
+	}
+	return event, err
 }
 
 // EditFile renames a file or moves it to another folder. The object keeps the
@@ -471,36 +532,51 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 // download URL already handed out, and the name a person downloads under comes
 // from the row, not the key.
 func (s *Service) EditFile(ctx context.Context, a core.Actor, id int64, name, folder string) (core.Event, error) {
-	name, err := filename(name)
-	if err != nil {
-		return core.Event{}, err
+	return s.PatchFile(ctx, a, id, &name, &folder)
+}
+
+// PatchFile keeps omitted fields unchanged, including during concurrent edits.
+func (s *Service) PatchFile(ctx context.Context, a core.Actor, id int64, name, folder *string) (core.Event, error) {
+	if name != nil {
+		clean, err := filename(*name)
+		if err != nil {
+			return core.Event{}, err
+		}
+		name = &clean
 	}
-	if !known(folder, Folders) {
+	if folder != nil && !known(*folder, Folders) {
 		return core.Event{}, ErrKind
 	}
-	was, err := s.readable(ctx, a, id)
-	if err != nil {
-		return core.Event{}, err
-	}
-	if was.Folder != folder {
-		from, err := s.bucket(ctx, was.Folder)
+	var sourceFolder string
+	if folder != nil {
+		was, err := s.readable(ctx, a, id)
 		if err != nil {
 			return core.Event{}, err
 		}
-		to, err := s.bucket(ctx, folder)
-		if err != nil {
-			return core.Event{}, err
-		}
-		// The object stays where it is, so a move that crosses buckets would
-		// leave the row pointing into the bucket it came from. blob.Copy is one
-		// bucket only, so this is a refusal rather than a copy.
-		if from.Bucket() != to.Bucket() {
-			return core.Event{}, ErrCrossBucket
+		sourceFolder = was.Folder
+		if sourceFolder != *folder {
+			from, err := s.bucket(ctx, sourceFolder)
+			if err != nil {
+				return core.Event{}, err
+			}
+			to, err := s.bucket(ctx, *folder)
+			if err != nil {
+				return core.Event{}, err
+			}
+			if !from.SameBucket(to) {
+				return core.Event{}, ErrCrossBucket
+			}
 		}
 	}
 	return s.file(ctx, a, id, auth.CanEdit, "update", func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`UPDATE files SET name = ?, folder = ? WHERE id = ?`, name, folder, id)
+		was, err := GetFile(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if folder != nil && was.Folder != sourceFolder {
+			return ErrState
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE files SET name = coalesce(?, name), folder = coalesce(?, folder) WHERE id = ?`, name, folder, id)
 		return err
 	})
 }
@@ -755,7 +831,7 @@ func propositionPrefix(ctx context.Context, tx *sql.Tx, proposition int64) (stri
 }
 
 func objectKey(prefix string, id int64, name string) string {
-	return fmt.Sprintf("%s/%d/%s", prefix, id, name)
+	return fmt.Sprintf("%s/%d/%s/%s", prefix, id, rand.Text(), name)
 }
 
 // thumbKey is where a file's thumbnail sits: beside the original, under a name

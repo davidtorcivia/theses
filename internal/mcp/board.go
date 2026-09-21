@@ -402,23 +402,10 @@ func (t *boardTools) annotateLink(ctx context.Context, req *sdk.CallToolRequest,
 	if err != nil {
 		return nil, files.Link{}, t.refusal("read the link", err)
 	}
-	// The command takes the whole set, because that is what a form posts, so
-	// the row is read first and the call laid over it: naming the note is not a
-	// way to clear the title.
-	edit := files.Edit{
-		Title: was.Title, Author: was.Author, Year: was.Year,
-		Kind: was.Kind, Note: was.Note, Question: questionOf(was),
-	}
-	for _, field := range []struct{ into, from *string }{
-		{&edit.Note, in.Note}, {&edit.Kind, in.Kind}, {&edit.Question, in.Question},
-	} {
-		if field.from != nil {
-			*field.into = *field.from
-		}
-	}
-	if _, err := t.files.EditLink(ctx, who, was.ID, edit); err != nil {
+	if _, err := t.files.PatchLink(ctx, who, was.ID, files.LinkPatch{Note: in.Note, Kind: in.Kind, Question: in.Question}); err != nil {
 		return nil, files.Link{}, t.refusal("annotate the link", err)
 	}
+
 	t.wrote(req, "annotate_link", was.ID, p, who)
 	now, err := t.files.ReadLink(ctx, who, was.ID)
 	if err != nil {

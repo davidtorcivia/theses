@@ -222,6 +222,10 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	if err != nil {
 		return err
 	}
+	generation, err := s.documentGeneration(ctx, document, d.Proposition)
+	if err != nil {
+		return err
+	}
 	blocks, err := Blocks(ctx, s.DB, document)
 	if err != nil {
 		return err
@@ -259,7 +263,8 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	// The hash is recorded before the bytes land, so that the watcher cannot
 	// see the write before it knows the write was ours.
 	s.mu.Lock()
-	s.written[path] = mirrored{document: document, hash: sum, conflicted: conflicted}
+	s.written[path] = mirrored{document: document, proposition: d.Proposition,
+		generation: generation, hash: sum, conflicted: conflicted}
 	s.mu.Unlock()
 	if err := writeAtomic(path, content); err != nil {
 		// Nothing landed, so what this process last wrote is still what it
@@ -280,6 +285,14 @@ func (s *Service) Mirror(ctx context.Context, document int64, conflicted map[int
 	// anything now.
 	s.forgetOthers(document, path)
 	return nil
+}
+
+func (s *Service) documentGeneration(ctx context.Context, document, proposition int64) (int64, error) {
+	var generation int64
+	err := s.DB.QueryRowContext(ctx, `SELECT coalesce(max(id), 0) FROM activity
+		WHERE proposition_id = ? AND entity = 'document' AND entity_id = ? AND action = 'create'`,
+		proposition, strconv.FormatInt(document, 10)).Scan(&generation)
+	return generation, err
 }
 
 // stillThere drops the blocks a remembered set of markers names that the
@@ -402,6 +415,40 @@ func (s *Service) forgetOthers(document int64, keep string) {
 // Unmirror removes a deleted document's file.
 func (s *Service) Unmirror(document int64) {
 	s.forgetOthers(document, "")
+}
+
+// UnmirrorProposition removes tracked files under every directory carrying the
+// proposition's immutable number. Unknown files remain.
+func (s *Service) UnmirrorProposition(number int64) {
+	if s.root == "" || number == 0 {
+		return
+	}
+	prefix := strconv.FormatInt(number, 10) + "-"
+	s.mu.Lock()
+	paths := []string{}
+	for path := range s.written {
+		rel, err := filepath.Rel(s.root, path)
+		if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		part := strings.SplitN(rel, string(filepath.Separator), 2)
+		if len(part) == 2 && strings.HasPrefix(part[0], prefix) {
+			paths = append(paths, path)
+			delete(s.written, path)
+		}
+	}
+	s.mu.Unlock()
+	for _, path := range paths {
+		if err := within(s.root, path); err != nil {
+			continue
+		}
+		if err := waitOut(func() error { return os.Remove(path) }); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.log.Warn("deleted proposition file not removed", "err", err)
+			continue
+		}
+		// This only succeeds when no unknown file is sharing the directory.
+		_ = os.Remove(filepath.Dir(path))
+	}
 }
 
 // A fileBlock is one block as the markdown file carries it: the id and version
