@@ -8,7 +8,7 @@
 // between is merged on the server or comes back as a choice.
 
 import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
+import { state, user, byHandle, proposition, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
 import { send, newKey, where, onCarets, onAnswer, caughtUp, catchUp, count, chosen, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
 import { retext, unqueue, file, signedOut } from './offline.js';
@@ -17,6 +17,8 @@ import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } 
 import { parts } from './blockparts.js';
 import { retainReplay } from './source.js';
 import { diff } from './diff.js';
+import { mentionable } from './picker.js';
+import { referenceKey } from './references.js';
 import * as undo from './undo.js';
 import { movable, carrying } from './drag.js';
 
@@ -835,6 +837,7 @@ function reopen(doc) {
   const area = el('textarea', { id: 'docsrc', spellcheck: 'false',
     'aria-label': 'This document as markdown' });
   area.value = markdownOf(doc);
+  mentionable(area);
   const src = {
     base: (doc.blocks || []).map((b) => ({ id: b.id, version: b.version })),
     text: area.value,
@@ -967,7 +970,7 @@ function blockNode(b) {
   // it changes under them when a proposition is archived or restored. So is
   // each caret, so that somebody moving about a block rebuilds that one block
   // and nothing else on the page.
-  const key = `${canEdit()}:${b.version}:${here.map((p) => `${p.id}@${p.version}:${p.start}:${p.end}`).join(',')}:${b.text}`;
+  const key = `${referenceKey(b.text, proposition)}:${canEdit()}:${b.version}:${here.map((p) => `${p.id}@${p.version}:${p.start}:${p.end}`).join(',')}:${b.text}`;
   const was = drawn.get(b.id);
   if (was && was.key === key) return was.node;
 
@@ -1094,18 +1097,18 @@ function body(text) {
     // not a line under say(), and it must not go nowhere either, or all that
     // would be left of it is a block that reads oddly.
     console.error('this block could not be read as markdown', e);
-    return [add(el('p'), [inline(text, byHandle)])];
+    return [add(el('p'), [inline(text, byHandle, proposition)])];
   }
 }
 
 function drawPart(part) {
   switch (part.kind) {
     case 'h1': case 'h2': case 'h3':
-      return add(el(part.kind), [inline(part.text, byHandle)]);
+      return add(el(part.kind), [inline(part.text, byHandle, proposition)]);
     case 'ul': case 'ol':
-      return add(el(part.kind), part.items.map((item) => add(el('li'), [inline(item, byHandle)])));
+      return add(el(part.kind), part.items.map((item) => add(el('li'), [inline(item, byHandle, proposition)])));
     case 'quote':
-      return add(el('blockquote'), part.paragraphs.map((said) => add(el('p'), [inline(said, byHandle)])));
+      return add(el('blockquote'), part.paragraphs.map((said) => add(el('p'), [inline(said, byHandle, proposition)])));
     // Code is text and nothing else: no inline markdown in it and no
     // highlighting, so its info string is left in the markdown a click shows.
     case 'code':
@@ -1113,7 +1116,7 @@ function drawPart(part) {
     case 'table':
       return scrolls(grid(part), 'Table');
     default:
-      return add(el('p'), [inline(part.text, byHandle)]);
+      return add(el('p'), [inline(part.text, byHandle, proposition)]);
   }
 }
 
@@ -1132,7 +1135,7 @@ const ALIGN = { l: 'al-l', c: 'al-c', r: 'al-r' };
 function grid(part) {
   const cell = (tag, text, i) => add(el(tag, {
     class: ALIGN[part.align[i]] || null, scope: tag === 'th' ? 'col' : null,
-  }), [inline(text, byHandle)]);
+  }), [inline(text, byHandle, proposition)]);
   return el('table', {},
     el('thead', {}, add(el('tr'), part.head.map((text, i) => cell('th', text, i)))),
     add(el('tbody'), part.rows.map((row) => add(el('tr'), row.map((text, i) => cell('td', text, i))))));
@@ -1253,6 +1256,7 @@ function putNear(id, node) {
 function editor(id, text) {
   const area = el('textarea', { spellcheck: 'false', 'aria-label': 'This block as markdown' });
   area.value = text;
+  mentionable(area);
   // The mirror is this text again, under the textarea in the same box, so that
   // somebody else's caret can be drawn in the middle of it: a textarea holds
   // nothing but text. Its own text is transparent and the textarea over it has

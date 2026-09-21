@@ -100,6 +100,9 @@ type publishView struct {
 // page, which is the same rule the Backups section follows.
 func (s *Server) publishSection(ctx context.Context, p board.Proposition, me *store.User) publishView {
 	v := publishView{Status: settings.Get[string](s.settings, transistorPrefix+"publish_status")}
+	if p.Kind == "show" {
+		return v
+	}
 	if !s.settings.IsSet(transistorPrefix+"api_key") ||
 		settings.Get[string](s.settings, transistorPrefix+"show_id") == "" {
 		return v
@@ -197,6 +200,11 @@ func (s *Server) postPublish(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.fail(w, r, err)
+		return
+	}
+
+	if p.Kind == "show" {
+		s.errorPage(w, r, http.StatusForbidden)
 		return
 	}
 

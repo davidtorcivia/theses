@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 globalThis.document = { querySelector: () => null };
 globalThis.addEventListener = () => {};
 globalThis.requestAnimationFrame = () => 1;
-const { boot, state, apply } = await import('./static/app/state.js');
+const { boot, state, apply, proposition, user } = await import('./static/app/state.js');
+const { referenceKey } = await import('./static/app/references.js');
 const card = (id, title, comments = []) => ({ id, title, comments, checklist: [], column_id: 1, position: 'V' });
 const event = (seq, entity, id, after, before = null) => ({ seq, proposition: 1, entity, entity_id: id, action: after ? 'edit' : 'delete', after, before });
 boot({ me: 1, open: 1, propositions: [{ id: 1, members: [], position: 'V' }], board: { seq: 5, cards: [card(1, 'original'), card(2, 'other')] } });
@@ -30,4 +31,20 @@ apply(event(17, 'comment', 7, note));
 assert.equal(state.cards.get(2).comments[0].body_md, 'edited', 'late children cannot overwrite newer parent snapshots');
 apply(event(0, 'card', 2, card(2, 'optimistic')));
 assert.equal(state.cards.get(2).title, 'optimistic', 'local predictions still apply');
+
+const removed = { seq: 1, proposition: 2, entity: 'member', entity_id: 1, action: 'remove',
+  after: null, before: { proposition_id: 2, user_id: 1 } };
+boot({ me: 1, users: [{ id: 1, role: 'editor' }], open: 1,
+  propositions: [{ id: 1, members: [1], position: 'V' }, { id: 2, members: [1], position: 'W' }],
+  board: { seq: 0, cards: [] } });
+apply(removed);
+assert.equal(proposition(2), null, 'self-removal drops the unreadable proposition from client state');
+assert.equal(referenceKey('@[p:2]', proposition), '[[2]]', 'references cannot resolve revoked metadata');
+
+boot({ me: 1, users: [{ id: 1, role: 'owner' }], open: 1,
+  propositions: [{ id: 1, members: [1], position: 'V' }, { id: 2, members: [1], position: 'W' }],
+  board: { seq: 0, cards: [] } });
+apply(removed);
+assert.ok(proposition(2), 'an owner retains the proposition after membership removal');
+assert.equal(proposition(2).members.includes(user(1).id), false, 'the owner membership row is still removed');
 console.log('state event ordering cases pass');

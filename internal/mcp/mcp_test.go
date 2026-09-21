@@ -287,6 +287,19 @@ func TestUnknownSettingIsAToolError(t *testing.T) {
 
 func TestWorkspaceResourceDescribesTheWorkspace(t *testing.T) {
 	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := board.EnsureShow(ctx, h.db); err != nil {
+		t.Fatal(err)
+	}
+	actor := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	first, err := h.board.CreateProposition(ctx, actor, "Visible")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.board.CreateProposition(ctx, actor, "Private"); err != nil {
+		t.Fatal(err)
+	}
+	owner := h.user
 	cs := h.connect(auth.ScopeRead)
 	res, err := cs.ReadResource(context.Background(), &sdk.ReadResourceParams{URI: WorkspaceURI})
 	if err != nil {
@@ -296,9 +309,37 @@ func TestWorkspaceResourceDescribesTheWorkspace(t *testing.T) {
 		t.Fatalf("contents = %+v", res.Contents)
 	}
 	text := res.Contents[0].Text
-	if !strings.Contains(text, "Workspace") || !strings.Contains(text, "1 person") {
+	if !strings.Contains(text, "Workspace") || !strings.Contains(text, "1 person") ||
+		!strings.Contains(text, "2 propositions") {
 		t.Errorf("resource text = %q", text)
 	}
+
+	id, err := store.CreateUser(ctx, h.db, &store.User{
+		Handle: "ada", Email: "ada@example.com", Name: "Ada Lovelace", Initials: "AL",
+		Colour: "#123", Role: auth.RoleEditor, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := store.UserByID(ctx, h.db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.board.AddMember(ctx, actor, first.EntityID, member.ID); err != nil {
+		t.Fatal(err)
+	}
+	h.user = member
+	memberResource, err := h.connect(auth.ScopeRead).ReadResource(ctx,
+		&sdk.ReadResourceParams{URI: WorkspaceURI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberText := memberResource.Contents[0].Text
+	if !strings.Contains(memberText, "1 proposition") ||
+		strings.Contains(memberText, "2 propositions") {
+		t.Errorf("member resource text = %q", memberText)
+	}
+	h.user = owner
 
 	if _, err := h.connect(auth.ScopeFiles).ReadResource(context.Background(),
 		&sdk.ReadResourceParams{URI: WorkspaceURI}); err == nil {

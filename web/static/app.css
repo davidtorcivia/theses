@@ -29,6 +29,7 @@ textarea{resize:vertical}
 #rail .group{padding:0}
 #rail ul{list-style:none;margin:0;padding:0}
 .ws{position:relative;display:grid;grid-template-columns:2.2em minmax(0,1fr);align-items:start;gap:0 .5rem;cursor:pointer;user-select:none}
+.ws.showpin{grid-template-columns:minmax(0,1fr);font-weight:800}
 .ws .st{white-space:nowrap;margin-left:.35em}
 .ws .t{min-width:0;line-height:1.2}
 .ws .t[contenteditable=true]{outline:0}
@@ -330,6 +331,9 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .newcard textarea{font-weight:600;resize:none}
 .col .add{margin-top:.5rem;color:var(--dim)}
 .col .add:hover{color:var(--y)}
+.board-add{display:flex;align-items:baseline;flex-wrap:wrap;gap:.2rem 1rem}
+.proposition-ref{text-decoration:underline;text-underline-offset:.15em;font-family:var(--monof);font-size:.9em}
+.proposition-ref.unavailable{color:var(--dim);text-decoration-style:dotted}
 #addcol{border-bottom:2px solid var(--hair);padding:.3rem 0 .35rem;align-self:start;text-align:left;color:var(--dim)}
 #addcol:hover{color:var(--y);border-color:var(--y)}
 .doc-ph{margin:2.2rem -1.6rem 0;padding:1rem 1.6rem 0;background:var(--p);color:var(--k);align-items:end;border-bottom:1px solid var(--k)}

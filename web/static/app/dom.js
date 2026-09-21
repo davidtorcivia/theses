@@ -1,3 +1,5 @@
+import { propositionURL, propositionLabel } from './references.js';
+
 // Nodes, not strings. Every title, note and name on this board was typed by
 // somebody, and building the page out of elements means none of it is ever
 // parsed as markup.
@@ -112,9 +114,9 @@ const MENTION = /@([a-z0-9][a-z0-9-]*)/g;
 //   - a label holding a closing bracket, [see [1]](url), is a link on the
 //     server and text here, for the same reason: the label stops at the first
 //     bracket, which is what keeps this one regular expression readable.
-const INLINE = /\*\*(?<bold>.+?)\*\*|\*(?<italic>.+?)\*|\[(?<label>[^\]\n]{1,512})\]\((?<href>https?:\/\/(?:[^\s()]|\([^\s()]*\))+)\)|\[(?<by>[A-Z]{2,4}): (?<aside>[^\]]+)\]|\[(?<check>check[^\]]*)\]|@(?<handle>[a-z0-9][a-z0-9-]*)/g;
+const INLINE = /(?<code>`+[^\n]*?`+)|\*\*(?<bold>.+?)\*\*|\*(?<italic>.+?)\*|\[(?<label>[^\]\n]{1,512})\]\((?<href>(?:https?:\/\/(?:[^\s()]|\([^\s()]*\))+|\/p\/[1-9]\d*|\/show))\)|\[(?<by>[A-Z]{2,4}): (?<aside>[^\]]+)\]|\[(?<check>check[^\]]*)\]|@\[p:(?<proposition>[1-9]\d*)\]|@(?<handle>[a-z0-9][a-z0-9-]*)/g;
 
-export function inline(text, lookup) {
+export function inline(text, lookup, lookupProposition = () => null) {
   const out = [];
   INLINE.lastIndex = 0;
   let at = 0;
@@ -122,15 +124,26 @@ export function inline(text, lookup) {
     if (m.index > at) out.push(text.slice(at, m.index));
     at = m.index + m[0].length;
     const g = m.groups;
-    if (g.bold) out.push(el('b', { text: g.bold }));
-    else if (g.italic) out.push(el('i', { text: g.italic }));
+    if (g.code) out.push(m[0]);
+    else if (g.bold) out.push(el('b', {}, inline(g.bold, lookup, lookupProposition)));
+    else if (g.italic) out.push(el('i', {}, inline(g.italic, lookup, lookupProposition)));
     // A label is inline markdown too, the way the server reads it. It cannot
     // hold a closing bracket, so it cannot hold a second link and this goes one
     // deep and no further.
-    else if (g.href) out.push(add(el('a', { href: g.href, rel: 'noopener' }), [inline(g.label, lookup)]));
+    else if (g.href) out.push(add(el('a', { href: g.href, rel: 'noopener' }), [inline(g.label, lookup, lookupProposition)]));
     else if (g.aside) out.push(el('mark', { class: 'note', text: g.by + ': ' + g.aside }));
     else if (g.check) out.push(el('mark', { class: 'note', text: g.check }));
-    else {
+    else if (g.proposition) {
+      if (!Number.isSafeInteger(Number(g.proposition)) || /[\p{L}\p{N}_]$/u.test(text.slice(0, m.index))) {
+        out.push(m[0]);
+        continue;
+      }
+      const p = lookupProposition(Number(g.proposition));
+      out.push(p
+        ? el('a', { class: 'proposition-ref', href: propositionURL(p), text: propositionLabel(p),
+          title: p.archived_at ? 'Archived' : p.status })
+        : el('span', { class: 'proposition-ref unavailable', text: 'Unavailable proposition' }));
+    } else {
       const person = lookup(g.handle);
       out.push(person
         ? el('b', { class: 'mention ' + person.colour, text: '@' + g.handle })
@@ -211,6 +224,7 @@ export function editable(node, value, commit) {
     commit(save ? node.textContent.trim() : null);
   };
   node.addEventListener('keydown', (e) => {
+    if (e.isComposing) return;
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
     if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   });

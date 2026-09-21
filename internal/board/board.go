@@ -68,6 +68,7 @@ func readEntity(ctx context.Context, q store.Querier, entity string, id int64) (
 type Proposition struct {
 	ID         int64   `json:"id"`
 	Number     int64   `json:"number"`
+	Kind       string  `json:"kind"`
 	Title      string  `json:"title"`
 	Statement  string  `json:"statement"`
 	Blurb      string  `json:"blurb"`
@@ -152,18 +153,31 @@ func value(s string) any {
 	return s
 }
 
-const propositionColumns = `id, number, title, statement, blurb, status, episode, target_date,
+const propositionColumns = `id, number, kind, title, statement, blurb, status, episode, target_date,
 	position, created_at, archived_at`
 
 func scanProposition(rows interface{ Scan(...any) error }) (Proposition, error) {
 	var p Proposition
 	var episode, target sql.NullString
 	var archived sql.NullInt64
-	err := rows.Scan(&p.ID, &p.Number, &p.Title, &p.Statement, &p.Blurb, &p.Status,
+	err := rows.Scan(&p.ID, &p.Number, &p.Kind, &p.Title, &p.Statement, &p.Blurb, &p.Status,
 		&episode, &target, &p.Position, &p.CreatedAt, &archived)
 	p.Episode, p.TargetDate, p.ArchivedAt = text(episode), text(target), number(archived)
 	p.Members = []int64{}
 	return p, err
+}
+
+// GetShow reads the workspace shared by every user.
+func GetShow(ctx context.Context, q store.Querier) (Proposition, error) {
+	var id int64
+	err := q.QueryRowContext(ctx, `SELECT id FROM propositions WHERE kind = 'show'`).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Proposition{}, core.ErrNotFound
+	}
+	if err != nil {
+		return Proposition{}, err
+	}
+	return GetProposition(ctx, q, id)
 }
 
 // ListPropositions reads the rail: every proposition in its own order, with its

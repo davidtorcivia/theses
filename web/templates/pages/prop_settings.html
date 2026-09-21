@@ -1,31 +1,31 @@
-{{define "content"}}<main id="work">
+{{define "content"}}{{$show := eq .P.Kind "show"}}{{$path := printf "/p/%d" .P.ID}}{{if $show}}{{$path = "/show"}}{{end}}<main id="work">
   <div class="whead">
-    <div class="wid"><span id="wnum" class="mono">{{.Num}}</span><h1 id="wtitle">{{.P.Title}}</h1></div>
+    <div class="wid">{{if not $show}}<span id="wnum" class="mono">{{.Num}}</span>{{end}}<h1 id="wtitle">{{.P.Title}}</h1></div>
     <p id="wstate">{{.P.Statement}}</p>
-    <div class="wmeta"><span id="wstatus" class="status">{{.P.Status}}</span>{{if .Episode}}<span id="wep" class="mono">Episode {{.Episode}}{{if .Target}} · target {{.Target}}{{end}}</span>{{else}}<span id="wep" class="mono">Not scheduled</span>{{end}}</div>
+    {{if not $show}}<div class="wmeta"><span id="wstatus" class="status">{{.P.Status}}</span>{{if .Episode}}<span id="wep" class="mono">Episode {{.Episode}}{{if .Target}} · target {{.Target}}{{end}}</span>{{else}}<span id="wep" class="mono">Not scheduled</span>{{end}}</div>{{end}}
     <nav class="tabs">
-      <a class="tab" href="/p/{{.P.ID}}">Board</a><a class="tab" href="/p/{{.P.ID}}#links">Links</a><a class="tab" href="/p/{{.P.ID}}#files">Files</a><a class="tab" href="/p/{{.P.ID}}#activity">Activity</a><a class="tab on" href="/p/{{.P.ID}}/settings">Settings</a>
+      <a class="tab" href="{{$path}}">Board</a>{{if $show}}<a class="tab" href="{{$path}}#notes">Notes</a>{{else}}<a class="tab" href="{{$path}}#links">Links</a>{{end}}<a class="tab" href="{{$path}}#files">Files</a><a class="tab" href="{{$path}}#activity">Activity</a><a class="tab on" href="{{$path}}/settings">{{if $show}}Show settings{{else}}Settings{{end}}</a>
     </nav>
   </div>
 
   <section class="pane">
-    <div class="ph"><h2>Settings</h2><span class="mono">{{if .Archived}}This proposition · archived · read only{{else}}This proposition{{end}}</span></div>
+    <div class="ph"><h2>Settings</h2><span class="mono">{{if $show}}Show{{else if .Archived}}This proposition · archived · read only{{else}}This proposition{{end}}</span></div>
     {{template "notice" .}}
 
-    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+    <form class="form" method="post" action="{{$path}}/settings">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="proposition">
       <section class="fs">
-        <div class="fsh"><h3>Proposition</h3><p>What the episode argues. The title is the rail entry; the statement is the sentence the episode has to survive.</p></div>
+        <div class="fsh"><h3>{{if $show}}Show{{else}}Proposition{{end}}</h3><p>{{if $show}}The shared workspace for planning the show.{{else}}What the episode argues. The title is the rail entry; the statement is the sentence the episode has to survive.{{end}}</p></div>
         <div class="fsb">
-          <label class="f"><span class="l">Title</span><input name="title" value="{{.P.Title}}"{{if not .CanEdit}} readonly{{end}}></label>
-          <label class="f"><span class="l">Statement</span><input name="statement" value="{{.P.Statement}}"{{if not .CanEdit}} readonly{{end}}></label>
-          <label class="f"><span class="l">Blurb</span><textarea name="blurb" rows="4"{{if not .CanEdit}} readonly{{end}}>{{.P.Blurb}}</textarea><small>Shown on the site when the episode is released.</small></label>
+          <label class="f"><span class="l">{{if $show}}Name{{else}}Title{{end}}</span><input name="title" value="{{.P.Title}}"{{if not .CanEdit}} readonly{{end}}></label>
+          <label class="f"><span class="l">{{if $show}}Description{{else}}Statement{{end}}</span><input name="statement" value="{{.P.Statement}}"{{if not .CanEdit}} readonly{{end}}></label>
+          {{if $show}}<input type="hidden" name="blurb" value="{{.P.Blurb}}">{{else}}<label class="f"><span class="l">Blurb</span><textarea name="blurb" rows="4"{{if not .CanEdit}} readonly{{end}}>{{.P.Blurb}}</textarea><small>Shown on the site when the episode is released.</small></label>{{end}}
           {{if .CanEdit}}<button class="save" type="submit">Save</button>{{end}}
         </div>
       </section>
     </form>
 
-    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+    {{if not $show}}<form class="form" method="post" action="{{$path}}/settings">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="schedule">
       <section class="fs">
         <div class="fsh"><h3>Schedule</h3><p>Status moves the proposition between rail groups. The target date is what the board counts down to.</p></div>
@@ -51,12 +51,12 @@
         {{if .IsOwner}}<p><a class="lnk" href="/settings#team">Invite someone from workspace settings</a></p>
         <p class="small dim">An invitation brings somebody into the workspace rather than onto this proposition. Once they have accepted, tick them above.</p>{{end}}
       </div>
-    </section>
+    </section>{{end}}
 
-    <form class="form" method="post" action="/p/{{.P.ID}}/settings">
+    <form class="form" method="post" action="{{$path}}/settings">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="columns">
       <section class="fs">
-        <div class="fsh"><h3>Board columns</h3><p>The stages this episode moves through. A column keeps its cards when you rename it, and will not go while it still has any.</p></div>
+        <div class="fsh"><h3>Board columns</h3><p>{{if $show}}The stages work moves through.{{else}}The stages this episode moves through.{{end}} A column keeps its cards when you rename it, and will not go while it still has any.</p></div>
         <div class="fsb">
           <ul class="cols">
             {{range .Columns}}<li>
@@ -73,12 +73,12 @@
       </section>
     </form>
 
-    <section class="fs">
+    {{if not $show}}<section class="fs">
       <div class="fsh"><h3>Documents</h3><p>The shared documents under the board.</p></div>
       <div class="fsb"><p>Editing follows proposition membership and workspace roles. Version history is kept until the document is deleted. Documents are private to this workspace.</p></div>
     </section>
 
-    <form class="form" method="post" action="/p/{{.P.ID}}/publish" id="publish">
+    <form class="form" method="post" action="{{$path}}/publish" id="publish">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <section class="fs">
         <div class="fsh"><h3>Publish</h3><p>Send this proposition to Transistor as an episode: the title and blurb above, the show notes rendered from a document, and one recording as the audio. Publishing again updates the same episode rather than making another.</p></div>
@@ -103,7 +103,7 @@
     <section class="fs last">
       <div class="fsh"><h3>Danger</h3><p>These are not undoable from here.</p></div>
       <div class="fsb"><div class="danger">
-        <form method="post" action="/p/{{.P.ID}}/settings">
+        <form method="post" action="{{$path}}/settings">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           {{if .Archived}}<input type="hidden" name="do" value="restore"><button class="lnk" type="submit">Restore this proposition</button>
           {{else}}<input type="hidden" name="do" value="archive"><button class="lnk del" type="submit">Archive this proposition</button>{{end}}
@@ -115,12 +115,12 @@
     {{if .CanDel}}<dialog id="delprop">
       <h3>Delete {{.Num}} {{.P.Title}}?</h3>
       <p>The board, its cards and everything filed under this proposition go with it. The record of the deletion stays in activity.</p>
-      <form method="post" action="/p/{{.P.ID}}/settings" class="acts">
+      <form method="post" action="{{$path}}/settings" class="acts">
         <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="delete">
         <button class="lnk plain" type="button" data-close>Keep it</button>
         <button class="lnk del" type="submit">Delete permanently</button>
       </form>
-    </dialog>{{end}}
+    </dialog>{{end}}{{end}}
   </section>
 </main>
 <div id="palette" role="dialog" aria-modal="true" aria-label="Search this workspace" hidden><div class="pal">

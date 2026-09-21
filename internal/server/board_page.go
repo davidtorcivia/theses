@@ -51,7 +51,24 @@ type shell struct {
 }
 
 func (s *Server) getShell(w http.ResponseWriter, r *http.Request) {
-	s.workspacePage(w, r, 0)
+	p, err := board.GetShow(r.Context(), s.db)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.workspacePage(w, r, p.ID)
+}
+
+func (s *Server) showSettings(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, err := board.GetShow(r.Context(), s.db)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		r.SetPathValue("id", strconv.FormatInt(p.ID, 10))
+		next(w, r)
+	}
 }
 
 func (s *Server) getProposition(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +103,9 @@ func (s *Server) workspacePage(w http.ResponseWriter, r *http.Request, open int6
 	for _, p := range state.Propositions {
 		if p.ID == state.Open {
 			title = strings.TrimSpace(number(p.Number) + " " + p.Title)
+			if p.Kind == "show" {
+				title = p.Title
+			}
 		}
 	}
 	// json.Marshal escapes < > and & into \u00xx, so no payload can close the

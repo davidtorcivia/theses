@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -109,6 +110,31 @@ func TestBackUpNowThenListAndRestore(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 	h.configureBackups(noDeleteBucket(t, "example-bucket"), "example-bucket")
+
+	// Production owns the restore hook from the document watcher goroutine.
+	// This integration test starts and joins it on the same lifecycle.
+	docsCtx, stopDocs := context.WithCancel(context.Background())
+	docsDone := make(chan struct{})
+	go func() { defer close(docsDone); h.srv.Docs().Run(docsCtx) }()
+	defer func() {
+		stopDocs()
+		select {
+		case <-docsDone:
+		case <-time.After(5 * time.Second):
+			t.Error("timed out stopping the document mirror")
+		}
+	}()
+	mirrorReady := false
+	for range 100 {
+		if h.srv.Docs().WithMirrorPaused(context.Background(), func() error { return nil }) == nil {
+			mirrorReady = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !mirrorReady {
+		t.Fatal("the document mirror did not start")
+	}
 
 	// The run is in the background, so the page says it started and the archive
 	// shows up in the listing once it has.

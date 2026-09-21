@@ -117,6 +117,212 @@ func TestCreatePropositionSeedsColumnsAndRecordsIt(t *testing.T) {
 	}
 }
 
+func TestEnsureShowSeedsOnceAndKeepsUniversalMembership(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	ownerID, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "owner", Email: "owner@example.com", Name: "Owner", Initials: "OW",
+		Colour: "#1100ff", Role: auth.RoleOwner, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	show, err := EnsureShow(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if show.ID <= 0 || show.Number != 0 || show.Kind != "show" || show.Status != "show" || show.Title != "Show" {
+		t.Fatalf("show = %+v", show)
+	}
+	if len(show.Members) != 1 || show.Members[0] != ownerID {
+		t.Fatalf("members = %v", show.Members)
+	}
+	columns, err := ListColumns(ctx, db, show.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(columns) != len(showColumns) {
+		t.Fatalf("columns = %+v", columns)
+	}
+	for i, column := range columns {
+		if column.Name != showColumns[i] {
+			t.Errorf("column %d = %q, want %q", i, column.Name, showColumns[i])
+		}
+	}
+	var documents, documentCreates int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM documents WHERE proposition_id = ?`, show.ID).Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM activity
+		WHERE proposition_id = ? AND actor_kind = 'system' AND entity = 'document' AND action = 'create'
+		AND after_json IS NOT NULL`, show.ID).Scan(&documentCreates); err != nil {
+		t.Fatal(err)
+	}
+	if documents != 4 || documentCreates != 4 {
+		t.Fatalf("documents = %d, create activities = %d", documents, documentCreates)
+	}
+
+	if _, err := db.ExecContext(ctx, `DELETE FROM documents WHERE proposition_id = ? AND slug = 'ideas'`, show.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := EnsureShow(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != show.ID {
+		t.Fatalf("second ensure made show %d, want %d", again.ID, show.ID)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM documents WHERE proposition_id = ?`, show.ID).Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	if documents != 3 {
+		t.Fatalf("second ensure recreated a deleted document: %d documents", documents)
+	}
+
+	futureID, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "future", Email: "future@example.com", Name: "Future", Initials: "FU",
+		Colour: "#2200ff", Role: auth.RoleEditor, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM proposition_members WHERE proposition_id = ? AND user_id = ?`, show.ID, futureID); err != nil {
+		t.Fatal(err)
+	}
+	var member int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM proposition_members
+		WHERE proposition_id = ? AND user_id = ?`, show.ID, futureID).Scan(&member); err != nil {
+		t.Fatal(err)
+	}
+	if member != 1 {
+		t.Fatal("the Show membership was removed")
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, futureID); err != nil {
+		t.Fatalf("deleting a user with Show membership: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM proposition_members
+		WHERE proposition_id = ? AND user_id = ?`, show.ID, futureID).Scan(&member); err != nil {
+		t.Fatal(err)
+	}
+	if member != 0 {
+		t.Fatal("deleting a user kept its Show membership")
+	}
+}
+
+func TestShowGuardsItsShapeAndMembershipButAllowsEditing(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	show, err := EnsureShow(ctx, f.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := f.who["owner"]
+	blocked := map[string]func() error{
+		"status":   func() error { _, err := f.SetStatus(ctx, owner, show.ID, "idea"); return err },
+		"schedule": func() error { _, err := f.Schedule(ctx, owner, show.ID, "1", "2026-10-01"); return err },
+		"move":     func() error { _, err := f.MoveProposition(ctx, owner, show.ID, f.prop); return err },
+		"archive":  func() error { _, err := f.ArchiveProposition(ctx, owner, show.ID); return err },
+		"restore":  func() error { _, err := f.RestoreProposition(ctx, owner, show.ID); return err },
+		"delete":   func() error { _, err := f.DeleteProposition(ctx, owner, show.ID); return err },
+		"add member": func() error {
+			_, err := f.AddMember(ctx, owner, show.ID, f.who["outsider"].ID)
+			return err
+		},
+		"remove member": func() error {
+			_, err := f.RemoveMember(ctx, owner, show.ID, f.who["owner"].ID)
+			return err
+		},
+	}
+	for name, run := range blocked {
+		if err := run(); !errors.Is(err, ErrShow) {
+			t.Errorf("%s gave %v, want ErrShow", name, err)
+		}
+	}
+
+	for _, query := range []string{
+		`DELETE FROM propositions WHERE id = ?`,
+		`UPDATE propositions SET kind = 'proposition' WHERE id = ?`,
+		`UPDATE propositions SET archived_at = 1 WHERE id = ?`,
+	} {
+		if _, err := f.db.ExecContext(ctx, query, show.ID); err == nil {
+			t.Fatalf("database allowed mutation of permanent Show: %s", query)
+		}
+	}
+
+	e, err := f.EditProposition(ctx, owner, show.ID, "The Show", "Shared work", "For everyone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, owner, e.Seq); err != nil {
+		t.Fatalf("undoing a Show title edit: %v", err)
+	}
+	show, err = GetShow(ctx, f.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if show.Title != "Show" {
+		t.Fatalf("undo left title %q", show.Title)
+	}
+}
+
+func TestOrdinaryNumberingIgnoresShow(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	id, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "owner", Email: "owner@example.com", Name: "Owner", Initials: "OW",
+		Colour: "#1100ff", Role: auth.RoleOwner, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureShow(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(core.New(db, core.NewBus()), func() Defaults {
+		return Defaults{Status: "idea", Columns: []string{"Backlog"}}
+	})
+	e, err := svc.CreateProposition(ctx, core.Actor{Kind: core.KindUser, ID: id, Name: "Owner"}, "First")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := GetProposition(ctx, db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Number != 1 || p.Kind != "proposition" {
+		t.Fatalf("ordinary proposition = %+v", p)
+	}
+}
+
+func TestPropositionIDsAreNeverReusedAfterDeletion(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	owner := f.who["owner"]
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO propositions
+		(id, number, title, status, position, created_at) VALUES (100, 100, 'Imported', 'idea', 'Z', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	previous := f.prop
+	for i := 0; i < 3; i++ {
+		if _, err := f.DeleteProposition(ctx, owner, previous); err != nil {
+			t.Fatal(err)
+		}
+		created, err := f.CreateProposition(ctx, owner, fmt.Sprintf("Replacement %d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created.EntityID <= previous {
+			t.Fatalf("deleted proposition %d was followed by id %d", previous, created.EntityID)
+		}
+		if i == 0 && created.EntityID <= 100 {
+			t.Fatalf("raw proposition id 100 was followed by id %d", created.EntityID)
+		}
+		previous = created.EntityID
+	}
+}
+
 func TestAuthorisationRefusals(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)

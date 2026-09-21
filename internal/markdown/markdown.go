@@ -1,13 +1,14 @@
 // Package markdown renders block text the way the app shows it: GitHub tables,
-// strikethrough, footnotes and bare URLs, plus the two inline elements the
-// mockup uses, @handle mentions and bracketed notes. Raw HTML in the source is
-// dropped, so a block is safe to write into a page.
+// strikethrough, footnotes and bare URLs, plus the custom inline elements the
+// mockup uses, @handle mentions, proposition references and bracketed notes.
+// Raw HTML in the source is dropped, so a block is safe to write into a page.
 package markdown
 
 import (
 	"bytes"
 	"html/template"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -25,6 +26,7 @@ import (
 var md = goldmark.New(
 	goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.Footnote, extension.Linkify),
 	goldmark.WithParserOptions(parser.WithInlineParsers(
+		util.Prioritized(propositionParser{}, 149),
 		util.Prioritized(mentionParser{}, 150),
 		util.Prioritized(noteParser{}, 150),
 	)),
@@ -49,7 +51,7 @@ func RenderDocument(blocks []string) template.HTML {
 
 // Plain strips the markup and returns the words, for the search index. Block
 // text is separated by blank lines; link targets and footnote markers are left
-// out, mentions read as @handle and notes as their text.
+// out, mentions read as @handle, propositions by id and notes as their text.
 func Plain(source string) string {
 	src := []byte(source)
 	var b strings.Builder
@@ -59,6 +61,9 @@ func Plain(source string) string {
 			switch n := n.(type) {
 			case *mention:
 				b.WriteString("@" + n.handle)
+				return ast.WalkSkipChildren, nil
+			case *proposition:
+				b.WriteString("Proposition " + strconv.FormatInt(n.id, 10))
 				return ast.WalkSkipChildren, nil
 			case *note:
 				b.WriteString(n.body)
@@ -102,6 +107,21 @@ type mention struct {
 	handle string
 }
 
+// A proposition is a stable reference whose visible label is resolved by the
+// reader. The stored markdown contains only the proposition id.
+type proposition struct {
+	ast.BaseInline
+	id int64
+}
+
+var kindProposition = ast.NewNodeKind("Proposition")
+
+func (n *proposition) Kind() ast.NodeKind { return kindProposition }
+
+func (n *proposition) Dump(source []byte, level int) {
+	ast.DumpHelper(n, source, level, map[string]string{"id": strconv.FormatInt(n.id, 10)}, nil)
+}
+
 var kindMention = ast.NewNodeKind("Mention")
 
 func (n *mention) Kind() ast.NodeKind { return kindMention }
@@ -127,9 +147,31 @@ func (n *note) Dump(source []byte, level int) {
 }
 
 var (
-	mentionPattern = regexp.MustCompile(`^@([A-Za-z0-9_][A-Za-z0-9_-]*)`)
-	notePattern    = regexp.MustCompile(`^\[(?:([A-Z]{2,4}): ([^\]\n]+)|(check[^\]\n]*))\]`)
+	mentionPattern     = regexp.MustCompile(`^@([A-Za-z0-9_][A-Za-z0-9_-]*)`)
+	propositionPattern = regexp.MustCompile(`^@\[p:([1-9][0-9]*)\]`)
+	notePattern        = regexp.MustCompile(`^\[(?:([A-Z]{2,4}): ([^\]\n]+)|(check[^\]\n]*))\]`)
 )
+
+type propositionParser struct{}
+
+func (propositionParser) Trigger() []byte { return []byte{'@'} }
+
+func (propositionParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	if r := block.PrecendingCharacter(); unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+		return nil
+	}
+	line, _ := block.PeekLine()
+	m := propositionPattern.FindSubmatchIndex(line)
+	if m == nil {
+		return nil
+	}
+	id, err := strconv.ParseInt(string(line[m[2]:m[3]]), 10, 64)
+	if err != nil {
+		return nil
+	}
+	block.Advance(m[1])
+	return &proposition{id: id}
+}
 
 type mentionParser struct{}
 
@@ -176,20 +218,18 @@ type nodeRenderer struct{}
 
 func (r nodeRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
 	reg.Register(kindMention, r.renderMention)
+	reg.Register(kindProposition, r.renderProposition)
 	reg.Register(kindNote, r.renderNote)
 	reg.Register(ast.KindLink, r.renderLink)
 	reg.Register(ast.KindAutoLink, r.renderAutoLink)
 }
 
-// A written link, [text](target), is written out only when its target is http
-// or https, and then with rel="noopener" on it. Every other scheme is put back
-// as the text it was typed as, because this is a workspace where anyone may
-// write a paragraph and a mailto: or a javascript: target behind a friendly
-// label is never something the page should offer to follow. The browser's own
-// renderer does exactly this, so an export and the live view agree.
+// Written links allow http, https and the two internal workspace paths.
+// Other targets stay literal so user-authored labels cannot conceal unsafe URLs.
 func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
 	link := n.(*ast.Link)
-	if !httpURL.Match(link.Destination) {
+	internal := internalURL.Match(link.Destination)
+	if !httpURL.Match(link.Destination) && !internal {
 		if entering {
 			_ = w.WriteByte('[')
 		} else {
@@ -202,15 +242,21 @@ func (nodeRenderer) renderLink(w util.BufWriter, source []byte, n ast.Node, ente
 	if entering {
 		_, _ = w.WriteString(`<a href="`)
 		_, _ = w.Write(util.EscapeHTML(util.URLEscape(link.Destination, true)))
-		_, _ = w.WriteString(`" rel="noopener">`)
+		if internal {
+			_, _ = w.WriteString(`">`)
+		} else {
+			_, _ = w.WriteString(`" rel="noopener">`)
+		}
 	} else {
 		_, _ = w.WriteString("</a>")
 	}
 	return ast.WalkContinue, nil
 }
 
-// httpURL is the only kind of target a written link in this app may point at.
+// Written links may point to the web or directly to a workspace proposition.
 var httpURL = regexp.MustCompile(`^(?i:https?)://`)
+
+var internalURL = regexp.MustCompile(`^(?:/show|/p/[1-9][0-9]*)$`)
 
 // An autolink is a URL Linkify found in the running text, an address, or one
 // somebody wrote in angle brackets. The last of those carries whatever scheme
@@ -250,6 +296,26 @@ func (nodeRenderer) renderMention(w util.BufWriter, source []byte, n ast.Node, e
 		_, _ = w.WriteString(`">@`)
 		_, _ = w.Write(handle)
 		_, _ = w.WriteString(`</b>`)
+	}
+	return ast.WalkSkipChildren, nil
+}
+
+func (nodeRenderer) renderProposition(w util.BufWriter, source []byte, n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if entering {
+		id := strconv.FormatInt(n.(*proposition).id, 10)
+		for parent := n.Parent(); parent != nil; parent = parent.Parent() {
+			if parent.Kind() == ast.KindLink {
+				_, _ = w.WriteString("Proposition " + id)
+				return ast.WalkSkipChildren, nil
+			}
+		}
+		_, _ = w.WriteString(`<a class="proposition-ref" data-proposition="`)
+		_, _ = w.WriteString(id)
+		_, _ = w.WriteString(`" href="/p/`)
+		_, _ = w.WriteString(id)
+		_, _ = w.WriteString(`">Proposition `)
+		_, _ = w.WriteString(id)
+		_, _ = w.WriteString(`</a>`)
 	}
 	return ast.WalkSkipChildren, nil
 }

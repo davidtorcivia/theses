@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,11 +28,80 @@ const Debounce = 2 * time.Second
 // is the whole reason the activity table has an actor kind at all.
 var fileActor = core.Actor{Kind: core.KindFile}
 
+var errMirrorStopped = errors.New("the document mirror is not running")
+
+type mirrorPause struct {
+	run   func() error
+	reply chan error
+}
+
+type mirrorRun struct {
+	watcher *fsnotify.Watcher
+	sub     *core.Subscription
+
+	pendMu  sync.Mutex
+	pending map[string]bool
+	wake    chan struct{}
+	timers  map[string]*time.Timer
+}
+
+func (m *mirrorRun) poke() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (m *mirrorRun) take() []string {
+	m.pendMu.Lock()
+	defer m.pendMu.Unlock()
+	paths := make([]string, 0, len(m.pending))
+	for path := range m.pending {
+		paths = append(paths, path)
+		delete(m.pending, path)
+	}
+	return paths
+}
+
+func (m *mirrorRun) close() {
+	for path, timer := range m.timers {
+		timer.Stop()
+		delete(m.timers, path)
+	}
+	m.pendMu.Lock()
+	clear(m.pending)
+	m.pendMu.Unlock()
+	m.sub.Close()
+	_ = m.watcher.Close()
+}
+
+func (s *Service) startMirror(ctx context.Context) (*mirrorRun, error) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	m := &mirrorRun{
+		watcher: watcher,
+		sub:     s.Bus.Subscribe(0),
+		pending: map[string]bool{},
+		wake:    make(chan struct{}, 1),
+		timers:  map[string]*time.Timer{},
+	}
+	for _, path := range s.catchUp(ctx, watcher) {
+		if err := s.Import(ctx, path); err != nil {
+			s.log.Warn("document not imported", "err", err)
+		}
+	}
+	return m, nil
+}
+
 // Run keeps the markdown mirror and the database in step, in one goroutine: it
 // writes a file for every applied command and imports a file somebody else
 // wrote. It returns when ctx is done.
 func (s *Service) Run(ctx context.Context) {
 	defer s.Stop()
+	close(s.mirrorStarted)
+	defer close(s.mirrorDone)
 	if s.root == "" {
 		<-ctx.Done()
 		return
@@ -41,73 +111,56 @@ func (s *Service) Run(ctx context.Context) {
 		<-ctx.Done()
 		return
 	}
-	watcher, err := fsnotify.NewWatcher()
+	run, err := s.startMirror(ctx)
 	if err != nil {
 		s.log.Error("document watcher", "err", err)
-		<-ctx.Done()
 		return
 	}
-	defer watcher.Close()
-
-	// The subscription is opened before the files are written, so a command
-	// applied while the mirror is catching up is waiting on the channel rather
-	// than missed by both.
-	sub := s.Bus.Subscribe(0)
-	defer func() { sub.Close() }()
-
-	// A debounced import is held in a set rather than sent down a channel: a
-	// channel with room for sixteen drops the seventeenth, and a dropped import
-	// is a document that never gets read back. The channel here only wakes the
-	// loop, and losing a wake costs nothing because the work is still in the
-	// set when the next one arrives.
-	var pendMu sync.Mutex
-	pending := map[string]bool{}
-	wake := make(chan struct{}, 1)
-	poke := func() {
-		select {
-		case wake <- struct{}{}:
-		default:
-		}
-	}
-	take := func() []string {
-		pendMu.Lock()
-		defer pendMu.Unlock()
-		paths := make([]string, 0, len(pending))
-		for path := range pending {
-			paths = append(paths, path)
-			delete(pending, path)
-		}
-		return paths
-	}
-
-	timers := map[string]*time.Timer{}
-	// Whatever was already on disk is read before the loop starts, so that no
-	// number of documents can outrun anything.
-	for _, path := range s.catchUp(ctx, watcher) {
-		if err := s.Import(ctx, path); err != nil {
-			s.log.Warn("document not imported", "err", err)
-		}
-	}
+	defer func() { run.close() }()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case e, ok := <-sub.C:
+		case request := <-s.mirrorPause:
+			run.close()
+			// Periodic revisions refer to rows in the database being replaced. They
+			// must not wake later and write a snapshot for a reused document id.
+			s.pauseRevisionTimers()
+			s.mu.Lock()
+			clear(s.written)
+			s.mu.Unlock()
+
+			swapErr := request.run()
+			if ctx.Err() != nil {
+				request.reply <- errors.Join(swapErr, ctx.Err())
+				return
+			}
+			next, resumeErr := s.startMirror(ctx)
+			if resumeErr == nil {
+				run = next
+				resumeErr = s.verifyMirrors(ctx)
+			}
+			s.resumeRevisionTimers()
+			request.reply <- errors.Join(swapErr, resumeErr)
+			if next == nil {
+				return
+			}
+		case e, ok := <-run.sub.C:
 			if !ok {
 				return
 			}
-			if sub.Dropped() > 0 {
+			if run.sub.Dropped() > 0 {
 				// Subscribe first so changes during the rescan wait on the new channel;
 				// events queued around the drop are no longer ordered and are discarded.
-				old := sub
-				sub = s.Bus.Subscribe(0)
+				old := run.sub
+				run.sub = s.Bus.Subscribe(0)
 				old.Close()
-				s.reconcile(ctx, watcher)
+				s.reconcile(ctx, run.watcher)
 				continue
 			}
-			s.applied(ctx, watcher, e)
-		case ev, ok := <-watcher.Events:
+			s.applied(ctx, run.watcher, e)
+		case ev, ok := <-run.watcher.Events:
 			if !ok {
 				return
 			}
@@ -118,30 +171,94 @@ func (s *Service) Run(ctx context.Context) {
 			if !strings.HasSuffix(path, ".md") {
 				continue
 			}
-			if t, ok := timers[path]; ok {
+			if t, ok := run.timers[path]; ok {
 				t.Reset(s.Debounce)
 				continue
 			}
-			timers[path] = time.AfterFunc(s.Debounce, func() {
-				pendMu.Lock()
-				pending[path] = true
-				pendMu.Unlock()
-				poke()
+			current := run
+			current.timers[path] = time.AfterFunc(s.Debounce, func() {
+				current.pendMu.Lock()
+				current.pending[path] = true
+				current.pendMu.Unlock()
+				current.poke()
 			})
-		case <-wake:
-			for _, path := range take() {
-				delete(timers, path)
+		case <-run.wake:
+			for _, path := range run.take() {
+				delete(run.timers, path)
 				if err := s.Import(ctx, path); err != nil {
 					s.log.Warn("document not imported", "err", err)
 				}
 			}
-		case err, ok := <-watcher.Errors:
+		case err, ok := <-run.watcher.Errors:
 			if !ok {
 				return
 			}
 			s.log.Warn("document watcher", "err", err)
 		}
 	}
+}
+
+// WithMirrorPaused runs a database and filesystem swap while Run owns no
+// watches or cached hashes for the old tree, then catches the installed tree up
+// before returning. The callback runs directly when mirroring is disabled.
+func (s *Service) WithMirrorPaused(ctx context.Context, run func() error) error {
+	if s.root == "" {
+		return run()
+	}
+	// Production starts Run before listening. Refusing before that point keeps a
+	// background restore from waiting forever when a caller forgot the worker.
+	select {
+	case <-s.mirrorStarted:
+	default:
+		return errMirrorStopped
+	}
+	select {
+	case <-s.mirrorDone:
+		return errMirrorStopped
+	default:
+	}
+
+	request := mirrorPause{run: run, reply: make(chan error, 1)}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.mirrorDone:
+		return errMirrorStopped
+	case s.mirrorPause <- request:
+	}
+	// Once Run accepts the request it owns the callback and the caller must not
+	// return early: Restore would otherwise unfreeze writes and remove its staged
+	// files while the callback was still swapping them.
+	return <-request.reply
+}
+
+// verifyMirrors turns a known catch-up write failure into a restore failure.
+// Existing hand-edited files remain valid: this only requires one file for
+// every document row after the swap.
+func (s *Service) verifyMirrors(ctx context.Context) error {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM documents`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var document int64
+		if err := rows.Scan(&document); err != nil {
+			return err
+		}
+		_, path, err := s.paths(ctx, document)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("document %d was not mirrored after restore: %w", document, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("document %d was not mirrored after restore: %s is not a file", document, path)
+		}
+	}
+	return rows.Err()
 }
 
 // catchUp brings the mirror up to date with the database at start and returns

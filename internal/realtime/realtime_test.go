@@ -1,17 +1,23 @@
 package realtime
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +29,29 @@ import (
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/store"
 )
+
+type writeSignalConn struct {
+	net.Conn
+	mu   sync.Mutex
+	next chan struct{}
+}
+
+func (c *writeSignalConn) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	if c.next != nil {
+		close(c.next)
+		c.next = nil
+	}
+	c.mu.Unlock()
+	return c.Conn.Write(p)
+}
+
+func (c *writeSignalConn) arm() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.next = make(chan struct{})
+	return c.next
+}
 
 type rig struct {
 	*testing.T
@@ -204,6 +233,47 @@ func readNothing(t *testing.T, ws *websocket.Conn) {
 			t.Fatalf("an event reached a tab that may not read it: %+v", m.Event)
 		}
 	}
+}
+
+func blockedWebsocket(t *testing.T) (*websocket.Conn, *writeSignalConn) {
+	t.Helper()
+	raw, peer := net.Pipe()
+	conn := &writeSignalConn{Conn: raw}
+	deadline := time.Now().Add(time.Second)
+	_ = raw.SetDeadline(deadline)
+	_ = peer.SetDeadline(deadline)
+	t.Cleanup(func() {
+		raw.Close()
+		peer.Close()
+	})
+
+	handshake := make(chan error, 1)
+	go func() {
+		req, err := http.ReadRequest(bufio.NewReader(peer))
+		if err != nil {
+			handshake <- err
+			return
+		}
+		sum := sha1.Sum([]byte(req.Header.Get("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+		_, err = fmt.Fprintf(peer, "HTTP/1.1 101 Switching Protocols\r\n"+
+			"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n",
+			base64.StdEncoding.EncodeToString(sum[:]))
+		handshake <- err
+	}()
+	config, err := websocket.NewConfig("ws://example.test/ws", "http://example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := websocket.NewClient(config, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-handshake; err != nil {
+		t.Fatal(err)
+	}
+	_ = raw.SetDeadline(time.Time{})
+	_ = peer.SetDeadline(time.Time{})
+	return ws, conn
 }
 
 func send(t *testing.T, ws *websocket.Conn, cmd command) {
@@ -406,6 +476,36 @@ func TestSocketSendsNoEventsForAPropositionTheTabCannotRead(t *testing.T) {
 	}
 }
 
+func TestSocketSendsRemovalFromANonOpenPropositionBeforeRevokingIt(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+
+	created, err := r.boards.CreateProposition(ctx, r.actor("ada"), "Wave Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := created.EntityID
+	if _, err := r.boards.AddMember(ctx, r.actor("ada"), other, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	member := r.mustDial("grace")
+	read(t, member, "presence")
+	if _, err := r.boards.RemoveMember(ctx, r.actor("ada"), other, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+	removed := read(t, member, "event")
+	if removed.Event == nil || removed.Event.Entity != "member" || removed.Event.Action != "remove" ||
+		removed.Event.Proposition != other || removed.Event.EntityID != r.users["grace"].ID {
+		t.Fatalf("removed member got %+v", removed)
+	}
+
+	if _, err := r.boards.EditProposition(ctx, r.actor("ada"), other, "Secret rename", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	readNothing(t, member)
+}
+
 // A socket is only as good as the session behind it. Signing out everywhere
 // stops the writes, and being removed from the proposition stops the reading.
 func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {
@@ -417,19 +517,12 @@ func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {
 	if _, err := r.boards.RemoveMember(ctx, r.actor("ada"), r.prop, r.users["grace"].ID); err != nil {
 		t.Fatal(err)
 	}
-	member.SetReadDeadline(time.Now().Add(3 * time.Second))
-	for {
-		var raw string
-		if err := websocket.Message.Receive(member, &raw); err != nil {
-			break // the socket was closed, which is the point
-		}
-		var m message
-		if err := json.Unmarshal([]byte(raw), &m); err != nil {
-			t.Fatal(err)
-		}
-		if m.Type == "event" && m.Event.Entity == "card" {
-			t.Fatal("a removed member was still sent the board")
-		}
+	removed := read(t, member, "event")
+	if removed.Event == nil || removed.Event.Entity != "member" || removed.Event.Action != "remove" {
+		t.Fatalf("removed member got %+v", removed)
+	}
+	if m, err := awaitFrame(t, member, 3*time.Second); err == nil || timedOut(err) {
+		t.Fatalf("removed member's socket did not close after its final event: %+v, %v", m, err)
 	}
 
 	// Signing out everywhere is a bumped epoch, which the next command sees.
@@ -453,20 +546,82 @@ func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {
 	}
 }
 
+func TestSocketSendsOpenPropositionDeletionBeforeClosing(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+
+	member := r.mustDial("grace")
+	read(t, member, "presence")
+	if _, err := r.boards.DeleteProposition(ctx, r.actor("ada"), r.prop); err != nil {
+		t.Fatal(err)
+	}
+	deleted := read(t, member, "event")
+	if deleted.Event == nil || deleted.Event.Entity != "proposition" || deleted.Event.Action != "delete" {
+		t.Fatalf("member got %+v", deleted)
+	}
+	if m, err := awaitFrame(t, member, 3*time.Second); err == nil || timedOut(err) {
+		t.Fatalf("deleted proposition's socket did not close after its final event: %+v, %v", m, err)
+	}
+}
+
+func TestBlockedWriterClosesAndLeavesWithinWriteWait(t *testing.T) {
+	ws, raw := blockedWebsocket(t)
+	h := &Hub{pingEvery: time.Hour, writeWait: 100 * time.Millisecond,
+		rooms: map[int64]map[*client]struct{}{}}
+	c := &client{hub: h, ws: ws, user: &store.User{ID: 2}, proposition: 7,
+		member: map[int64]bool{7: true}, out: make(chan outbound, 1), done: make(chan struct{})}
+	h.rooms[7] = map[*client]struct{}{c: {}}
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		var raw string
+		_ = websocket.Message.Receive(ws, &raw)
+		h.leave(c)
+		close(cleanupDone)
+	}()
+	blocked := raw.arm()
+	c.out <- outbound{body: []byte("first")}
+	writerDone := make(chan struct{})
+	go func() {
+		c.write()
+		close(writerDone)
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not reach the peer that stopped reading")
+	}
+	c.sendFinal(message{Type: "event"})
+
+	for name, done := range map[string]<-chan struct{}{
+		"client close": c.done, "writer return": writerDone, "room cleanup": cleanupDone,
+	} {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s did not finish after the write deadline", name)
+		}
+	}
+	h.mu.Lock()
+	_, present := h.rooms[7]
+	h.mu.Unlock()
+	if present {
+		t.Fatal("blocked client stayed in its room")
+	}
+}
+
 func TestDeletedPropositionCannotReuseASocketsCachedMembership(t *testing.T) {
 	c := &client{
 		user: &store.User{ID: 2}, proposition: 7, member: map[int64]bool{7: true},
-		done: make(chan struct{}), out: make(chan []byte, 1),
+		done: make(chan struct{}), out: make(chan outbound, 1),
 	}
 	deleted := core.Event{Proposition: 7, Entity: "proposition", EntityID: 7, Action: "delete"}
 	if !c.wants(deleted) {
 		t.Fatal("the member could not see the deletion")
 	}
 	c.membership(deleted)
-	select {
-	case <-c.done:
-	default:
-		t.Fatal("the deleted proposition's open socket stayed connected")
+	if c.wants(deleted) {
+		t.Fatal("the deleted proposition stayed readable")
 	}
 
 	reused := core.Event{Proposition: 7, Entity: "proposition", EntityID: 7, Action: "create",
@@ -520,7 +675,7 @@ func TestForwardDropsATabThatFellBehind(t *testing.T) {
 
 	c := &client{
 		user: &store.User{ID: 1}, proposition: 1, member: map[int64]bool{1: true},
-		out: make(chan []byte, 1024), done: make(chan struct{}),
+		out: make(chan outbound, 1024), done: make(chan struct{}),
 	}
 	go c.forward(sub)
 
@@ -531,7 +686,7 @@ func TestForwardDropsATabThatFellBehind(t *testing.T) {
 	}
 	select {
 	case raw := <-c.out:
-		t.Fatalf("a socket with a hole was sent %s before it closed", raw)
+		t.Fatalf("a socket with a hole was sent %s before it closed", raw.body)
 	default:
 	}
 }

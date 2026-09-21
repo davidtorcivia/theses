@@ -115,7 +115,11 @@ func (s *Server) renderPropositionSettings(w http.ResponseWriter, r *http.Reques
 		statuses = append(statuses, option{Value: st, Label: st, On: st == p.Status})
 	}
 
-	data := s.page(r, number(p.Number)+" "+p.Title, merge(map[string]any{
+	title := p.Title
+	if p.Kind != "show" {
+		title = number(p.Number) + " " + title
+	}
+	data := s.page(r, title, merge(map[string]any{
 		"Payload":  payload,
 		"P":        p,
 		"Num":      number(p.Number),
@@ -208,7 +212,11 @@ func (s *Server) postPropositionSettings(w http.ResponseWriter, r *http.Request)
 		s.renderPropositionSettings(w, r, http.StatusUnprocessableEntity,
 			map[string]any{"Error": refused.Error()})
 	default:
-		http.Redirect(w, r, "/p/"+strconv.FormatInt(id, 10)+"/settings?saved=1", http.StatusSeeOther)
+		path := "/p/" + strconv.FormatInt(id, 10) + "/settings?saved=1"
+		if r.URL.Path == "/show/settings" {
+			path = "/show/settings?saved=1"
+		}
+		http.Redirect(w, r, path, http.StatusSeeOther)
 	}
 }
 

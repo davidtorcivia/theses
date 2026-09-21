@@ -1,13 +1,14 @@
 // The board: columns that wrap, cards that drag between and within them, the
 // inline form that assigns by account name, and the All, Mine and Open filter.
 
-import { $, el, children, initials, say, editable, handles, stripHandles } from './dom.js';
-import { state, user, emit, hold, columnCards, canEdit } from './state.js';
+import { $, el, children, initials, say, editable, handles, stripHandles, inline } from './dom.js';
+import { state, user, byHandle, proposition, emit, hold, columnCards, canEdit } from './state.js';
 import { send } from './net.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { openCard } from './drawer.js';
 import { activate } from './keys.js';
 import { movable, carrying } from './drag.js';
+import { propositionToken, propositionLabel, referenceIDs, referenceKey } from './references.js';
 
 // A due date is an ISO calendar day, so late compares two of those and never
 // two instants: a card due today is not late at any hour of it. The day it is
@@ -51,6 +52,10 @@ function meta(card) {
   const bits = [];
   if (card.due_date) bits.push(el('span', { class: 'due' + (late(card) ? ' late' : ''), text: card.due_date }));
   if (card.question) bits.push(el('span', { class: 'q', text: card.question }));
+  for (const id of referenceIDs(card.title)) {
+    const p = proposition(id);
+    if (p) bits.push(el('span', { class: 'status', text: p.archived_at ? 'Archived' : p.status }));
+  }
   const list = card.checklist || [];
   if (list.length) bits.push(el('span', { class: 'chk', text: list.filter((i) => i.done).length + '/' + list.length }));
   const notes = (card.comments || []).length;
@@ -73,7 +78,7 @@ function cardKey(card) {
   const list = card.checklist || [];
   return JSON.stringify([
     canEdit(), (card.assignees || []).includes(state.me), late(card),
-    card.title, card.done_at, card.due_date, card.question,
+    referenceKey(card.title, proposition), card.title, card.done_at, card.due_date, card.question,
     list.filter((i) => i.done).length, list.length, (card.comments || []).length,
     (card.assignees || []).map((id) => {
       const person = user(id);
@@ -110,10 +115,11 @@ function cardNode(card) {
     class: 'card' + (card.done_at ? ' done' : '') + (mine ? ' mine' : ''),
     'data-id': id,
   }, who, el('div', { class: 'cb' },
-    el('div', { class: 'ct', text: card.title }),
+    el('div', { class: 'ct' }, inline(card.title, byHandle, proposition)),
     el('div', { class: 'cm' }, meta(card), canEdit() && tick)));
 
-  node.addEventListener('click', () => {
+  node.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return;
     // The pointer that has just carried a card ends in a click as well, and
     // that one finishes the drag rather than asking to read the card.
     if (carrying()) return;
@@ -173,10 +179,13 @@ function columnNode(column, all, nodes, keep) {
   if (col.key !== key) {
     col.key = key;
     col.head = header(column, count);
-    col.add = canEdit() && el('button', {
+    col.add = canEdit() && el('div', { class: 'board-add' }, el('button', {
       class: 'add mono', type: 'button', text: '+ Card',
       onclick: () => inlineAdd(column.id, col.cards),
-    });
+    }), proposition(state.open)?.kind === 'show' && el('button', {
+      class: 'add mono', type: 'button', text: '+ Proposition',
+      onclick: () => addPropositionCard(column.id),
+    }));
   }
 
   children(col.cards, nodes, keep);
@@ -217,7 +226,7 @@ function header(column, count) {
 // inlineAdd is the one place a card is written straight onto the board. An
 // account name in the line puts that person on the card and comes out of it.
 function inlineAdd(column, cards) {
-  const field = el('textarea', { rows: '1', placeholder: 'What needs doing? @ assigns someone.' });
+  const field = el('textarea', { rows: '1', placeholder: 'What needs doing? @ people or propositions.' });
   const form = el('div', { class: 'newcard' }, field);
   cards.append(form);
   hold(true);
@@ -282,4 +291,29 @@ function addColumn() {
 export function boardSummary() {
   const cards = [...state.cards.values()];
   return `${cards.filter((c) => c.done_at).length} of ${cards.length} done`;
+}
+
+function addPropositionCard(column) {
+  const options = state.props.filter((p) => p.kind !== 'show' && !p.archived_at);
+  const select = el('select', { 'aria-label': 'Proposition' }, options.map((p) =>
+    el('option', { value: p.id, text: propositionLabel(p) })));
+  const cancel = el('button', { type: 'button', class: 'lnk', text: 'Cancel' });
+  const submit = el('button', { type: 'submit', class: 'save', text: 'Add to board', disabled: !options.length });
+  const form = el('form', {}, el('h3', { id: 'track-proposition-title', text: 'Track a proposition' }),
+    el('p', { text: options.length ? 'Its title and status stay linked to the proposition.' : 'Create a proposition first.' }),
+    select, el('div', { class: 'acts' }, cancel, submit));
+  const dialog = el('dialog', { 'aria-labelledby': 'track-proposition-title' }, form);
+  const back = document.activeElement;
+  cancel.onclick = () => dialog.close();
+  dialog.addEventListener('close', () => { dialog.remove(); if (back?.isConnected) back.focus(); });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    submit.disabled = true;
+    try {
+      await send('card.create', { column, title: propositionToken(Number(select.value)), assignees: [] });
+      dialog.close();
+    } catch (err) { say(err.message); submit.disabled = false; }
+  });
+  document.body.append(dialog);
+  dialog.showModal();
 }

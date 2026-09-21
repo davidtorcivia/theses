@@ -57,10 +57,10 @@ type Hub struct {
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
 
-	// pingEvery is how often the heartbeat goes out, and pongWait how long a
-	// socket may then go without a frame of any kind before it is dropped.
+	// pingEvery is how often the heartbeat goes out, pongWait how long a socket
+	// may go without a frame, and writeWait how long its peer may stop reading.
 	// Fields so that a test does not wait a minute for them.
-	pingEvery, pongWait time.Duration
+	pingEvery, pongWait, writeWait time.Duration
 
 	// moves numbers the `where` frames of every tab on this server in the order
 	// they arrive, so Presence can tell which of a person's tabs moved last
@@ -74,7 +74,7 @@ type Hub struct {
 
 func New(b *board.Service, a *auth.Auth, log *slog.Logger) *Hub {
 	return &Hub{board: b, auth: a, log: log, rooms: map[int64]map[*client]struct{}{},
-		pingEvery: 25 * time.Second, pongWait: time.Minute}
+		pingEvery: 25 * time.Second, pongWait: time.Minute, writeWait: 10 * time.Second}
 }
 
 // Person is one tab's occupant as the other tabs see them.
@@ -152,7 +152,7 @@ type client struct {
 	ws          *websocket.Conn
 	user        *store.User
 	proposition int64
-	out         chan []byte
+	out         chan outbound
 	done        chan struct{}
 	closeOnce   sync.Once
 	// tab names this socket to the rate limiter, so one tab in a loop cannot
@@ -164,6 +164,11 @@ type client struct {
 	moved  uint64
 	member map[int64]bool
 	owner  bool
+}
+
+type outbound struct {
+	body       []byte
+	closeAfter bool
 }
 
 // moveTo records what this tab has open and where in the order of everything
@@ -250,7 +255,7 @@ func (h *Hub) serve(ws *websocket.Conn) {
 	tab := strconv.FormatInt(h.tabs, 10)
 	h.mu.Unlock()
 	c := &client{hub: h, ws: ws, user: user, proposition: proposition,
-		out: make(chan []byte, outBuffer), done: make(chan struct{}),
+		out: make(chan outbound, outBuffer), done: make(chan struct{}),
 		member: member, owner: user.Role == auth.RoleOwner, tab: tab}
 	defer c.close()
 	go c.write()
@@ -336,13 +341,23 @@ func (c *client) forward(sub *core.Subscription) {
 			c.close()
 			return
 		}
-		if e.Entity == "proposition" && e.Action == "delete" {
-			// Send the deletion before clearing its id; any replacement with that id
-			// then needs membership of its own.
-			if c.wants(e) {
-				c.send(message{Type: "event", Event: &e})
-			}
+		terminal := e.Entity == "proposition" && e.Action == "delete" ||
+			e.Entity == "member" && e.EntityID == c.user.ID && len(e.After) == 0
+		if terminal {
+			allowed := c.wants(e)
+			closeAfter := c.revokesOpen(e.Proposition)
 			c.membership(e)
+			if allowed {
+				m := message{Type: "event", Event: &e}
+				if closeAfter {
+					c.sendFinal(m)
+					return
+				}
+				c.send(m)
+			} else if closeAfter {
+				c.close()
+				return
+			}
 			continue
 		}
 		c.membership(e)
@@ -353,9 +368,7 @@ func (c *client) forward(sub *core.Subscription) {
 }
 
 // membership keeps the set of propositions this tab may read in step with the
-// member commands as they happen, and closes the socket when this person is
-// removed from the one they have open, so a removed member stops receiving on
-// the same command that removed them.
+// member commands as they happen.
 func (c *client) membership(e core.Event) {
 	// A proposition somebody makes is a proposition they are on. The row that
 	// says so is written with the proposition rather than by a member command,
@@ -371,11 +384,7 @@ func (c *client) membership(e core.Event) {
 	if e.Entity == "proposition" && e.Action == "delete" {
 		c.mu.Lock()
 		delete(c.member, e.Proposition)
-		owner := c.owner
 		c.mu.Unlock()
-		if !owner && e.Proposition == c.proposition {
-			c.close()
-		}
 		return
 	}
 	if e.Entity != "member" || e.EntityID != c.user.ID {
@@ -388,11 +397,13 @@ func (c *client) membership(e core.Event) {
 	} else {
 		delete(c.member, e.Proposition)
 	}
-	owner := c.owner
 	c.mu.Unlock()
-	if !added && !owner && e.Proposition == c.proposition {
-		c.close()
-	}
+}
+
+func (c *client) revokesOpen(proposition int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.owner && proposition == c.proposition
 }
 
 func (c *client) canRead(proposition int64) bool {
@@ -439,35 +450,49 @@ func (c *client) write() {
 	beat := time.NewTicker(c.hub.pingEvery)
 	defer beat.Stop()
 	for {
+		var out outbound
 		select {
-		case b := <-c.out:
-			if err := websocket.Message.Send(c.ws, string(b)); err != nil {
-				c.close()
-				return
-			}
+		case out = <-c.out:
 		case <-beat.C:
 			// The heartbeat goes out from here rather than through send,
 			// because this goroutine is the socket's only writer and because a
 			// frame the server owes itself must not be what pushes a tab that
 			// is already behind over the buffer and closes it.
-			if err := websocket.Message.Send(c.ws, ping); err != nil {
-				c.close()
-				return
-			}
+			out.body = []byte(ping)
 		case <-c.done:
+			return
+		}
+		if err := c.ws.SetWriteDeadline(time.Now().Add(c.hub.writeWait)); err != nil {
+			c.close()
+			return
+		}
+		if err := websocket.Message.Send(c.ws, string(out.body)); err != nil {
+			c.close()
+			return
+		}
+		if out.closeAfter {
+			c.close()
 			return
 		}
 	}
 }
 
 func (c *client) send(v any) {
+	c.queue(v, false)
+}
+
+func (c *client) sendFinal(v any) {
+	c.queue(v, true)
+}
+
+func (c *client) queue(v any, closeAfter bool) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
 	select {
 	case <-c.done:
-	case c.out <- b:
+	case c.out <- outbound{body: b, closeAfter: closeAfter}:
 	default:
 		// The tab has stopped draining its socket, so there is nothing to wait
 		// for. Closing it makes the page reconnect and reload the board.

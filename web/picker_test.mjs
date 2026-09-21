@@ -17,7 +17,7 @@ globalThis.document = {
 };
 globalThis.addEventListener = () => {};
 globalThis.getSelection = () => selection;
-const { canAssign, contenteditableCaret, handleMentionKey, writeContenteditable } = await import('./static/app/picker.js');
+const { canAssign, contenteditableCaret, handleMentionKey, mentionable, writeContenteditable } = await import('./static/app/picker.js');
 const proposition = { members: [2] };
 const assigned = new Set([3]);
 
@@ -80,3 +80,20 @@ assert.equal(measure.selected, multi);
 assert.deepEqual(measure.end, [nested, 2]);
 
 console.log('picker behavior passes');
+
+choice.clicked = false;
+const composing = key('Enter');
+Object.defineProperty(composing, 'isComposing', { value: true });
+handleMentionKey(composing, picker, {});
+assert.equal(choice.clicked, false, 'IME confirmation does not choose a mention');
+assert.equal(composing.defaultPrevented, false, 'IME receives its confirmation key');
+
+const composingField = new EventTarget();
+mentionable(composingField);
+let submitted = false;
+composingField.addEventListener('keydown', () => { submitted = true; });
+const imeEnter = key('Enter');
+Object.defineProperty(imeEnter, 'isComposing', { value: true });
+composingField.dispatchEvent(imeEnter);
+assert.equal(submitted, false, 'IME confirmation does not submit the field after closing suggestions');
+assert.equal(imeEnter.defaultPrevented, false);

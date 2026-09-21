@@ -376,6 +376,16 @@ export const cachedMaterial = (proposition) =>
 export const cached = (proposition) =>
   withStore('snapshot', 'readonly', (store) => store.get(proposition));
 
+export async function showID() {
+  const rows = (await withStore('snapshot', 'readonly', (store) => store.getAll())) || [];
+  rows.sort((a, b) => b.at - a.at);
+  for (const row of rows) {
+    const show = (row.payload?.propositions || []).find((p) => p.kind === 'show');
+    if (show) return show.id;
+  }
+  return 0;
+}
+
 // newest is the proposition this device saw last. It is the only one an offline
 // page lets anybody change: the plan makes the others read only from whatever
 // was cached, and this is how a page with no server to ask tells them apart.

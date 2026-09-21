@@ -15,7 +15,9 @@ import { activate } from './keys.js';
 // on. The settings page's Activity tab links here and names it in the hash.
 if (location.hash === '#activity') openPanel();
 
-const TABS = [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
+const tabsFor = (p) => p.kind === 'show'
+  ? [['board', 'Board'], ['notes', 'Notes'], ['files', 'Files']]
+  : [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
 // found is the way back to whatever in the work area has the keyboard, written
 // down before the rebuild throws it away. Everything here that takes the focus
@@ -44,7 +46,7 @@ export function renderWork() {
     children(work, [el('p', { class: 'empty', text: nothing() })]);
     return;
   }
-  document.title = `${num(p.number)} ${p.title} · THESES`;
+  document.title = (p.kind === 'show' ? p.title : `${num(p.number)} ${p.title}`) + ' · THESES';
   children(work, [head(p), pane(p)]);
   if (back) {
     const node = $(back);
@@ -79,7 +81,7 @@ function head(p) {
   for (const id of p.members || []) members.append(initials(user(id), on(id) ? 'on' : ''));
 
   const tabs = el('nav', { class: 'tabs' });
-  for (const [id, label] of TABS) {
+  for (const [id, label] of tabsFor(p)) {
     tabs.append(el('a', {
       class: 'tab' + (state.tab === id ? ' on' : ''), 'data-tab': id, href: '#' + id,
       onclick: (e) => { e.preventDefault(); state.tab = id; location.hash = id; emit(); },
@@ -92,12 +94,13 @@ function head(p) {
     class: 'tab' + (state.panel ? ' on' : ''), id: 'activitytab', type: 'button',
     onclick: openPanel,
   }, 'Activity', held ? el('i', { text: ' ' + held }) : null));
-  tabs.append(el('a', { class: 'tab', href: `/p/${p.id}/settings` }, 'Settings'));
+  tabs.append(el('a', { class: 'tab', href: p.kind === 'show' ? '/show/settings' : `/p/${p.id}/settings` },
+    p.kind === 'show' ? 'Show settings' : 'Settings'));
 
   return el('div', { class: 'whead' },
-    el('div', { class: 'wid' }, el('span', { id: 'wnum', class: 'mono', text: num(p.number) }), title),
+    el('div', { class: 'wid' }, p.kind === 'show' ? null : el('span', { id: 'wnum', class: 'mono', text: num(p.number) }), title),
     statement,
-    el('div', { class: 'wmeta' },
+    p.kind === 'show' ? null : el('div', { class: 'wmeta' },
       el('span', { id: 'wstatus', class: 'status', 'data-s': p.status, text: p.status }),
       archived() && el('span', { class: 'mono', text: 'Archived · read only' }),
       el('span', { id: 'wep', class: 'mono', text: schedule(p) }),
@@ -138,6 +141,9 @@ function editOnClick(node, read, save) {
 let boardPane = null;
 
 function pane(p) {
+  if (p.kind === 'show' && state.tab === 'notes') {
+    return el('section', { class: 'pane', id: 'pane-notes' }, renderDocument());
+  }
   if (state.tab === 'links') {
     const links = el('section', { class: 'pane', id: 'pane-links' });
     renderLinks(links);
@@ -174,6 +180,6 @@ function pane(p) {
     el('span', { class: 'hint press mono', text: 'Press and hold a card to move it.' }),
   ]);
   renderBoard(board);
-  children(boardPane, [ph, board, renderDocument()]);
+  children(boardPane, [ph, board, p.kind === 'show' ? null : renderDocument()]);
   return boardPane;
 }

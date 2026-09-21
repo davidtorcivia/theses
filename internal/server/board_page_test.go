@@ -52,15 +52,15 @@ func (h *harness) owner() core.Actor {
 	return core.Actor{Kind: core.KindUser, ID: id, Name: name}
 }
 
-func TestShellOffersNewPropositionWhenThereAreNone(t *testing.T) {
+func TestShellOpensTheShowWorkspaceBeforeThereArePropositions(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()
 
 	state := h.payload("/")
-	if state.Open != 0 || state.Board != nil {
-		t.Errorf("an empty workspace opened proposition %d", state.Open)
+	if state.Open == 0 || state.Board == nil || state.Board.Proposition != state.Open {
+		t.Errorf("the workspace opened %d with board %+v", state.Open, state.Board)
 	}
-	if len(state.Propositions) != 0 {
+	if len(state.Propositions) != 1 || state.Propositions[0].Kind != "show" || state.Propositions[0].ID != state.Open {
 		t.Errorf("propositions are %+v", state.Propositions)
 	}
 	if !state.Can["edit"] || !state.Can["settings"] {
@@ -68,6 +68,84 @@ func TestShellOffersNewPropositionWhenThereAreNone(t *testing.T) {
 	}
 	if len(state.Statuses) == 0 || len(state.QuestionLabels) != 4 {
 		t.Errorf("statuses %v, question labels %v", state.Statuses, state.QuestionLabels)
+	}
+}
+
+func TestShowRoutesAndSettingsRespectRolesAndProtections(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	show, err := board.GetShow(context.Background(), h.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/show"} {
+		state := h.payload(path)
+		if state.Open != show.ID || state.Board == nil || state.Board.Proposition != show.ID {
+			t.Errorf("%s opened %+v", path, state.Board)
+		}
+	}
+
+	res, body := h.get("/show/settings")
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Show settings gave %d", res.StatusCode)
+	}
+	for _, hidden := range []string{"<h3>Schedule</h3>", `id="members"`, "<h3>Publish</h3>", "<h3>Danger</h3>"} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("Show settings exposed %s", hidden)
+		}
+	}
+	if !strings.Contains(body, "The shared workspace for planning the show") ||
+		!strings.Contains(body, "<h3>Board columns</h3>") {
+		t.Fatal("Show settings omit their editable sections")
+	}
+	csrf := csrfRe.FindStringSubmatch(body)[1]
+	res, _ = h.post("/show/settings", url.Values{
+		"csrf": {csrf}, "do": {"proposition"}, "title": {"Our Show"},
+		"statement": {"Plan every episode."}, "blurb": {""},
+	})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/show/settings?saved=1" {
+		t.Fatalf("editing Show gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	for _, do := range []string{"schedule", "members", "archive", "restore", "delete"} {
+		form := url.Values{"csrf": {csrf}, "do": {do}}
+		if do == "schedule" {
+			form.Set("status", "idea")
+		}
+		res, page := h.post("/show/settings", form)
+		if res.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(page, board.ErrShow.Error()) {
+			t.Errorf("%s gave %d without the Show refusal", do, res.StatusCode)
+		}
+	}
+
+	res, _ = h.post("/p/"+strconv.FormatInt(show.ID, 10)+"/publish", url.Values{"csrf": {csrf}, "do": {"publish"}})
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("publishing Show gave %d", res.StatusCode)
+	}
+
+	guest := h.as("guest", "Guest User", auth.RoleGuest)
+	res, err = guest.Get(h.http.URL + "/show/settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guestBody, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || strings.Contains(string(guestBody), `class="save"`) {
+		t.Fatalf("guest Show settings gave %d or offered a save", res.StatusCode)
+	}
+	guestCSRF := csrfRe.FindSubmatch(guestBody)
+	if guestCSRF == nil {
+		t.Fatal("guest Show settings carry no CSRF token")
+	}
+	res, err = guest.PostForm(h.http.URL+"/show/settings", url.Values{
+		"csrf": {string(guestCSRF[1])}, "do": {"proposition"}, "title": {"Taken"},
+		"statement": {""}, "blurb": {""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("guest editing Show gave %d", res.StatusCode)
 	}
 }
 
@@ -90,11 +168,12 @@ func TestShellCarriesTheOpenBoardAndEscapesItSafely(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, body := h.get("/")
+	path := "/p/" + strconv.FormatInt(e.EntityID, 10)
+	_, body := h.get(path)
 	if strings.Contains(body, "</script><script>alert(1)") {
 		t.Fatal("the payload closed its own script element")
 	}
-	state := h.payload("/")
+	state := h.payload(path)
 	if state.Open != e.EntityID || state.Board == nil {
 		t.Fatalf("the shell opened %d with board %v", state.Open, state.Board)
 	}
@@ -111,11 +190,6 @@ func TestShellCarriesTheOpenBoardAndEscapesItSafely(t *testing.T) {
 		t.Errorf("users are %+v", state.Users)
 	}
 
-	// The same proposition by its own address.
-	direct := h.payload("/p/" + strconv.FormatInt(e.EntityID, 10))
-	if direct.Open != e.EntityID {
-		t.Errorf("/p/%d opened %d", e.EntityID, direct.Open)
-	}
 	if res, _ := h.get("/p/9999"); res.StatusCode != http.StatusNotFound {
 		t.Errorf("a proposition that does not exist gave %d", res.StatusCode)
 	}
@@ -267,9 +341,9 @@ func (h *harness) payloadAs(client *http.Client, path string) (int, shell) {
 	return res.StatusCode, state
 }
 
-// A proposition is readable through membership, for everybody but an owner. An
-// editor who is a member of nothing gets an empty workspace rather than a 403
-// on somebody else's board, and the rail never names what they cannot read.
+// A proposition is readable through membership, for everybody but an owner.
+// An editor with no proposition memberships still has Show, and the rail never
+// names the propositions they cannot read.
 func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -290,8 +364,8 @@ func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("an editor who is a member of nothing got %d on /", status)
 	}
-	if state.Open != 0 || len(state.Propositions) != 0 {
-		t.Errorf("the rail showed %d propositions and opened %d", len(state.Propositions), state.Open)
+	if state.Open == 0 || len(state.Propositions) != 1 || state.Propositions[0].Kind != "show" {
+		t.Errorf("the rail showed %+v and opened %d", state.Propositions, state.Open)
 	}
 	// A proposition they are not a member of answers the same as one that is
 	// not there, because they are not told it is.
@@ -315,17 +389,17 @@ func TestThePayloadShowsOnlyWhatMembershipAllows(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("/ gave %d once they were a member", status)
 	}
-	if state.Open != second.EntityID {
-		t.Errorf("/ opened %d, want the one they are a member of, %d", state.Open, second.EntityID)
+	if state.Open != state.Propositions[0].ID || state.Propositions[0].Kind != "show" {
+		t.Errorf("/ opened %d instead of Show in %+v", state.Open, state.Propositions)
 	}
-	if len(state.Propositions) != 1 || state.Propositions[0].ID != second.EntityID {
-		t.Errorf("the rail is %+v, want only the proposition they are a member of", state.Propositions)
+	if len(state.Propositions) != 2 || state.Propositions[1].ID != second.EntityID {
+		t.Errorf("the rail is %+v, want Show and the proposition they are a member of", state.Propositions)
 	}
 
-	// The owner still sees both.
+	// The owner sees Show and both propositions.
 	_, mine := h.payloadAs(h.client, "/")
-	if len(mine.Propositions) != 2 {
-		t.Errorf("the owner sees %d propositions, want 2", len(mine.Propositions))
+	if len(mine.Propositions) != 3 {
+		t.Errorf("the owner sees %d workspaces, want 3", len(mine.Propositions))
 	}
 }
 
@@ -345,15 +419,27 @@ func TestThePayloadSaysWhenAPropositionIsArchived(t *testing.T) {
 	path := "/p/" + strconv.FormatInt(e.EntityID, 10)
 
 	state := h.payload(path)
-	if state.Propositions[0].ArchivedAt != nil {
-		t.Errorf("a live proposition carries archived_at %v", *state.Propositions[0].ArchivedAt)
+	var proposition board.Proposition
+	for _, p := range state.Propositions {
+		if p.ID == e.EntityID {
+			proposition = p
+		}
+	}
+	if proposition.ID == 0 || proposition.ArchivedAt != nil {
+		t.Errorf("the live proposition is %+v", proposition)
 	}
 
 	if _, err := h.srv.board.ArchiveProposition(ctx, owner, e.EntityID); err != nil {
 		t.Fatal(err)
 	}
 	state = h.payload(path)
-	if len(state.Propositions) != 1 || state.Propositions[0].ArchivedAt == nil {
+	proposition = board.Proposition{}
+	for _, p := range state.Propositions {
+		if p.ID == e.EntityID {
+			proposition = p
+		}
+	}
+	if len(state.Propositions) != 2 || proposition.ArchivedAt == nil {
 		t.Fatalf("an archived proposition is %+v", state.Propositions)
 	}
 	if state.Open != e.EntityID || state.Board == nil {

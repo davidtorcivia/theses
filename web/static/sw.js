@@ -20,7 +20,7 @@ const PAGES = ['/offline', '/shell'];
 // the offline page: the workspace and one proposition. Anything else, the
 // settings pages and the profile among them, is a page this worker has no
 // stand-in for and says so.
-const APP = /^\/(p\/\d+)?$/;
+const APP = /^\/(?:p\/\d+|show)?$/;
 
 // Each account exit must clear this browser's saved workspace.
 const SIGNOUT = new Set(['/logout', '/profile/signout-everywhere', '/profile/delete']);
