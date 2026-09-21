@@ -383,3 +383,24 @@ func TestAttachmentRoutes(t *testing.T) {
 		t.Fatal("the attachment is still there after detaching")
 	}
 }
+
+func TestFileAnnotationValidationAndScopes(t *testing.T) {
+	h := newFileHarness(t)
+	write := h.token(h.owner, auth.ScopeWrite)
+	read := h.token(h.owner, auth.ScopeRead)
+	for _, tc := range []struct{ method, path, body, want string }{
+		{"POST", "/api/v1/files/1/comments", `{"position_ms":-1,"body_md":"note"}`, "timestamp"},
+		{"PATCH", "/api/v1/files/1", `{"tags":"a\tb","metadata_version":1}`, "tabs or line breaks"},
+	} {
+		w := h.do(tc.method, tc.path, write, tc.body)
+		if w.Code != 422 || !strings.Contains(w.Body.String(), tc.want) {
+			t.Fatalf("validation %d %s", w.Code, w.Body)
+		}
+		if w = h.do(tc.method, tc.path, read, tc.body); w.Code != 403 {
+			t.Fatalf("scope %d %s", w.Code, w.Body)
+		}
+	}
+	if w := h.do("GET", "/api/v1/storage/orphans", read, ""); w.Code != 403 {
+		t.Fatalf("storage scope %d", w.Code)
+	}
+}

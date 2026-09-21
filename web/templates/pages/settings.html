@@ -73,6 +73,13 @@
       <p class="small dim">The first two write, read and delete one probe object with the saved keys. The next two upload a probe object from this page the way the browser does, which is the only way to find out whether the CORS rule above lets this origin through. The last two set that rule on the bucket, also with the saved keys, so save anything typed into the fields above before pressing one.</p>
     </form>
 
+    <section class="form">
+      <h3>Storage cleanup</h3>
+      <p>Inspect objects from durable file deletion records in pages of 100. Only exact app-owned keys older than seven days qualify. Active uploads, retained versions, and backups are protected. Unknown objects and old bucket configurations require manual inspection.</p>
+      <button type="button" class="lnk" id="inspect-orphans">Inspect unused objects</button>
+      <div id="orphan-results" aria-live="polite"></div>
+    </section>
+
     <form class="form" method="post" action="/settings" id="mail">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="mail">
       <section class="fs">

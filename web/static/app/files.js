@@ -1,4 +1,5 @@
-import { rememberTarget, copyTarget } from './anchors.js';
+import { editFileNotes, recordingComments } from './filenotes.js';
+import { targetURL, rememberTarget, copyTarget } from './anchors.js';
 // The files pane and the file drawer: drop a file and it goes straight to the
 // bucket, folders as facets, versions, and a download that is a presigned GET.
 
@@ -16,6 +17,14 @@ import { where } from './net.js';
 const DEFAULT_FOLDER = 'Documents';
 let focusNext = 0;
 let returnTo = 0;
+let historicalFile = null;
+let previewCache = null;
+export async function loadFileTarget(id) {
+  const { file } = await api.get('/files/' + id);
+  if (file.proposition_id !== state.open) return false;
+  historicalFile = file;
+  return true;
+}
 
 export function renderFiles(pane) {
   material().catch((err) => say(err.message));
@@ -31,7 +40,7 @@ export function renderFiles(pane) {
   pane.append(el('div', { class: 'tools' },
     el('input', {
       id: 'fq', class: 'q', type: 'search', spellcheck: 'false', value: state.fileQuery,
-      placeholder: 'Search file names',
+      placeholder: 'Search names, notes, tags',
       oninput: (e) => { state.fileQuery = e.target.value; redraw('#fq'); },
     }),
     folderFacets()));
@@ -258,7 +267,7 @@ function matching() {
   const q = state.fileQuery.trim().toLowerCase();
   return state.files.filter((f) =>
     (state.folder === 'all' || f.folder === state.folder) &&
-    (!q || f.name.toLowerCase().includes(q)));
+    (!q || [f.name,f.note_md,f.tags].join(' ').toLowerCase().includes(q)));
 }
 
 function total() {
@@ -349,6 +358,7 @@ export function openFile(id) {
     say('Choose keep mine or take theirs before opening a file.');
     return false;
   }
+  if (state.openFile !== id) previewCache = null;
   rememberTarget('file', id);
   state.openFile = id;
   state.openCard = null;
@@ -385,7 +395,7 @@ async function download(file) {
 // The drawer.
 
 export function renderFileDrawer(drawer) {
-  const file = state.files.find((f) => f.id === state.openFile);
+  const file = state.files.find((f) => f.id === state.openFile) || (historicalFile?.id === state.openFile && historicalFile.proposition_id === state.open ? historicalFile : null);
   if (!file) return false;
   const busy = state.uploads.get(file.id);
 
@@ -412,6 +422,9 @@ export function renderFileDrawer(drawer) {
   drawer.append(heading, copyTarget(state.open, 'file', file.id));
   drawer.append(preview(file, busy));
   drawer.append(props(file));
+  drawer.append(el('h4', { text: 'Notes and tags' }), el('p', { text: file.note_md || 'No notes yet.' }), el('p', { class: 'mono', text: file.tags || 'No tags' }));
+  if (canEdit()) drawer.append(el('button', { type: 'button', class: 'lnk', text: 'Edit notes and tags', onclick: () => editFileNotes(file) }));
+  if (file.folder === 'Recordings' && file.state === 'ready') drawer.append(recordingComments(file));
 
   drawer.append(el('h4', { text: 'Versions' }));
   drawer.append(versions(file));
@@ -466,13 +479,14 @@ export function renderFileDrawer(drawer) {
 
 function close() {
   rememberTarget('', state.tab);
+  previewCache = null;
   returnTo = state.openFile;
   state.openFile = null;
   emit();
   requestAnimationFrame(() => {
     const row = returnTo && document.querySelector(`#flist .row[data-id="${returnTo}"]`);
     returnTo = 0;
-    if (row) row.focus();
+    (row || document.querySelector('#fq'))?.focus();
   });
 }
 
@@ -480,6 +494,11 @@ function close() {
 // an image from its thumbnail, audio from a presigned URL, and a line for
 // everything else.
 function preview(file, busy) {
+  if (file.state !== 'ready') return makePreview(file, busy);
+  if (previewCache?.id !== file.id) previewCache = { id: file.id, node: makePreview(file, busy) };
+  return previewCache.node;
+}
+function makePreview(file, busy) {
   if (file.state !== 'ready') {
     const at = busy ? Math.round(busy.at * 100) : 0;
     return el('div', { class: 'preview docp' },
@@ -493,10 +512,10 @@ function preview(file, busy) {
       .catch(() => box.append(el('p', { class: 'mono', text: 'No preview for this one.' })));
     return box;
   }
-  if (['mp3', 'm4a', 'wav', 'ogg', 'flac'].includes(kind)) {
+  if (['mp3', 'm4a', 'wav', 'ogg', 'flac', 'mp4', 'webm', 'mov'].includes(kind)) {
     const box = el('div', { class: 'preview audio' });
     api.get('/files/' + file.id + '/download')
-      .then(({ url }) => box.append(el('audio', { controls: true, preload: 'none', src: url })))
+      .then(({ url }) => box.append(el(['mp4', 'webm', 'mov'].includes(kind) ? 'video' : 'audio', { controls: true, preload: 'none', src: url })))
       .catch(() => box.append(el('p', { class: 'mono', text: 'No preview for this one.' })));
     return box;
   }
@@ -531,10 +550,10 @@ function versions(file) {
       clear(list);
       for (const v of older) {
         list.append(el('li', {},
-          el('button', {
-            class: 'lnk', type: 'button',
+          el('a', {
+            class: 'lnk', href: targetURL(state.open, 'file', v.id),
             text: v.name + ' · ' + bytes(v.size) + ' · ' + when(v.created_at),
-            onclick: () => download(v),
+            onclick: (e) => { if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; e.preventDefault(); location.hash = 'file-' + v.id; },
           })));
       }
       if (!older.length) list.append(el('li', { class: 'dim', text: 'One version.' }));

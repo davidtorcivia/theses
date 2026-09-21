@@ -183,6 +183,14 @@ func (b *Backup) Stop() { b.wg.Wait() }
 // Running reports whether an archive or a restore is in progress.
 func (b *Backup) Running() bool { return b.busy.Load() }
 
+// ReserveMaintenance excludes destructive storage work from archive and restore operations.
+func (b *Backup) ReserveMaintenance() (func(), error) {
+	if !b.busy.CompareAndSwap(false, true) {
+		return nil, ErrBusy
+	}
+	return func() { b.busy.Store(false) }, nil
+}
+
 // LastRestore is what the last restore said, success or failure.
 func (b *Backup) LastRestore() string {
 	if p := b.restored.Load(); p != nil {

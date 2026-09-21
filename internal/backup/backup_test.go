@@ -803,3 +803,21 @@ func TestVerificationUsesArchivedSettingsAndReservesLaunch(t *testing.T) {
 		t.Fatalf("timeout result was not persisted: %s", msg)
 	}
 }
+
+func TestMaintenanceReservationExcludesBackup(t *testing.T) {
+	b := &Backup{}
+	release, err := b.ReserveMaintenance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Run(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("backup raced cleanup: %v", err)
+	}
+	if _, err := b.ReserveMaintenance(); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second reservation: %v", err)
+	}
+	release()
+	if b.Running() {
+		t.Fatal("reservation not released")
+	}
+}

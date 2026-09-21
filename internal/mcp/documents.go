@@ -97,7 +97,7 @@ func (s *Server) refusal(what string, err error) error {
 		// the role and the membership with one refusal and saying which would
 		// say whether the row is there.
 		return errors.New("that is not there, or this token's owner may not touch it")
-	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrEmpty),
+	case errors.Is(err, files.ErrMaintenance), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrEmpty),
 		errors.Is(err, board.ErrTooLong), errors.Is(err, board.ErrQuestion),
 		errors.Is(err, board.ErrStatus),
 		errors.Is(err, board.ErrColumnNotEmpty), errors.Is(err, board.ErrNotYours),
@@ -107,7 +107,7 @@ func (s *Server) refusal(what string, err error) error {
 		errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
 		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),
-		errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),
+		errors.Is(err, files.ErrTimestamp), errors.Is(err, files.ErrTags), errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),
 		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
 		errors.Is(err, files.ErrNoBucket), errors.Is(err, files.ErrPart):
 		return err

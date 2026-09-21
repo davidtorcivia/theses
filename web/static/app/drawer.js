@@ -3,7 +3,7 @@ import { rememberTarget, copyTarget } from './anchors.js';
 // checklist and the activity with its notes. Everything in it is a command, and
 // the two text fields carry the version they started from.
 
-import { $, el, clear, add, initials, inline, say, editable, ask } from './dom.js';
+import { $, el, clear, children, add, initials, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, proposition, emit, hold, canEdit, material, target, baseText, unresolvedCard } from './state.js';
 import { send, where, newKey, count, chosen, resend, letGo, Conflict } from './net.js';
 import { file as fileRefusal } from './offline.js';
@@ -237,6 +237,16 @@ export function renderDrawer() {
   const active = document.activeElement;
   const loose = !active || active === document.body
     || (active.dataset && active.dataset.id === String(state.openCard));
+  if (state.openFile && !card && !state.openLink && !state.panel) {
+    const nodes = [];
+    if (renderFileDrawer({ append: (...items) => nodes.push(...items) })) {
+      children(drawer, nodes);
+      drawer.hidden = false;
+      document.body.classList.add('has-drawer');
+      drawer.scrollTop = top;
+      return;
+    }
+  }
   clear(drawer);
   drawer.hidden = false;
   document.body.classList.add('has-drawer');

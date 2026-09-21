@@ -77,3 +77,31 @@ async function check(button) {
 for (const button of document.querySelectorAll('[data-cors]')) {
   button.addEventListener('click', () => check(button));
 }
+
+
+import * as api from './api.js';
+import { el, clear, ask as confirmAction } from './dom.js';
+const inspect = document.getElementById('inspect-orphans');
+const orphans = document.getElementById('orphan-results');
+let orphanBefore = 0;
+if (inspect) inspect.onclick = async () => {
+  inspect.disabled = true;
+  clear(orphans).append(el('p', { text: 'Inspecting…' }));
+  try {
+    const { objects, before, more } = await api.get('/storage/orphans?before=' + orphanBefore);
+    orphanBefore = more ? before : 0;
+    inspect.textContent = more ? 'Inspect older deletions' : 'Inspect unused objects again';
+    clear(orphans).append(el('p', { text: `${objects.length} eligible objects. Nothing has been deleted.` }));
+    for (const object of objects) {
+      const row = el('p', {}, el('span', { text: object.key + ' · ' + object.size + ' bytes · ' }));
+      row.append(el('button', { type: 'button', class: 'lnk', text: 'Delete this object', onclick: async (e) => {
+        if (!await confirmAction('Delete this unused object?', 'This cannot be undone. References are checked again before deletion.', 'Delete object')) return;
+        const button = row.querySelector('button'); button.disabled = true;
+        try { await api.post('/storage/cleanup', object); row.textContent = 'Deleted ' + object.key; }
+        catch (err) { row.append(el('span', { text: err.message })); button.disabled = false; }
+      } }));
+      orphans.append(row);
+    }
+  } catch (err) { clear(orphans).append(el('p', { text: err.message })); }
+  finally { inspect.disabled = false; }
+};

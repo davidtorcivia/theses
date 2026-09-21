@@ -457,6 +457,9 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		// A PUT URL remains writable until expiry. Finalize to a unique key so
 		// neither that URL nor another completion can overwrite the ready object.
 		row.ObjectKey = path.Join(path.Dir(row.ObjectKey), rand.Text(), path.Base(row.ObjectKey))
+		if _, err := s.DB.ExecContext(ctx, `INSERT INTO file_cleanup(file_id,folder,object_key,deleted_at) VALUES(?,?,?,?)`, row.ID, row.Folder, row.ObjectKey, s.now()); err != nil {
+			return core.Event{}, err
+		}
 		defer func() {
 			if !committed {
 				s.forget(context.WithoutCancel(ctx), row, "")
@@ -509,6 +512,9 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 			stateReady, row.ObjectKey, null(duration), null(width), null(height), id); err != nil {
 			return core.Change{}, err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM file_cleanup WHERE object_key=?`, row.ObjectKey); err != nil {
+			return core.Change{}, err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM uploads WHERE file_id = ?`, id); err != nil {
 			return core.Change{}, err
 		}
@@ -537,6 +543,34 @@ func (s *Service) EditFile(ctx context.Context, a core.Actor, id int64, name, fo
 
 // PatchFile keeps omitted fields unchanged, including during concurrent edits.
 func (s *Service) PatchFile(ctx context.Context, a core.Actor, id int64, name, folder *string) (core.Event, error) {
+	return s.PatchFileDetails(ctx, a, id, FilePatch{Name: name, Folder: folder})
+}
+
+type FilePatch struct {
+	Name    *string `json:"name"`
+	Folder  *string `json:"folder"`
+	Note    *string `json:"note_md"`
+	Tags    *string `json:"tags"`
+	Version *int64  `json:"metadata_version"`
+}
+
+func (s *Service) PatchFileDetails(ctx context.Context, a core.Actor, id int64, in FilePatch) (core.Event, error) {
+	name, folder := in.Name, in.Folder
+	if in.Note != nil {
+		clean, err := board.Field(*in.Note, board.MaxBody)
+		if err != nil {
+			return core.Event{}, err
+		}
+		in.Note = &clean
+	}
+	if in.Tags != nil {
+		clean, err := cleanTags(*in.Tags)
+		if err != nil {
+			return core.Event{}, err
+		}
+		in.Tags = &clean
+	}
+
 	if name != nil {
 		clean, err := filename(*name)
 		if err != nil {
@@ -576,7 +610,15 @@ func (s *Service) PatchFile(ctx context.Context, a core.Actor, id int64, name, f
 		if folder != nil && was.Folder != sourceFolder {
 			return ErrState
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE files SET name = coalesce(?, name), folder = coalesce(?, folder) WHERE id = ?`, name, folder, id)
+		metadata := in.Note != nil || in.Tags != nil
+		if metadata && (in.Version == nil || *in.Version != was.MetadataVersion) {
+			return &core.ConflictError{Entity: "file", EntityID: id, Field: "metadata", Version: was.MetadataVersion, Current: was.Note}
+		}
+		increment := 0
+		if metadata {
+			increment = 1
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE files SET name=coalesce(?,name),folder=coalesce(?,folder),note_md=coalesce(?,note_md),tags=coalesce(?,tags),metadata_version=metadata_version+? WHERE id=?`, name, folder, in.Note, in.Tags, increment, id)
 		return err
 	})
 }
@@ -585,9 +627,7 @@ func (s *Service) PatchFile(ctx context.Context, a core.Actor, id int64, name, f
 // second step fails: what is left is an object nobody can reach, which costs
 // storage until somebody lists the bucket.
 //
-// ponytail: the orphan is logged and left. A reaper that lists the bucket and
-// deletes keys with no row is the upgrade, and it wants the listing to be cheap
-// first.
+// Durable cleanup records retain exact keys when object deletion fails.
 func (s *Service) Delete(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
 	was, err := s.readable(ctx, a, id)
 	if err != nil {

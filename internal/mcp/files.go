@@ -17,6 +17,14 @@ import (
 // nothing but the database.
 func Files(s *Server, svc *files.Service) {
 	f := &fileTools{Server: s, svc: svc}
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "storage_orphans", Description: "Reports old deleted-file objects eligible for conservative cleanup by an owner.", Annotations: storageHints(true)}, f.orphans)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "storage_cleanup", Description: "Rechecks and deletes one reported orphan object as an owner.", Annotations: storageHints(false)}, f.cleanup)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "get_file", Description: "Reads one current or historical file and its metadata.", Annotations: reads("Read a file")}, f.getFile)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "edit_file", Description: "Updates file names, folders, notes or tags using metadata_version for notes and tags.", Annotations: overwrites("Edit a file")}, f.editFile)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "list_file_comments", Description: "Lists timestamped comments on a recording.", Annotations: reads("Read recording comments")}, f.fileComments)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "add_file_comment", Description: "Adds a timestamped recording comment with an optional retry key.", Annotations: adds("Comment on a recording")}, f.addFileComment)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "delete_file_comment", Description: "Deletes your own timestamped recording comment.", Annotations: overwrites("Delete a recording comment")}, f.deleteFileComment)
+	sdk.AddTool(s.srv, &sdk.Tool{Name: "production_template", Description: "Creates or returns the assigned production checklist for a proposition.", Annotations: attaches("Create production checklist")}, f.productionTemplate)
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "list_links",
 		Description: "Lists the links saved on one proposition, with their kind, author, year, note, question and citation.",
@@ -215,4 +223,130 @@ func (f *fileTools) attach(ctx context.Context, req *sdk.CallToolRequest, in att
 	f.log.Info("mcp write", "tool", "attach_to_card", "card", in.Card,
 		"user", p.User.ID, "via", a.Via, "protocol", req.ProtocolVersion())
 	return nil, attachOut{Card: e.EntityID, Action: e.Action}, nil
+}
+
+func (f *fileTools) getFile(ctx context.Context, req *sdk.CallToolRequest, in fileArgs) (*sdk.CallToolResult, files.File, error) {
+	p, err := principal(ctx, auth.ScopeRead)
+	if err != nil {
+		return nil, files.File{}, err
+	}
+	row, err := f.svc.ReadFile(ctx, person(req, p), in.File)
+	if err != nil {
+		err = f.refusal("read the file", err)
+	}
+	return nil, row, err
+}
+
+type editFileArgs struct {
+	File    int64   `json:"file"`
+	Name    *string `json:"name,omitempty"`
+	Folder  *string `json:"folder,omitempty"`
+	Note    *string `json:"note_md,omitempty"`
+	Tags    *string `json:"tags,omitempty"`
+	Version *int64  `json:"metadata_version,omitempty"`
+}
+
+func (f *fileTools) editFile(ctx context.Context, req *sdk.CallToolRequest, in editFileArgs) (*sdk.CallToolResult, core.Event, error) {
+	p, err := principal(ctx, auth.ScopeWrite)
+	if err != nil {
+		return nil, core.Event{}, err
+	}
+	e, err := f.svc.PatchFileDetails(ctx, person(req, p), in.File, files.FilePatch{Name: in.Name, Folder: in.Folder, Note: in.Note, Tags: in.Tags, Version: in.Version})
+	if err != nil {
+		err = f.refusal("change file details", err)
+	}
+	return nil, e, err
+}
+func (f *fileTools) fileComments(ctx context.Context, req *sdk.CallToolRequest, in fileArgs) (*sdk.CallToolResult, []files.FileComment, error) {
+	p, err := principal(ctx, auth.ScopeRead)
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := f.svc.FileComments(ctx, person(req, p), in.File)
+	if err != nil {
+		err = f.refusal("read file details", err)
+	}
+	return nil, rows, err
+}
+
+type addFileCommentArgs struct {
+	File     int64  `json:"file"`
+	Position int64  `json:"position_ms"`
+	Body     string `json:"body_md"`
+	Key      string `json:"key,omitempty"`
+}
+
+func (f *fileTools) addFileComment(ctx context.Context, req *sdk.CallToolRequest, in addFileCommentArgs) (*sdk.CallToolResult, core.Event, error) {
+	p, err := principal(ctx, auth.ScopeWrite)
+	if err != nil {
+		return nil, core.Event{}, err
+	}
+	ctx, err = keyed(ctx, in.Key)
+	if err != nil {
+		return nil, core.Event{}, err
+	}
+	e, err := f.svc.AddFileComment(ctx, person(req, p), in.File, in.Position, in.Body)
+	if err != nil {
+		err = f.refusal("change file details", err)
+	}
+	return nil, e, err
+}
+
+type deleteFileCommentArgs struct {
+	File    int64 `json:"file"`
+	Comment int64 `json:"comment"`
+}
+
+func (f *fileTools) deleteFileComment(ctx context.Context, req *sdk.CallToolRequest, in deleteFileCommentArgs) (*sdk.CallToolResult, core.Event, error) {
+	p, err := principal(ctx, auth.ScopeWrite)
+	if err != nil {
+		return nil, core.Event{}, err
+	}
+	e, err := f.svc.DeleteFileComment(ctx, person(req, p), in.File, in.Comment)
+	if err != nil {
+		err = f.refusal("change file details", err)
+	}
+	return nil, e, err
+}
+func (f *fileTools) productionTemplate(ctx context.Context, req *sdk.CallToolRequest, in propositionArgs) (*sdk.CallToolResult, core.Event, error) {
+	p, err := principal(ctx, auth.ScopeWrite)
+	if err != nil {
+		return nil, core.Event{}, err
+	}
+	e, err := f.api.Board.ProductionTemplate(ctx, person(req, p), in.Proposition)
+	if err != nil {
+		err = f.refusal("change file details", err)
+	}
+	return nil, e, err
+}
+
+func (f *fileTools) orphans(ctx context.Context, req *sdk.CallToolRequest, in struct {
+	Before int64 `json:"before,omitempty"`
+}) (*sdk.CallToolResult, files.OrphanReport, error) {
+	p, err := principal(ctx, auth.ScopeAdmin)
+	if err != nil {
+		return nil, files.OrphanReport{}, err
+	}
+	rows, err := f.svc.OrphanPage(ctx, person(req, p), in.Before)
+	if err != nil {
+		err = f.refusal("read file details", err)
+	}
+	return nil, rows, err
+}
+func (f *fileTools) cleanup(ctx context.Context, req *sdk.CallToolRequest, in files.Orphan) (*sdk.CallToolResult, core.Event, error) {
+	p, err := principal(ctx, auth.ScopeAdmin)
+	if err != nil {
+		return nil, core.Event{}, err
+	}
+	e, err := f.svc.CleanupObject(ctx, person(req, p), in)
+	if err != nil {
+		err = f.refusal("change file details", err)
+	}
+	return nil, e, err
+}
+
+func storageHints(readOnly bool) *sdk.ToolAnnotations {
+	yes := true
+	destructive := !readOnly
+	return &sdk.ToolAnnotations{Title: "Inspect or clean up storage", ReadOnlyHint: readOnly, DestructiveHint: &destructive, OpenWorldHint: &yes}
 }
