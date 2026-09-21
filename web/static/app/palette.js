@@ -167,10 +167,10 @@ function openBlock(id, proposition) {
   }
   state.document = doc.id;
   state.docSource = false;
-  state.tab = p?.kind === 'show' ? 'notes' : 'board';
+  state.tab = 'board';
   // The document is under the board, so the pane in the address bar goes with
   // the pane on the screen.
-  location.hash = p?.kind === 'show' ? 'notes' : '';
+  location.hash = '';
   emit();
   requestAnimationFrame(() => $(`#doc .blk[data-b="${id}"]`)?.scrollIntoView({ block: 'center' }));
 }

@@ -54,6 +54,7 @@ type bucketView struct {
 }
 
 type backupView struct {
+	Verify               string
 	Prefix               string
 	Enabled              bool
 	Bucket               string
@@ -313,6 +314,7 @@ func (s *Server) backupSection(r *http.Request, shown map[string]string, isSet m
 		SecretSet: isSet["backups.secret_key"],
 		Running:   s.backups.Running(),
 		Restore:   s.backups.LastRestore(),
+		Verify:    settings.Get[string](s.settings, "backups.last_verify"),
 		Failure:   settings.Get[string](s.settings, "backups.last_error"),
 	}
 	if at := settings.Get[int](s.settings, "backups.last_ok_at"); at > 0 {
@@ -605,12 +607,16 @@ const probeTimeout = 30 * time.Second
 const listTimeout = 10 * time.Second
 
 func (s *Server) bucketConfig(ctx context.Context, prefix string) (blob.Config, error) {
-	get := func(name string) string { return settings.Get[string](s.settings, prefix+"."+name) }
-	access, err := s.settings.Secret(ctx, prefix+".access_key")
+	return bucketConfigFor(ctx, s.settings, prefix)
+}
+
+func bucketConfigFor(ctx context.Context, set *settings.Settings, prefix string) (blob.Config, error) {
+	get := func(name string) string { return settings.Get[string](set, prefix+"."+name) }
+	access, err := set.Secret(ctx, prefix+".access_key")
 	if err != nil {
 		return blob.Config{}, err
 	}
-	secret, err := s.settings.Secret(ctx, prefix+".secret_key")
+	secret, err := set.Secret(ctx, prefix+".secret_key")
 	if err != nil {
 		return blob.Config{}, err
 	}
@@ -927,4 +933,17 @@ func ago(unix int64, valid bool) string {
 		return "yesterday"
 	}
 	return on(unix)
+}
+
+func (s *Server) postVerifyBackup(w http.ResponseWriter, r *http.Request) {
+	key := r.PostFormValue("key")
+	if !strings.HasPrefix(key, backup.Prefix) || !strings.HasSuffix(key, ".tar.gz.age") {
+		s.errorPage(w, r, http.StatusNotFound)
+		return
+	}
+	if err := s.backups.VerifyNow(r.Context(), key); err != nil {
+		s.back(w, r, "/settings#backups", map[string]any{"BackupResult": err.Error(), "BackupFailed": true})
+		return
+	}
+	s.back(w, r, "/settings#backups", map[string]any{"BackupResult": "Verification started in an isolated workspace. Reload this page for the result."})
 }

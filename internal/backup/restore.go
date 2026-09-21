@@ -20,6 +20,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -40,65 +41,21 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 		return ErrBusy
 	}
 	defer b.busy.Store(false)
+	return b.restore(ctx, key, actorID)
+}
 
-	client, err := b.client(ctx)
+func (b *Backup) restore(ctx context.Context, key string, actorID int64) error {
+	stage, err := os.MkdirTemp(b.cfg.DataDir, "restore-stage-")
 	if err != nil {
 		return err
 	}
-	id, err := identity(b.cfg.SecretKey)
+	defer os.RemoveAll(stage)
+	m, err := b.prepare(ctx, key, stage)
 	if err != nil {
 		return err
 	}
-	m, err := manifestOf(ctx, client, key)
-	if err != nil {
-		return err
-	}
-
 	stamp := b.now().UTC().Format("20060102T150405Z")
-	archivePath := filepath.Join(b.cfg.DataDir, "restore-"+stamp+".tar.gz")
-	defer os.Remove(archivePath)
-	sum, err := fetch(ctx, client, key, id, archivePath)
-	if err != nil {
-		return err
-	}
-	if sum != m.SHA256 {
-		return fmt.Errorf("%s is not the archive its manifest describes: the contents hash to %s, the manifest says %s",
-			path.Base(key), sum, m.SHA256)
-	}
-
-	// An archive from before the owner account existed would leave a running
-	// app that nobody can sign in to and that never shows the setup page again,
-	// because the gate in front of it has already latched.
-	if m.Rows["users"] == 0 {
-		return fmt.Errorf("%s was taken before there was an account to sign in with, so restoring it would lock everyone out",
-			path.Base(key))
-	}
-
-	dbPath := filepath.Join(b.cfg.DataDir, "restore-"+stamp+".db")
-	docsPath := filepath.Join(b.cfg.DataDir, "restore-"+stamp+".docs")
-	defer os.Remove(dbPath)
-	defer os.RemoveAll(docsPath)
-	if err := unpack(archivePath, dbPath, docsPath); err != nil {
-		return err
-	}
-	// The archive is only a backup if what came out of it is a database this
-	// binary can open and migrate. Finding that out now costs one open and
-	// leaves the live file untouched if the answer is no.
-	check, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("the archive does not hold a database this version can open: %w", err)
-	}
-	if _, err := board.EnsureShow(ctx, check); err != nil {
-		check.Close()
-		return err
-	}
-	if err := validateRestore(ctx, check); err != nil {
-		check.Close()
-		return err
-	}
-	if err := check.Close(); err != nil {
-		return err
-	}
+	dbPath, docsPath := filepath.Join(stage, databaseEntry), filepath.Join(stage, docsEntry)
 
 	// From here the app answers writes with 503 until the files are in place.
 	b.Freeze(true)
@@ -131,6 +88,70 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	}
 	b.log.Warn("restored from a backup", "key", key, "aside", aside)
 	return nil
+}
+
+func (b *Backup) prepare(ctx context.Context, key, dir string) (Manifest, error) {
+	client, err := b.client(ctx)
+	if err != nil {
+		return Manifest{}, err
+	}
+	id, err := identity(b.cfg.SecretKey)
+	if err != nil {
+		return Manifest{}, err
+	}
+	m, err := manifestOf(ctx, client, key)
+	if err != nil {
+		return Manifest{}, err
+	}
+
+	archivePath := filepath.Join(dir, "archive.tar.gz")
+	defer os.Remove(archivePath)
+	sum, err := fetch(ctx, client, key, id, archivePath)
+	if err != nil {
+		return Manifest{}, err
+	}
+	if sum != m.SHA256 {
+		return Manifest{}, fmt.Errorf("%s is not the archive its manifest describes: the contents hash to %s, the manifest says %s",
+			path.Base(key), sum, m.SHA256)
+	}
+
+	// An archive from before the owner account existed would leave a running
+	// app that nobody can sign in to and that never shows the setup page again,
+	// because the gate in front of it has already latched.
+	if m.Rows["users"] == 0 {
+		return Manifest{}, fmt.Errorf("%s was taken before there was an account to sign in with, so restoring it would lock everyone out",
+			path.Base(key))
+	}
+
+	dbPath := filepath.Join(dir, databaseEntry)
+	docsPath := filepath.Join(dir, docsEntry)
+	if err := unpack(archivePath, dbPath, docsPath); err != nil {
+		return Manifest{}, err
+	}
+	// The archive is only a backup if what came out of it is a database this
+	// binary can open and migrate. Finding that out now costs one open and
+	// leaves the live file untouched if the answer is no.
+	check, err := store.Open(dbPath)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("the archive does not hold a database this version can open: %w", err)
+	}
+	if _, err := board.EnsureShow(ctx, check); err != nil {
+		check.Close()
+		return Manifest{}, err
+	}
+	if err := validateRestore(ctx, check); err != nil {
+		check.Close()
+		return Manifest{}, err
+	}
+	if _, err := settings.Open(ctx, check, b.cfg.SecretKey); err != nil {
+		check.Close()
+		return Manifest{}, err
+	}
+	if err := check.Close(); err != nil {
+		return Manifest{}, err
+	}
+
+	return m, nil
 }
 
 func validateRestore(ctx context.Context, db *store.DB) error {

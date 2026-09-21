@@ -11,11 +11,11 @@ import { $, el, add, clear, inline, say, editable, ask } from './dom.js';
 import { state, user, byHandle, proposition, emit, hold, canEdit, makeLocal, writeLocal, unmakeLocal, rekeyLocal, onSettled, order, target, localOf } from './state.js';
 import { send, newKey, where, onCarets, onAnswer, caughtUp, catchUp, count, chosen, Conflict, Offline } from './net.js';
 import { replace } from './api.js';
-import { retext, unqueue, file, signedOut } from './offline.js';
+import { retext, unqueue, file, signedOut, sourceDrafts, keepSourceDraft, forgetSourceDraft } from './offline.js';
 import { isJSON, sessionEnded } from './response.js';
 import { rebase, enter, chunks, carry, span, inFence, parseWhere, formatWhere } from './blocktext.js';
 import { parts } from './blockparts.js';
-import { retainReplay } from './source.js';
+import { retainReplay, sourceAttempt, draftMatches, draftRecord, sourceDirty } from './source.js';
 import { diff } from './diff.js';
 import { mentionable } from './picker.js';
 import { referenceKey } from './references.js';
@@ -394,6 +394,7 @@ function carets(id, here, version, move) {
 // pane to append. It is called on every render, so the block being edited is
 // carried over rather than rebuilt.
 export function renderDocument() {
+  loadDrafts();
   const doc = current();
   if (doc) state.document = doc.id;
   if (doc && state.docSource) ensureSource(doc);
@@ -429,7 +430,7 @@ export function renderDocument() {
 
   const body = el('div', { id: 'docwrap', class: state.docSource ? 'source' : '' });
   const rendered = el('div', { id: 'doc' });
-  body.append(rendered, source(doc));
+  body.append(recovery(doc), rendered, source(doc));
   if (!doc) {
     rendered.append(el('p', { class: 'empty', text: 'No document yet. The + above starts one.' }));
   } else {
@@ -575,7 +576,7 @@ function tabs(doc) {
     // The save line speaks for the open document only, so a document with
     // something outstanding in it says so on its own tab. The open one has the
     // line itself and needs no dot.
-    !on && held(d) ? el('span', { class: 'dot', title: 'Unsaved changes' }) : null));
+    !on && (held(d) || sourceDirty(sourceOf(d)) || [...recoverable.values()].some((row) => draftMatches(row, state.me, state.open, d))) ? el('span', { class: 'dot', title: 'Unsaved changes' }) : null));
   }
   if (canEdit()) {
     bar.append(el('button', {
@@ -695,7 +696,15 @@ const held = (doc) => making(doc) || entries(doc).some(busy);
 function saveState() {
   const doc = current();
   const here = entries(doc);
-  if (here.some((w) => w.status !== 'ok')) return 'Not saved';
+  const src = sourceOf(doc);
+  if (src?.saving) return 'Saving…';
+  if (src?.needsAttention || src?.storageFailed) return 'Needs attention · review source draft';
+  if (src && (src.text !== src.clean || src.pending)) {
+    if (src.storageFailed) return 'Needs attention · draft storage failed';
+    if (!src.stored) return 'Saving draft…';
+    return navigator.onLine ? 'Draft on this device · Save to publish' : 'Offline · draft on this device';
+  }
+  if (here.some((w) => w.status !== 'ok')) return 'Needs attention';
   if (state.waitingHere > 0) {
     if (!navigator.onLine) return `Offline · ${state.waitingHere} kept on this device`;
     return 'Saving…';
@@ -736,10 +745,92 @@ function when(unix) {
 // would leave the markdown of the document somebody was writing to be thrown
 // away by the next document they looked at. Each outlives the toggle and the
 // tab switch, so coming back to a document finds the same text against the same
-// base and nothing has to be asked. None of them outlives the page: a reload
-// leaves every document as the server last took it, which is what an unsaved
-// block does too.
+// base and nothing has to be asked. Dirty sessions are also kept in IndexedDB
+// for explicit recovery after navigation or reload.
 const sources = new Map();
+
+const recoverable = new Map();
+let draftScope = '';
+let draftReadFailed = false;
+function loadDrafts() {
+  const scope = `${state.me}:${state.open}`;
+  if (!state.me || draftScope === scope) return;
+  draftScope = scope;
+  recoverable.clear();
+  sourceDrafts(state.me, state.open).then((rows) => {
+    if (draftScope !== scope) return;
+    draftReadFailed = rows === null;
+    for (const row of rows || []) recoverable.set(row.id, row);
+    emit();
+  });
+}
+
+function keepDraft(doc, src, remove = false) {
+  clearTimeout(src.draftTimer);
+  src.draftTimer = 0;
+  const generation = src.generation = (src.generation || 0) + 1;
+  src.writeWanted = { row: draftRecord(src, state.me, state.open, doc), remove, generation };
+  src.stored = false;
+  if (!src.storing) {
+    src.storing = (async () => {
+      let ok = false;
+      while (src.writeWanted) {
+        const next = src.writeWanted;
+        src.writeWanted = null;
+        const result = next.remove ? await forgetSourceDraft(next.row.id) : await keepSourceDraft(next.row);
+        ok = next.remove ? result?.removed === true : result !== null;
+        if (next.generation === src.generation) {
+          src.stored = ok;
+          src.storageFailed = !ok;
+          status();
+        }
+      }
+      return ok;
+    })().finally(() => { src.storing = null; });
+  }
+  status();
+  return src.storing;
+}
+
+function scheduleDraft(doc, src) {
+  clearTimeout(src.draftTimer);
+  src.stored = false;
+  src.draftTimer = setTimeout(() => keepDraft(doc, src, src.text === src.clean && !src.pending && !src.needsAttention), 200);
+  status();
+}
+
+function recovery(doc) {
+  const wrap = el('div', { class: 'draft-recovery' });
+  if (!doc || !canEdit()) return wrap;
+  if (draftReadFailed) wrap.append(el('p', { class: 'notice' },
+    'Draft storage is unavailable. Keep this page open until your work is saved. ',
+    el('button', { type: 'button', text: 'Retry draft recovery', onclick: () => { draftScope = ''; loadDrafts(); } })));
+  for (const row of recoverable.values()) {
+    if (!draftMatches(row, state.me, state.open, doc)) continue;
+    wrap.append(el('div', { class: 'notice' },
+      el('span', { text: 'Unsaved markdown draft · ' + new Date(row.at).toLocaleString() }),
+      el('button', { type: 'button', text: 'Recover draft', onclick: async () => {
+        const existing = sourceOf(doc);
+        if (sourceDirty(existing)) {
+          say('Save the open draft before recovering another.'); return;
+        }
+        reopen(doc, row);
+        const src = sourceOf(doc);
+        if (await keepDraft(doc, src)) {
+          const removed = await forgetSourceDraft(row.id, row);
+          if (removed?.removed) recoverable.delete(row.id);
+        }
+        state.docSource = true;
+        emit();
+      }}),
+      el('button', { type: 'button', text: 'Discard draft', onclick: async () => {
+        if (!await ask('Discard this unsaved draft?', 'The saved document will stay as it is.', 'Discard draft')) return;
+        if (!(await forgetSourceDraft(row.id, row))?.removed) { say('The draft changed or could not be removed. Reload before trying again.'); return; }
+        recoverable.delete(row.id); emit();
+      }})));
+  }
+  return wrap;
+}
 
 // sourceOf is the session for a document, or null, and the only reader of the
 // map: a session is never asked for by anything but the document it belongs to,
@@ -833,10 +924,10 @@ function ensureSource(doc) {
 // reopen takes the markdown and the base from the document as it stands now,
 // which is both opening the view and the answer to a save that could not take
 // everything.
-function reopen(doc) {
+function reopen(doc, recovered = null) {
   const area = el('textarea', { id: 'docsrc', spellcheck: 'false',
     'aria-label': 'This document as markdown' });
-  area.value = markdownOf(doc);
+  area.value = recovered ? recovered.text : markdownOf(doc);
   mentionable(area);
   const src = {
     base: (doc.blocks || []).map((b) => ({ id: b.id, version: b.version })),
@@ -848,16 +939,24 @@ function reopen(doc) {
     key: '',
     notice: '',
     clean: area.value,
+    draftID: newKey(),
+    pending: null,
+    stored: true,
   };
+  if (recovered) Object.assign(src, {
+    base: recovered.base, clean: recovered.clean, pending: recovered.pending,
+    notice: 'Recovered draft. Saving merges against the version it was written from.',
+    needsAttention: true,
+  });
   sources.set(doc.id, src);
-  area.addEventListener('input', () => { src.text = area.value; });
+  area.addEventListener('input', () => { src.text = area.value; scheduleDraft(doc, src); });
 }
 
 // saveButton writes the markdown back. It is a request rather than a command,
 // with an answer of its own, so it does not go over the socket and there is
 // nothing to queue: with no connection it says so and waits.
 function saveButton(doc) {
-  const off = !online();
+  const off = !online() || sourceOf(doc)?.saving;
   return el('button', {
     class: 'lnk', type: 'button', id: 'docsave', text: 'Save',
     disabled: off || null,
@@ -887,23 +986,34 @@ function saveButton(doc) {
 // here as everywhere else, and the line below says so before they press.
 async function writeSource(doc) {
   const src = sourceOf(doc);
-  if (!src) return;
+  if (!src || src.saving) return;
+  src.saving = true;
+  status();
+  try { await saveSource(doc, src); }
+  finally { src.saving = false; status(); }
+}
+
+async function saveSource(doc, src) {
   // One key per attempt, kept only while no answer has come back at all. A
   // request that was never answered may or may not have been applied, and
   // sending it again under the same key is how the server says which; anything
   // it does answer, refusal included, leaves nothing applied that a fresh key
   // would apply twice.
-  src.key = src.key || newKey();
+  const attempt = sourceAttempt(src, newKey());
+  if (!await keepDraft(doc, src)) say('Draft storage is unavailable. Keep this page open until the server confirms your save.');
   let answer;
   try {
-    answer = await replace(`/documents/${doc.id}/source`, { base: src.base, text: src.text },
-      { 'Idempotency-Key': src.key });
+    answer = await replace(`/documents/${doc.id}/source`, { base: attempt.base, text: attempt.text },
+      { 'Idempotency-Key': attempt.key });
   } catch (err) {
-    if (err.status !== 0) src.key = '';
+    if (err.status !== 0) src.pending = null;
+    src.needsAttention = true;
+    await keepDraft(doc, src);
     say(err.message);
     return;
   }
-  src.key = '';
+  if (sourceOf(doc) !== src || src.pending !== attempt) return;
+  src.pending = null;
   if (answer.replayed) {
     // The attempt that was never answered had in fact gone through. Nothing
     // remembers what it answered. Keep the markdown in the textarea: the
@@ -913,6 +1023,8 @@ async function writeSource(doc) {
     await catchUp();
     const back = fresh(doc.id);
     if (back) retainReplay(src, back);
+    src.needsAttention = true;
+    await keepDraft(doc, src);
     say('That save had already gone through. Your markdown is still here.');
     emit();
     return;
@@ -921,11 +1033,24 @@ async function writeSource(doc) {
   src.base = answer.base || src.base;
   const left = (answer.conflicts || []).length;
   if (!left) {
-    sources.delete(doc.id);
-    state.docSource = false;
+    src.needsAttention = false;
+    src.clean = attempt.text;
+    if (src.text === attempt.text && sourceOf(doc) === src) {
+      if (!await keepDraft(doc, src, true)) {
+        src.needsAttention = true;
+        src.notice = 'The server saved this text, but the local draft could not be cleared. Save again to retry cleanup.';
+        emit(); return;
+      }
+      if (src.text === attempt.text && sourceOf(doc) === src) {
+        sources.delete(doc.id);
+        if (state.document === doc.id) state.docSource = false;
+      } else await keepDraft(doc, src);
+    } else await keepDraft(doc, src);
     emit();
     return;
   }
+  src.needsAttention = true;
+  await keepDraft(doc, src);
   // The rest of it went in. What is left is theirs, and the two answers are
   // take the document as it now reads, which throws this text away, or stay
   // here with what was written.
@@ -947,6 +1072,7 @@ async function writeSource(doc) {
     lead, 'Read it again');
   const now = yes && fresh(doc.id);
   if (now) {
+    if (!await keepDraft(doc, src, true)) { say('The draft could not be cleared. Your text is still here.'); return; }
     reopen(now);
     emit();
   }
@@ -2367,7 +2493,7 @@ function arrived() {
 // the whole of that flight.
 function hasUnsavedText() {
   if (Object.keys(state.conflict).length) return true;
-  if ([...sources.values()].some((src) => src.text !== src.clean)) return true;
+  if ([...sources.values()].some(sourceDirty)) return true;
   return [...work.values()].some((w) => w.text !== w.sent || w.flight || w.status !== 'ok');
 }
 
@@ -2377,7 +2503,22 @@ addEventListener('beforeunload', (e) => {
   e.returnValue = '';
 });
 
+addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') return;
+  flushDrafts();
+});
+
+function flushDrafts() {
+  for (const doc of documents()) {
+    const src = sourceOf(doc);
+    if (src && (sourceDirty(src) || src.draftTimer || !src.stored)) {
+      keepDraft(doc, src, src.text === src.clean && !src.pending && !src.needsAttention);
+    }
+  }
+}
+
 addEventListener('pagehide', () => {
+  flushDrafts();
   if (editing) {
     const w = work.get(editing.id);
     if (w) w.text = editing.area.value;

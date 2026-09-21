@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -710,5 +711,95 @@ func TestStopWaitsForARestore(t *testing.T) {
 	}
 	if got := f.workspaceName(); got != `"before"` {
 		t.Errorf("the database is %s", got)
+	}
+}
+
+func TestVerificationLeavesTheLiveWorkspaceUntouched(t *testing.T) {
+	ctx := context.Background()
+	f := newFake(t)
+	f.save("workspace.name", "before")
+	m, err := f.b.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.save("workspace.name", "after")
+	var before int
+	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM propositions`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.b.Verify(ctx, m.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Documents != 4 || result.Duration <= 0 {
+		t.Fatalf("verification: %+v", result)
+	}
+	var after int
+	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM propositions`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if f.workspaceName() != `"after"` || before != after {
+		t.Fatal("verification changed live state")
+	}
+	dirs, err := filepath.Glob(filepath.Join(f.dir, "verify-*"))
+	if err != nil || len(dirs) != 0 {
+		t.Fatalf("verification staging left behind: %v %v", dirs, err)
+	}
+}
+
+func TestVerificationUsesArchivedSettingsAndReservesLaunch(t *testing.T) {
+	ctx := context.Background()
+	f := newFake(t)
+	show, err := board.EnsureShow(ctx, f.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO files (proposition_id,name,folder,size,object_key,state,created_at) VALUES (?,'sample','Documents',3,'sample-key','ready',1)`, show.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.save("storage.primary.bucket", "bucket-a")
+	m, err := f.b.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.save("storage.primary.bucket", "bucket-b")
+	entered, release := make(chan struct{}), make(chan struct{})
+	f.b.CheckObject = func(ctx context.Context, set *settings.Settings, folder, key string, size int64) error {
+		if settings.Get[string](set, "storage.primary.bucket") != "bucket-a" || folder != "Documents" || key != "sample-key" || size != 3 {
+			return errors.New("wrong restored storage context")
+		}
+		close(entered)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if err := f.b.VerifyNow(ctx, m.Name); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		f.b.Stop()
+		t.Fatal("verification did not reach the object check")
+	}
+	if err := f.b.VerifyNow(ctx, m.Name); !errors.Is(err, ErrBusy) {
+		close(release)
+		f.b.Stop()
+		t.Fatalf("concurrent launch: %v", err)
+	}
+	close(release)
+	f.b.Stop()
+	if msg := settings.Get[string](f.set, "backups.last_verify"); !strings.Contains(msg, "Verified 4 documents and 1 sampled objects") {
+		t.Fatalf("result: %s", msg)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	f.b.recordVerification(canceled, Verification{}, context.DeadlineExceeded)
+	if msg := settings.Get[string](f.set, "backups.last_verify"); !strings.Contains(msg, "deadline exceeded") {
+		t.Fatalf("timeout result was not persisted: %s", msg)
 	}
 }

@@ -16,7 +16,7 @@ import { activate } from './keys.js';
 if (location.hash === '#activity') openPanel();
 
 const tabsFor = (p) => p.kind === 'show'
-  ? [['board', 'Board'], ['notes', 'Notes'], ['files', 'Files']]
+  ? [['board', 'Board'], ['files', 'Files']]
   : [['board', 'Board'], ['links', 'Links'], ['files', 'Files']];
 
 // found is the way back to whatever in the work area has the keyboard, written
@@ -141,9 +141,6 @@ function editOnClick(node, read, save) {
 let boardPane = null;
 
 function pane(p) {
-  if (p.kind === 'show' && state.tab === 'notes') {
-    return el('section', { class: 'pane', id: 'pane-notes' }, renderDocument());
-  }
   if (state.tab === 'links') {
     const links = el('section', { class: 'pane', id: 'pane-links' });
     renderLinks(links);
@@ -180,6 +177,6 @@ function pane(p) {
     el('span', { class: 'hint press mono', text: 'Press and hold a card to move it.' }),
   ]);
   renderBoard(board);
-  children(boardPane, [ph, board, p.kind === 'show' ? null : renderDocument()]);
+  children(boardPane, [ph, board, renderDocument()]);
   return boardPane;
 }

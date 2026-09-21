@@ -79,6 +79,7 @@ var Registry = []Def{
 	{Key: "backups.last_at", Kind: KindInt, Default: 0, Internal: true, Label: "Last run"},
 	{Key: "backups.last_ok_at", Kind: KindInt, Default: 0, Internal: true, Label: "Last successful run"},
 	{Key: "backups.last_size", Kind: KindInt, Default: 0, Internal: true, Label: "Last archive size"},
+	{Key: "backups.last_verify", Kind: KindText, Default: "", Internal: true, Label: "Last verification"},
 	{Key: "backups.last_error", Kind: KindText, Default: "", Internal: true, Label: "Last failure"},
 
 	{Key: "mail.host", Kind: KindString, Default: "", Label: "SMTP host"},

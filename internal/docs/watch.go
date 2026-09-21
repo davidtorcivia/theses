@@ -787,3 +787,21 @@ func sameAs(items []item, blocks []Block) bool {
 	}
 	return true
 }
+
+// CheckMirror exercises startup reconciliation without serving or watching the workspace.
+func (s *Service) CheckMirror(ctx context.Context) error {
+	if err := os.MkdirAll(s.root, 0755); err != nil {
+		return err
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+	for _, path := range s.catchUp(ctx, watcher) {
+		if err := s.Import(ctx, path); err != nil {
+			return err
+		}
+	}
+	return s.verifyMirrors(ctx)
+}

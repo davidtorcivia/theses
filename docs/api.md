@@ -20,7 +20,7 @@ target. Missing or inaccessible targets display "Unavailable proposition".
 Server-rendered markdown and plain text use the generic label "Proposition
 42" and never copy private target metadata. `[label](/p/42)` and
 `[Show](/show)` are also supported. Card movement does not change the target's
-status. The Show UI uses Board, Notes and Files; existing link endpoints also
+status. Show notes appear beneath the board, with Files in its own tab; link endpoints
 remain available to API clients.
 
 ## Tokens and scopes

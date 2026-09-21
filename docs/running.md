@@ -173,3 +173,26 @@ its date. It stops writes, swaps the database, rewrites the mirror and starts
 the watcher again. The archive is encrypted to the same key that encrypts the
 stored secrets, so a restore needs `THESES_SECRET_KEY`, which the running app
 needs anyway.
+
+## Draft and notification recovery
+
+Source-mode edits are kept as separate drafts on the current device. After a
+reload, choose Recover draft to reopen the original text and revision base;
+Save merges it with the current document. Drafts from different tabs are kept
+separately. A draft is removed only after a confirmed save or explicit discard.
+When browser storage is unavailable, keep the page open until Save succeeds.
+Signing out clears the device's offline database, including drafts.
+
+Notifications consume committed activity through a durable cursor. Matching,
+queued messages, and cursor advancement share a transaction; activity
+compaction waits until matching has passed a run. A restart or dropped bus
+wakeup is recovered automatically. Recipients are checked against current
+assignments and permissions. Delivery to external providers remains retryable,
+so a lost provider response or historical restore may produce duplicates.
+
+Owners can choose Verify restore beside a backup in Settings. It downloads,
+decrypts, migrates, validates, and reconciles an isolated workspace without
+replacing the running database or its documents. It checks up to ten referenced
+file objects using the archived storage configuration and records the duration
+and result. This samples current object availability, not every historical
+object version. A timed-out or failed verification is recorded as a failure.
