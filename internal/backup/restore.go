@@ -147,6 +147,11 @@ func (b *Backup) prepare(ctx context.Context, key, dir string) (Manifest, error)
 		check.Close()
 		return Manifest{}, err
 	}
+	// Restoring old credentials would reactivate revoked subscription URLs.
+	if _, err := check.ExecContext(ctx, `DELETE FROM calendar_subscriptions`); err != nil {
+		check.Close()
+		return Manifest{}, err
+	}
 	if err := check.Close(); err != nil {
 		return Manifest{}, err
 	}

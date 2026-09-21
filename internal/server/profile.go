@@ -11,7 +11,7 @@ import (
 
 // profileSections are the anchors a form on the profile page may send the
 // browser back to.
-var profileSections = map[string]bool{"you": true, "security": true, "notifications": true, "danger": true}
+var profileSections = map[string]bool{"you": true, "security": true, "notifications": true, "danger": true, "calendar": true}
 
 // profileTo is the profile page's half of settingsTo.
 func profileTo(section string, saved bool) string {
@@ -25,10 +25,16 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	var calendarActive bool
+	if err := s.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM calendar_subscriptions WHERE user_id=?)`, u.ID).Scan(&calendarActive); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	data := s.page(r, "Profile", merge(map[string]any{
-		"Plain":    true,
-		"Section":  "",
-		"Swatches": swatches(u.Colour),
+		"CalendarActive": calendarActive,
+		"Plain":          true,
+		"Section":        "",
+		"Swatches":       swatches(u.Colour),
 	}, notifications))
 	s.render(w, r, http.StatusOK, "profile.html", s.said(w, r, data, profileSections))
 }

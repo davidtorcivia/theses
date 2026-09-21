@@ -302,6 +302,8 @@ func (s *Server) routes() http.Handler {
 	// way in here. The handler is realtime's either way.
 	mux.Handle("GET /api/v1/propositions/{id}/events", s.api.Authenticate(http.HandlerFunc(s.propositionEvents)))
 
+	mux.HandleFunc("GET /calendar/{token}/production.ics", s.getCalendar)
+	mux.HandleFunc("POST /profile/calendar", s.requireUser(s.postCalendar))
 	mux.HandleFunc("GET /profile", s.requireUser(s.getProfile))
 	mux.HandleFunc("POST /profile", s.requireUser(s.postProfile))
 	mux.HandleFunc("POST /profile/password", s.requireUser(s.postPassword))

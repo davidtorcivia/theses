@@ -8,7 +8,7 @@ for (const button of document.querySelectorAll('[data-copy]')) {
   button.addEventListener('click', async () => {
     const was = button.textContent;
     try {
-      await navigator.clipboard.writeText(value.textContent.trim());
+      await navigator.clipboard.writeText((value.value ?? value.textContent).trim());
       button.textContent = 'Copied';
     } catch {
       button.textContent = 'Select it and copy it';

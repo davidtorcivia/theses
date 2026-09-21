@@ -1,5 +1,5 @@
 {{define "content"}}<section id="admin">
-  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a>{{if .IsOwner}}<a href="/settings">Workspace settings</a>{{end}}<a href="/" class="back">← Back to work</a></nav>
+  <nav><a href="#you">You</a><a href="#security">Security</a><a href="#calendar">Calendar sync</a><a href="#notifications">Notifications</a><a href="#danger">Danger</a>{{if .IsOwner}}<a href="/settings">Workspace settings</a>{{end}}<a href="/" class="back">← Back to work</a></nav>
   <div class="apane">
     <h2>Profile</h2>
     {{if not .Section}}{{template "notice" .}}{{end}}
@@ -53,6 +53,25 @@
           <button class="lnk" type="submit">Sign out this browser</button>
         </form>
         <button class="lnk" type="button" data-dialog="signout-all">Sign out everywhere</button>
+      </div>
+    </section>
+
+    <section class="fs" id="calendar">
+      <div class="fsh"><h3>Calendar sync</h3><p>Follow recording, editing and release dates in Google Calendar or Apple Calendar/iCloud.</p></div>
+      <div class="fsb">
+        {{if eq .Section "calendar"}}{{template "notice" .}}{{end}}
+        <p>Includes all active episodes you can access. Dates are all-day events. Change them in Theses; your calendar service decides when updates arrive.</p>
+        {{if .CalendarURL}}<label class="f"><span class="l">Private subscription URL</span><input id="calendar-url" readonly value="{{.CalendarURL}}" autocomplete="off" spellcheck="false"><small>Copy this link now. It is shown only once. Use the same link on all your calendars.</small></label><button class="lnk" type="button" data-copy="calendar-url">Copy subscription link</button>{{end}}
+        <ol class="calendar-instructions">
+          <li><b>Google Calendar:</b> on a computer, choose Other calendars + → From URL, paste the link, then Add calendar.</li>
+          <li><b>Apple Calendar on Mac:</b> choose File → New Calendar Subscription, paste the link, then choose iCloud as the account to see it on your other devices.</li>
+        </ol>
+        <p class="small dim">Anyone with this private link can read your episode titles and dates. Replacing or revoking it stops future access; calendar services may retain earlier copies. Subscribe by URL instead of importing a file to keep receiving changes.</p>
+        <form method="post" action="/profile/calendar" class="calendar-subscription-actions">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <button class="save" name="action" value="create" type="submit">{{if .CalendarActive}}Replace subscription link{{else}}Create subscription link{{end}}</button>
+          {{if .CalendarActive}}<button class="lnk del" name="action" value="revoke" type="submit">Revoke subscription</button>{{end}}
+        </form>
       </div>
     </section>
 
@@ -149,4 +168,4 @@
   </dialog>
 </section>{{end}}
 
-{{define "scripts"}}<script type="module" src="{{asset "app/notify.js"}}"></script>{{end}}
+{{define "scripts"}}<script type="module" src="{{asset "app/copy.js"}}"></script><script type="module" src="{{asset "app/notify.js"}}"></script>{{end}}

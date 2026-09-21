@@ -99,18 +99,18 @@ export async function reviewTarget(kind,id) {
 const research=new Map();
 export function researchSection(p) {
   let entry=research.get(p.id);if(entry)return entry;
-  const body=el('div');
-  entry=el('details',{class:'connected research'},el('summary',{text:'Research & references'}),body);
+  const body=el('div',{class:'research-body'});
+  entry=el('details',{class:'connected research'},el('summary',{},el('span',{class:'section-eyebrow',text:'THE EVIDENCE'}),el('span',{text:'Research & references'})),body);
   let generation=0;
   const draw=async()=>{
     const request=++generation;
     clear(body).append(el('p',{role:'status',text:'Loading references…'}));
     try{
       const {evidence}=await api.get('/evidence?proposition='+p.id);if(!entry.open||request!==generation)return;clear(body);
-      body.append(el('div',{class:'acts'},el('button',{class:'lnk',type:'button',text:'Review history',onclick:()=>reviewTarget('proposition',p.id)}),canEdit()?el('button',{type:'button',class:'act',text:'Add evidence',onclick:()=>editEvidence(p,{},draw)}):null,
+      body.append(el('div',{class:'acts research-toolbar'},canEdit()?el('button',{type:'button',class:'act',text:'Add evidence',onclick:()=>editEvidence(p,{},draw)}):null,el('button',{class:'lnk',type:'button',text:'Review history',onclick:()=>reviewTarget('proposition',p.id)}),
         el('a',{class:'lnk',href:`/app/evidence/export?proposition=${p.id}&format=md`,text:'Export Markdown'}),el('a',{class:'lnk',href:`/app/evidence/export?proposition=${p.id}&format=ris`,text:'Export RIS'}),el('button',{class:'lnk',type:'button',text:'Refresh',onclick:draw})));
       if(!evidence.length)body.append(el('p',{class:'dim',text:'Save quotations, page numbers or timestamps, and the claims they support. RIS exports open in reference managers such as Zotero.'}));
-      for(const e of evidence)body.append(el('article',{id:'evidence-'+e.id,class:'evidence-item'},el('strong',{text:e.title}),el('span',{class:'evidence-status',text:e.verified?'Verified':'Needs checking'}),
+      for(const e of evidence)body.append(el('article',{id:'evidence-'+e.id,class:'evidence-item'},el('header',{class:'evidence-heading'},el('strong',{text:e.title}),el('span',{class:'evidence-status'+(e.verified?' verified':''),text:e.verified?'Verified':'Needs checking'})),
         el('p',{class:'dim',text:[e.author,e.year,e.locator].filter(Boolean).join(' · ')}),e.quotation?el('blockquote',{text:e.quotation}):null,e.interpretation?el('p',{},el('strong',{text:'Interpretation: '}),e.interpretation):null,e.claim?el('p',{},el('strong',{text:'Supports: '}),e.claim):null,
         el('div',{class:'acts'},e.url?el('a',{href:e.url,target:'_blank',rel:'noopener noreferrer',class:'lnk',text:'Source'}):null,e.block_id?el('a',{href:'#block-'+e.block_id,class:'lnk',text:'Script passage'}):null,
         el('button',{class:'lnk',type:'button',text:'Copy reference',onclick:async()=>{try{await navigator.clipboard.writeText(`[${e.title.replace(/[\[\]]/g,'')}](${location.origin}/p/${p.id}#evidence-${e.id})`);say('Reference copied');}catch{say('Clipboard access failed.');}}}),canEdit()?el('button',{class:'lnk',type:'button',text:'Edit evidence',onclick:()=>editEvidence(p,e,draw)}):null)));

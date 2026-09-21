@@ -1,27 +1,29 @@
 import { newKey } from './net.js';
 import { el, clear, say } from './dom.js';
 import { state, canEdit, apply } from './state.js';
+import { monthDate, moveMonth, usHolidays } from './calendar.js';
 import { calendarDay } from './filters.js';
 import { propositionURL } from './references.js';
 import { openCard } from './drawer.js';
 import * as api from './api.js';
 
-let calendar, month, grid, calendarKey = '', plans = [], planSeq = -1, calendarRequest = 0;
+let calendar, month, monthTitle, holidayToggle, previous, next, grid, calendarKey = '', plans = [], planSeq = -1, calendarRequest = 0;
 export function productionCalendar() {
   if (!calendar) {
-    month = el('input', { type: 'month', value: calendarDay(state.timezone).slice(0,7), 'aria-label': 'Production month', onchange: drawCalendar });
+    month = el('input', { type: 'month', min:'2000-01', max:'2100-12', value: calendarDay(state.timezone).slice(0,7), 'aria-label': 'Production month', onchange: drawCalendar });
+    monthTitle=el('h3',{class:'calendar-month-title','aria-live':'polite'});
+    holidayToggle=el('input',{type:'checkbox',checked:true,onchange:drawCalendar});
     grid = el('div', { class: 'calendar-content' });
-    const move = (step) => {
-      const [y,m] = (month.value||calendarDay(state.timezone).slice(0,7)).split('-').map(Number);
-      month.value = new Date(Date.UTC(y,m-1+step,1)).toISOString().slice(0,7); drawCalendar();
-    };
+    const move = step => {month.value=moveMonth(month.value,step);drawCalendar();};
+    previous=el('button',{type:'button',class:'calendar-step','aria-label':'Previous month',text:'←',onclick:()=>move(-1)});
+    next=el('button',{type:'button',class:'calendar-step','aria-label':'Next month',text:'→',onclick:()=>move(1)});
     calendar = el('details', { class: 'connected production-calendar' },
       el('summary', {}, el('span', { class: 'section-eyebrow', text: 'THE SCHEDULE' }), el('span', { text: 'Production calendar' })),
-      el('div', { class: 'calendar-toolbar' }, el('div', { class: 'calendar-navigation' },
-        el('button', { type:'button', class:'calendar-step', 'aria-label':'Previous month', text:'←', onclick:()=>move(-1) }), month,
-        el('button', { type:'button', class:'calendar-step', 'aria-label':'Next month', text:'→', onclick:()=>move(1) }),
-        el('button', { type:'button', class:'lnk', text:'Today', onclick:()=>{month.value=calendarDay(state.timezone).slice(0,7);drawCalendar();} })),
-        el('div', { class:'calendar-legend' }, ['Record','Edit','Release'].map((label)=>el('span',{class:'milestone '+label.toLowerCase(),text:label})))), grid);
+      el('div',{class:'calendar-toolbar'},el('div',{class:'calendar-heading'},monthTitle,el('p',{class:'dim',text:'Make room for your next episode.'})),
+        el('div',{class:'calendar-navigation'},previous,el('label',{class:'calendar-jump'},el('span',{text:'Jump to month'}),month),next,
+          el('button',{type:'button',class:'lnk',text:'Today',onclick:()=>{month.value=calendarDay(state.timezone).slice(0,7);drawCalendar();}}))),
+      el('div',{class:'calendar-options'},el('div',{class:'calendar-legend'},['Record','Edit','Release'].map(label=>el('span',{class:'milestone '+label.toLowerCase(),text:label}))),
+        el('label',{class:'calendar-holidays-toggle'},holidayToggle,'U.S. holidays & observances'),el('a',{class:'lnk',href:'/profile#calendar',text:'Calendar sync'})),grid);
     calendar.addEventListener('toggle',()=>{if(calendar.open)loadPlans();});
   }
   const key = JSON.stringify(state.props);
@@ -35,11 +37,14 @@ async function loadPlans() {
   catch(err){if(request===calendarRequest){planSeq=-1;grid.append(el('p',{role:'status',text:err.message}),el('button',{class:'lnk',type:'button',text:'Retry schedule',onclick:loadPlans}));}}
 }
 function drawCalendar() {
-  if (!/^\d{4}-\d{2}$/.test(month.value)) return;
+  if (!monthDate(month.value)) month.value=calendarDay(state.timezone).slice(0,7);
+  clear(monthTitle).append(el('span',{text:monthDate(month.value).toLocaleDateString(undefined,{month:'long',timeZone:'UTC'})}),' ',el('span',{class:'calendar-year',text:month.value.slice(0,4)}));
+  previous.disabled=month.value==='2000-01';next.disabled=month.value==='2100-12';
   const [year,m] = month.value.split('-').map(Number);
   const count = new Date(Date.UTC(year,m,0)).getUTCDate();
   const offset = new Date(Date.UTC(year,m-1,1)).getUTCDay();
   const today=calendarDay(state.timezone);
+  const holidays=holidayToggle.checked?usHolidays(year):new Map();
   const episodes=state.props.filter(p=>p.kind!=='show'&&!p.archived_at);
   const byPlan=new Map(plans.map(p=>[p.proposition_id,p]));
   const dated=new Map();
@@ -55,8 +60,9 @@ function drawCalendar() {
       const cell=el('td');
       if (day>0 && day<=count) {
         const date=month.value+'-'+String(day).padStart(2,'0');
-        cell.className=date===today?'calendar-today':'';
-        cell.append(el('time', { datetime: date, text: day, 'aria-label':date, 'aria-current':date===today?'date':null }));
+        cell.className=[date===today?'calendar-today':'',i===0||i===6?'calendar-weekend':''].filter(Boolean).join(' ');
+        cell.append(el('time', { datetime: date, text: day, 'aria-label':new Date(date+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'UTC'}), 'aria-current':date===today?'date':null }));
+        for(const name of holidays.get(date)||[])cell.append(el('span',{class:'calendar-holiday',text:name}));
         for (const {p,kind} of dated.get(date)||[]) cell.append(el('a', { class:'calendar-event '+kind, href: propositionURL(p), title:kind+': '+p.title },el('span',{class:'event-kind',text:kind}),el('span',{text:p.title})));
       } else cell.className='calendar-outside';
       row.append(cell);
@@ -66,10 +72,12 @@ function drawCalendar() {
   const events=[...dated.values()].flat();
   clear(grid).append(el('p',{class:'calendar-count',text:events.length+' milestones this month · '+episodes.length+' active propositions'}),
     el('div',{class:'calendar-scroll'},el('table', {}, el('caption', { class:'sr-only',text:'Production milestones for '+month.value }),
-      el('thead', {}, el('tr', {}, ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((d)=>el('th', { scope:'col',text:d })))),body)));
-  const agenda=el('div',{class:'calendar-agenda','aria-label':'Monthly production agenda'});
-  for(const [date,items] of [...dated].sort(([a],[b])=>a.localeCompare(b)))agenda.append(el('section',{},el('time',{datetime:date,text:new Date(date+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'})}),items.map(({p,kind})=>el('a',{class:'calendar-event '+kind,href:propositionURL(p)},el('span',{class:'event-kind',text:kind}),el('span',{text:p.title})))));
-  if(!dated.size)agenda.append(el('p',{class:'dim',text:'No milestones this month. Set recording, edit, or release dates on an episode.'}));
+      el('thead', {}, el('tr', {}, ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map(d=>el('th',{scope:'col'},el('abbr',{title:d,text:d.slice(0,3)}),el('span',{class:'weekday-full',text:d}))))),body)));
+  const agenda=el('div',{class:'calendar-agenda','aria-label':'Monthly production agenda'},el('h4',{text:'Dates this month'}));
+  const agendaDays=new Map([...dated]);
+  for(const date of holidays.keys())if(date.startsWith(month.value)&&!agendaDays.has(date))agendaDays.set(date,[]);
+  for(const [date,items] of [...agendaDays].sort(([a],[b])=>a.localeCompare(b)))agenda.append(el('section',{},el('time',{datetime:date,text:new Date(date+'T12:00:00Z').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric',timeZone:'UTC'})}), (holidays.get(date)||[]).map(name=>el('p',{class:'calendar-holiday',text:name})),items.map(({p,kind})=>el('a',{class:'calendar-event '+kind,href:propositionURL(p)},el('span',{class:'event-kind',text:kind}),el('span',{text:p.title})))));
+  if(!agendaDays.size)agenda.append(el('p',{class:'dim',text:'No milestones this month. Set recording, edit, or release dates on an episode.'}));
   grid.append(agenda);
   const attention=episodes.filter(p=>{const plan=byPlan.get(p.id);return plan?.blocker||!p.target_date||!plan?.next_action||!plan?.owner_id;});
   if(episodes.length)grid.append(el('details',{class:'calendar-attention'},el('summary',{text:'Episode overview · '+attention.length+' need attention'}),
