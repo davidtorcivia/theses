@@ -578,10 +578,16 @@ export function onAnswer(fn) {
 // written against, which the server merges or refuses like any other save.
 const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('theses-outbox') : null;
 
+// The message carries who answered, because the number in it names a row and
+// the numbers start again at one when signing out empties the store. Without
+// this, the next person at this machine answering their own first question
+// would settle a block in a tab the person before them left open, on nothing
+// more than the two rows having been the first of their stores.
 if (channel) {
   channel.addEventListener('message', (e) => {
     const said = e.data;
     if (!said || !said.answered) return;
+    if (said.me && state.me && said.me !== state.me) return;
     settled(said.answered, said.answer, { post: false });
     // What the other tab did to the store, this one has not read yet.
     count();
@@ -589,8 +595,8 @@ if (channel) {
 }
 
 // settled says a row has been answered, here and in the tabs beside this one.
-// The number is all either needs: a tab drawing the question is drawing it from
-// that row, and one that is not has nothing to settle.
+// The number and whose it is are all either needs: a tab drawing the question
+// is drawing it from that row, and one that is not has nothing to settle.
 //
 // The row leaves this tab's list first, because it has stopped being a question
 // either way: dropped when it was let go or taken, waiting again when it goes
@@ -600,7 +606,7 @@ if (channel) {
 function settled(n, answer, { here = true, post = true } = {}) {
   state.refused = state.refused.filter((r) => r.n !== n);
   if (here && answers) answers(n, answer);
-  if (post && channel) channel.postMessage({ answered: n, answer });
+  if (post && channel) channel.postMessage({ answered: n, answer, me: state.me });
 }
 
 // retry puts a refused row back in the queue, which is what the panel offers on

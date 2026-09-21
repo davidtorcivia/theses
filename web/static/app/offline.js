@@ -324,9 +324,17 @@ export async function file(row, key, why, detail) {
       // Without this a refusal the drain made and one filed here would be two
       // rows for one insert, the panel would ask twice, and a discard that
       // dropped one of them would leave the other to draw the paragraph again.
+      //
+      // A name is only a match when there is one. Rows with no name are the
+      // inserts the ordinary path queued, and taking the absence of a name as
+      // something two rows have in common would write one question over the
+      // first other unnamed one in the store, which is somebody's words.
       const found = all.result.find((r) => r.refused
-        && (r.key === key || (row.idem && r.idem === row.idem)));
-      const put = store.put({ at: Date.now(), ...row, key, sending: false,
+        && ((key && r.key === key) || (row.idem && r.idem === row.idem)));
+      // The time is the row's own, after the spread, so a row read out of the
+      // store and filed again is stamped now rather than keeping the moment it
+      // first went in: refuse and dropIfUnchanged both answer to that stamp.
+      const put = store.put({ ...row, key, sending: false, at: Date.now(),
         refused: why, detail: detail || null, ...(found ? { n: found.n } : {}) });
       put.onsuccess = () => { out.n = put.result; };
     };
