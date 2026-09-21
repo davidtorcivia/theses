@@ -428,6 +428,24 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			s.invitationGone(w, r)
 			return
 		}
+		// Recheck under SQLite's write lock in case either value was claimed while
+		// this person enrolled their authenticator.
+		if _, err := store.UserByEmail(r.Context(), tx, u.Email); err == nil {
+			s.pending.clear(w, s.cfg.CookieSecure)
+			s.errorPage(w, r, http.StatusConflict)
+			return
+		} else if !errors.Is(err, store.ErrNotFound) {
+			s.fail(w, r, err)
+			return
+		}
+		if _, err := store.UserByHandle(r.Context(), tx, u.Handle); err == nil {
+			s.pending.clear(w, s.cfg.CookieSecure)
+			s.errorPage(w, r, http.StatusConflict)
+			return
+		} else if !errors.Is(err, store.ErrNotFound) {
+			s.fail(w, r, err)
+			return
+		}
 	}
 	id, err := store.CreateUser(r.Context(), tx, u)
 	if err != nil {
@@ -581,7 +599,7 @@ func (s *Server) postResetToken(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusUnprocessableEntity, fmt.Sprintf("a password is at least %d characters", auth.MinPasswordLen))
 		return
 	}
-	u, err := s.auth.UsePasswordReset(r.Context(), r.PathValue("token"))
+	_, err := s.auth.PasswordResetUser(r.Context(), r.PathValue("token"))
 	if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, auth.ErrTokenExpired) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
@@ -595,16 +613,13 @@ func (s *Server) postResetToken(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	if err := store.SetPasswordHash(r.Context(), s.db, u.ID, hash); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if err := s.activity(r.Context(), u.ID, "user", itoa(u.ID), "password-reset", "", ""); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	// A reset is also a way of throwing off anyone already signed in as them.
-	if err := s.auth.SignOutEverywhere(r.Context(), u.ID); err != nil {
+	// Claiming the link, changing the password, recording the event and throwing
+	// off existing sessions either all commit or all roll back.
+	if err := s.auth.ResetPassword(r.Context(), r.PathValue("token"), hash); err != nil {
+		if errors.Is(err, auth.ErrTokenInvalid) || errors.Is(err, auth.ErrTokenExpired) {
+			s.errorPage(w, r, http.StatusNotFound)
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}

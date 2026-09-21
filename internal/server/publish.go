@@ -283,6 +283,10 @@ func (s *Server) writable(r *http.Request, id int64) (board.Proposition, error) 
 // episode that exists and is not recorded is the one thing that would make the
 // next attempt a second episode rather than an update.
 func (s *Server) publish(r *http.Request, p board.Proposition, chosen publishChoice) (string, error) {
+	if !s.publishing.CompareAndSwap(false, true) {
+		return "", errors.New("a publication is already in progress; wait for it to finish")
+	}
+	defer s.publishing.Store(false)
 	// The call outlives the request on purpose. A browser that goes away after
 	// Transistor has made the episode would otherwise cancel the write that
 	// records its id, and the next attempt would make a second episode. The

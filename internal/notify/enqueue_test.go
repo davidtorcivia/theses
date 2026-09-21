@@ -559,9 +559,36 @@ func TestCheckWindow(t *testing.T) {
 		{"25:00", "07:00", false},
 		{"23:60", "07:00", false},
 		{"2300", "07:00", false},
+		{"-1:00", "07:00", false},
+		{"23:-1", "07:00", false},
+		{"+1:00", "07:00", false},
 	} {
 		if err := checkWindow(tt.from, tt.to); (err == nil) != tt.ok {
 			t.Errorf("checkWindow(%q, %q) = %v", tt.from, tt.to, err)
+		}
+	}
+}
+
+func TestSchedulesUseWallClockAcrossDST(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, date := range []struct {
+		month time.Month
+		day   int
+	}{{time.March, 8}, {time.November, 1}} {
+		at := func(day, hour int) int64 { return time.Date(2026, date.month, day, hour, 0, 0, 0, loc).Unix() }
+		for _, now := range []int64{at(date.day-1, 23), at(date.day, 3)} {
+			if got, want := quietUntil(now, loc, "23:00", "07:00"), at(date.day, 7); got != want {
+				t.Errorf("quiet hours end %s, want %s", time.Unix(got, 0).In(loc), time.Unix(want, 0).In(loc))
+			}
+			if got, want := nextDigest(now, loc, "08:00"), at(date.day, 8); got != want {
+				t.Errorf("digest at %s, want %s", time.Unix(got, 0).In(loc), time.Unix(want, 0).In(loc))
+			}
+		}
+		if got, want := nextDigest(at(date.day, 20), loc, "08:00"), at(date.day+1, 8); got != want {
+			t.Errorf("next day's digest at %s, want %s", time.Unix(got, 0).In(loc), time.Unix(want, 0).In(loc))
 		}
 	}
 }

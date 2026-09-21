@@ -3,8 +3,9 @@
 // the two text fields carry the version they started from.
 
 import { $, el, clear, add, initials, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit, material } from './state.js';
-import { send, where, Conflict } from './net.js';
+import { state, user, byHandle, emit, hold, canEdit, material, target, baseText, unresolvedCard } from './state.js';
+import { send, where, newKey, count, chosen, resend, letGo, Conflict } from './net.js';
+import { file as fileRefusal } from './offline.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
 import { renderLinkDrawer, attachedLinks, host } from './links.js';
 import { renderFileDrawer, attachedFiles, bytes } from './files.js';
@@ -22,6 +23,13 @@ let takeFocus = 0;
 let returnTo = 0;
 
 export function closeDrawer() {
+  if (unresolvedCard(state.openCard)) {
+    say('Choose keep mine or take theirs before closing this card.');
+    return false;
+  }
+  const link = state.openLink;
+  const file = state.openFile;
+  const panel = state.panel;
   closePanel();
   returnTo = state.openCard;
   state.openCard = state.openLink = state.openFile = null;
@@ -30,9 +38,19 @@ export function closeDrawer() {
   document.body.classList.remove('has-drawer');
   where('');
   emit();
+  if (link || file || panel) requestAnimationFrame(() => {
+    const back = link ? $(`#llist .row[data-id="${link}"]`)
+      : file ? $(`#flist .row[data-id="${file}"]`) : $('#activitytab');
+    if (back) back.focus();
+  });
+  return true;
 }
 
 export function openCard(id) {
+  if (state.openCard !== id && unresolvedCard(state.openCard)) {
+    say('Choose keep mine or take theirs before opening another card.');
+    return false;
+  }
   if (state.openCard !== id) {
     state.openCard = id;
     state.conflict = {};
@@ -41,6 +59,7 @@ export function openCard(id) {
   }
   state.openLink = state.openFile = null;
   emit();
+  return true;
 }
 
 // linked is the links and files hanging off this card, with a picker to add
@@ -394,12 +413,36 @@ function description(card) {
 // typed in: by the time the refusal arrives the drawer has been drawn again
 // from the server's row and that node is no longer in the page. It is held by
 // field, because a title and a description can each be waiting on one.
-function versioned(cmd, card, args) {
-  send(cmd, { card: card.id, base: card.version, ...args }).catch((err) => {
-    if (!(err instanceof Conflict)) { say(err.message); emit(); return; }
-    state.conflict[err.detail.field] = { card: card.id, cmd, args };
+async function versioned(cmd, card, args) {
+  const full = { card: card.id, base: card.version, ...args };
+  const idem = newKey();
+  const key = target(cmd, full);
+  const prior = state.refused.find((held) => held.key === key);
+  const field = cmd === 'card.title' ? 'title' : 'description_md';
+  const row = { proposition: state.open, me: state.me, cmd, args: full, idem,
+    base: full.base, base_text: baseText(cmd, full) };
+  try {
+    await send(cmd, full, state.open, { key: idem });
+    if (prior) await chosen(prior.n);
+    delete state.conflict[field];
+    return true;
+  } catch (err) {
+    if (!(err instanceof Conflict)) { say(err.message); emit(); return false; }
+    const n = await fileRefusal(row, key, err.message, err.detail);
+    if (n) {
+      // Draw the choice immediately. count reads the same row back for this
+      // and other tabs, but a failed read must not make it disappear here.
+      state.refused = state.refused.filter((held) => held.n !== n);
+      state.refused.push({ ...row, key, n, refused: err.message, detail: err.detail });
+      delete state.conflict[err.detail.field];
+      await count();
+    } else {
+      state.conflict[err.detail.field] = { card: card.id, cmd, args };
+      say('This browser could not keep that conflict after the page closes. Choose an answer before leaving this card.');
+    }
     emit();
-  });
+    return false;
+  }
 }
 
 // conflictBar is the choice, drawn under the field it is about, or nothing when
@@ -407,26 +450,53 @@ function versioned(cmd, card, args) {
 // taken from the row rather than from the refusal, because a row that moves on
 // again while somebody is deciding would otherwise be quoted as it used to be.
 function conflictBar(card, field) {
-  const held = state.conflict[field];
-  if (!held || held.card !== card.id) return null;
-  const drop = () => { delete state.conflict[field]; emit(); };
+  const saved = state.refused.find((row) => row.args && row.args.card === card.id
+    && row.detail && row.detail.field === field);
+  const local = state.conflict[field];
+  const held = saved || (local && local.card === card.id ? { ...local, local: true } : null);
+  if (!held) return null;
+  const drop = async () => {
+    if (held.local) {
+      delete state.conflict[field];
+      emit();
+      return;
+    }
+    await letGo(held);
+  };
   const bar = el('p', { class: 'notice bad' },
     'Somebody changed this while you were editing it. Theirs reads ',
     el('span', { class: 'mono', text: card[field] || '(nothing)' }), '. ');
   bar.append(el('button', {
     class: 'lnk', type: 'button', text: 'Keep mine', 'data-k': 'keep' + field,
-    onclick: () => {
+    disabled: held.saving || null,
+    onclick: async (e) => {
       // Sent again against the row as it stands now rather than against the
       // version the first refusal named. A row that has moved on once more
       // would be refused a second time and the typed text lost with nothing
       // on the screen to say so; this way the refusal comes back through here
       // and draws the choice again.
-      drop();
-      const live = state.cards.get(held.card);
-      if (live) versioned(held.cmd, live, held.args);
+      const live = state.cards.get(card.id);
+      if (!live) return;
+      if (held.local) {
+        const button = e.currentTarget;
+        button.disabled = true;
+        local.saving = true;
+        const saved = await versioned(held.cmd, live, held.args);
+        if (saved && state.conflict[field] === local) delete state.conflict[field];
+        else { local.saving = false; button.disabled = false; }
+        emit();
+        return;
+      }
+      try {
+        await resend(held, { ...held.args, base: live.version });
+      } catch (err) {
+        say(err.message);
+      }
     },
   }), ' ', el('button', {
-    class: 'lnk plain', type: 'button', text: 'Take theirs', 'data-k': 'theirs' + field, onclick: drop,
+    class: 'lnk plain', type: 'button', text: 'Take theirs', 'data-k': 'theirs' + field,
+    disabled: held.saving || null,
+    onclick: () => drop().catch((err) => say(err.message)),
   }));
   return bar;
 }

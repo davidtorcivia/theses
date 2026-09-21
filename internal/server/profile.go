@@ -66,16 +66,30 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if other, err := store.UserByEmail(r.Context(), s.db, email); err == nil && other.ID != u.ID {
-		s.back(w, r, "/profile#you", map[string]any{"Error": "Another account already uses that email address."})
-		return
-	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.fail(w, r, err)
-		return
+	if email != "" {
+		if other, err := store.UserByEmail(r.Context(), s.db, email); err == nil && other.ID != u.ID {
+			s.back(w, r, "/profile#you", map[string]any{"Error": "Another account already uses that email address."})
+			return
+		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.fail(w, r, err)
+			return
+		}
 	}
 	if err := s.write(r, "user", itoa(u.ID), "update", u.Handle, handle, func(q store.Querier) error {
 		return store.UpdateProfile(r.Context(), q, u.ID, handle, name, initials, colour, email)
 	}); err != nil {
+		// A concurrent request may have claimed either value after the checks;
+		// translate the database refusal into the same useful answer.
+		if email != "" {
+			if other, findErr := store.UserByEmail(r.Context(), s.db, email); findErr == nil && other.ID != u.ID {
+				s.back(w, r, "/profile#you", map[string]any{"Error": "Another account already uses that email address."})
+				return
+			}
+		}
+		if other, findErr := store.UserByHandle(r.Context(), s.db, handle); findErr == nil && other.ID != u.ID {
+			s.back(w, r, "/profile#you", map[string]any{"Error": "That account name is taken."})
+			return
+		}
 		s.fail(w, r, err)
 		return
 	}

@@ -11,6 +11,7 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 | `POST /p/{id}/settings` | Save them. |
 | `GET /documents/{id}/revisions` | One document's history as JSON, for the History link above it. |
 | `/app/...` | The links, files and attachment endpoints, and `PUT /app/documents/{id}/source` behind the document's Source view, on the session cookie: the same handlers `/api/v1` serves. See [api.md](api.md). |
+| `POST /app/commands` | HTTP fallback for command frames when WebSockets are unavailable. Uses the session cookie, CSRF protection, and the same command, idempotency key, rate limit, and `ack`/`conflict`/`error` response envelopes as `/ws`. The browser reads missed events through `/api/events` while using this transport. Presence requires WebSockets. |
 | `GET POST /setup` | First run only: create the owner. Every other route redirects here until one exists. |
 | `GET POST /setup/authenticator` | Scan the QR code and confirm a code. The account is written only when the code matches. |
 | `GET POST /login` | Account name, password and authenticator code, in one form. |

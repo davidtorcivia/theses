@@ -584,6 +584,82 @@ func TestProfileChangesAndSignOutEverywhere(t *testing.T) {
 	}
 }
 
+func TestProfileRejectsAnEmailThatOnlyDiffersByCase(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	if _, err := store.CreateUser(ctx, h.db, &store.User{
+		Handle: "mara", Email: "mara@example.com", Name: "Mara Okafor",
+		Initials: "MO", Colour: Palette[2], Role: auth.RoleEditor, PasswordHash: "x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ := h.post("/profile", url.Values{
+		"csrf": {h.csrf("/profile")}, "handle": {"ada"}, "name": {"Ada Lovelace"},
+		"initials": {"AL"}, "colour": {Palette[1]}, "email": {"MARA@EXAMPLE.COM"},
+	})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/profile#you" {
+		t.Fatalf("duplicate email gave %d %s", res.StatusCode, res.Header.Get("Location"))
+	}
+	_, body := h.get("/profile")
+	if !strings.Contains(body, "Another account already uses that email address.") {
+		t.Error("the duplicate email was not explained on the profile")
+	}
+	owner, err := store.UserByHandle(ctx, h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.Email != "ada@example.com" {
+		t.Errorf("refused profile save changed email to %q", owner.Email)
+	}
+}
+
+func TestTwoProfilesMayBothHaveNoEmail(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	other := h.as("mara", "Mara Okafor", auth.RoleEditor)
+
+	res, _ := h.post("/profile", url.Values{
+		"csrf": {h.csrf("/profile")}, "handle": {"ada"}, "name": {"Ada Lovelace"},
+		"initials": {"AL"}, "colour": {Palette[1]}, "email": {""},
+	})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first blank email gave %d", res.StatusCode)
+	}
+
+	profile, err := other.Get(h.http.URL + "/profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(profile.Body)
+	profile.Body.Close()
+	match := csrfRe.FindSubmatch(body)
+	if match == nil {
+		t.Fatal("second profile has no CSRF token")
+	}
+	res, err = other.PostForm(h.http.URL+"/profile", url.Values{
+		"csrf": {string(match[1])}, "handle": {"mara"}, "name": {"Mara Okafor"},
+		"initials": {"MO"}, "colour": {Palette[2]}, "email": {""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("second blank email gave %d", res.StatusCode)
+	}
+
+	var blank int
+	if err := h.db.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE email = ''`).Scan(&blank); err != nil {
+		t.Fatal(err)
+	}
+	if blank != 2 {
+		t.Fatalf("blank email accounts = %d, want 2", blank)
+	}
+}
+
 func TestPasswordResetWritesATokenAndSaysNothing(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
@@ -1029,6 +1105,32 @@ func TestAnInvitationExpiringMidwayMakesNoAccount(t *testing.T) {
 	}
 }
 
+func TestAnInvitationWhoseEmailIsClaimedMidwayIsAConflict(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.setupOwner()
+	token, secret, csrf, _ := h.invited(auth.RoleEditor)
+	if _, err := store.CreateUser(ctx, h.db, &store.User{
+		Handle: "grace", Email: "MARA@EXAMPLE.COM", Name: "Grace Hopper",
+		Initials: "GH", Colour: Palette[3], Role: auth.RoleEditor, PasswordHash: "x",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, body := h.post("/invite/"+token+"/authenticator", url.Values{
+		"csrf": {csrf}, "code": {code(t, secret)},
+	})
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("an email claimed during enrollment gave %d, want 409", res.StatusCode)
+	}
+	if !strings.Contains(body, "That account already exists.") {
+		t.Error("the collision was not explained")
+	}
+	if _, err := store.UserByHandle(ctx, h.db, "mara"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("the invitation created a second account anyway")
+	}
+}
+
 // The same accept submitted twice used to reach CreateUser a second time and
 // die on the email unique constraint with a 500.
 func TestAnInvitationAcceptedTwiceIsRefusedNotA500(t *testing.T) {
@@ -1110,6 +1212,24 @@ func TestNoResetOrInviteLinkReachesTheLog(t *testing.T) {
 	}); res.StatusCode != http.StatusOK {
 		t.Fatalf("reset gave %d", res.StatusCode)
 	}
+	owner, err := store.UserByHandle(context.Background(), h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, invite, err := h.srv.auth.CreateInvitation(context.Background(), "grace@example.com", auth.RoleEditor, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset, err := h.srv.auth.CreatePasswordReset(context.Background(), owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.get("/invite/" + invite)
+	h.get("/reset/" + reset)
+	// These stop in the CSRF middleware before ServeMux supplies r.Pattern, so
+	// they cover the sanitized fallback as well as ordinary route logging.
+	h.post("/invite/"+invite, url.Values{})
+	h.post("/reset/"+reset, url.Values{})
 
 	logged := h.log.String()
 	// The events are still recorded, so an operator can see them happen.
@@ -1118,15 +1238,14 @@ func TestNoResetOrInviteLinkReachesTheLog(t *testing.T) {
 			t.Errorf("the log does not record %q", want)
 		}
 	}
-	for _, leak := range []string{"/reset/", "/invite/"} {
-		for _, line := range strings.Split(logged, "\n") {
-			// Request lines name the path that was asked for, which is not a token.
-			if strings.Contains(line, "msg=request") {
-				continue
-			}
-			if strings.Contains(line, leak) {
-				t.Errorf("the log carries a %s link: %s", leak, line)
-			}
+	for _, token := range []string{reset, invite} {
+		if strings.Contains(logged, token) {
+			t.Errorf("the log carries a reset or invitation credential: %s", logged)
+		}
+	}
+	for _, route := range []string{"/reset/{token}", "/invite/{token}"} {
+		if !strings.Contains(logged, route) {
+			t.Errorf("the log does not name the safe route %q: %s", route, logged)
 		}
 	}
 }
@@ -1173,6 +1292,45 @@ func TestAWrongResetTokenDoesNoHashing(t *testing.T) {
 
 	if wrong*4 > right {
 		t.Errorf("a wrong token took %v against %v for a real one, so it hashed first", wrong, right)
+	}
+}
+
+func TestPasswordResetRollsBackWhenTheAuditWriteFails(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	oldPassword, _ := h.setupOwner()
+	u, err := store.UserByHandle(ctx, h.db, "ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := h.srv.auth.CreatePasswordReset(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.ExecContext(ctx, `CREATE TRIGGER fail_password_reset_activity
+		BEFORE INSERT ON activity WHEN NEW.action = 'password-reset'
+		BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	res, _ := h.post("/reset/"+token, url.Values{
+		"csrf": {h.csrf("/reset/" + token)}, "password": {"a different long password"},
+	})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("reset with a failed audit write gave %d", res.StatusCode)
+	}
+	after, err := store.UserByID(ctx, h.db, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !auth.CheckPassword(after.PasswordHash, oldPassword) || auth.CheckPassword(after.PasswordHash, "a different long password") {
+		t.Error("the password changed despite the rolled-back reset")
+	}
+	if after.SessionEpoch != u.SessionEpoch {
+		t.Errorf("session epoch = %d, want %d", after.SessionEpoch, u.SessionEpoch)
+	}
+	if _, err := h.srv.auth.PasswordResetUser(ctx, token); err != nil {
+		t.Errorf("the rolled-back token was spent: %v", err)
 	}
 }
 

@@ -2,14 +2,19 @@
 // bucket, folders as facets, versions, and a download that is a presigned GET.
 
 import { $, el, clear, initials, say, ask, editable } from './dom.js';
-import { state, user, emit, hold, canEdit, material } from './state.js';
+import { state, user, emit, hold, canEdit, material, unresolvedCard } from './state.js';
 import { when, copy } from './links.js';
 import * as api from './api.js';
 import * as upload from './upload.js';
 import { driveButton } from './drive.js';
+import { openCard } from './drawer.js';
+import { activate } from './keys.js';
+import { where } from './net.js';
 
 // The folder a dropped file lands in when the pane is showing all of them.
 const DEFAULT_FOLDER = 'Documents';
+let focusNext = 0;
+let returnTo = 0;
 
 export function renderFiles(pane) {
   material().catch((err) => say(err.message));
@@ -39,7 +44,10 @@ export function renderFiles(pane) {
     list.append(el('li', { class: 'row pending', 'data-id': id },
       el('span', { class: 'k mono', text: 'waiting' }),
       el('div', { class: 'main' }, el('span', { class: 't', text: held.name })),
-      el('span', { class: 'when mono', text: 'goes up when the connection is back' })));
+      el('span', { class: 'when mono', text: held.reselect
+        ? 'choose the original file to continue'
+        : 'goes up when the connection is back' }),
+      held.reselect ? chooseUpload(held) : null));
   }
   if (!rows.length) {
     // A read that failed is not the same as there being none, and saying the
@@ -103,18 +111,27 @@ async function take(chosen) {
 
 // run is one upload, with its progress kept in state so the row redraws itself
 // as the bytes go.
-async function run(file, folder, replace) {
+async function run(file, folder, replace, queued = null) {
   let id = 0;
+  if (!queued) {
+    const held = await upload.hold(state.open, state.me, file, folder, replace);
+    if (!held) {
+      say('This browser could not save upload progress. Free browser storage and add the file again.');
+      return;
+    }
+    queued = (await upload.pending()).find((row) => row.file === held) || null;
+    if (!queued) {
+      say('This browser could not read back the saved upload. Add the file again.');
+      return;
+    }
+  }
+  state.uploads.set(queued.file, { name: file.name, at: 0, queued: true });
+  emit();
   // Nothing can be uploaded with no connection: the bytes go to the bucket, and
   // the bucket is on the far side of the same network. The file waits in the
   // list instead and goes up when there is a line again.
   if (!navigator.onLine) {
-    const held = await upload.hold(state.open, state.me, file, folder, replace);
-    if (!held) {
-      say('This browser will not keep files for later. Add it again when the connection is back.');
-      return;
-    }
-    state.uploads.set(held, { name: file.name, at: 0, queued: true });
+    state.uploads.set(queued.file, { name: file.name, at: 0, queued: true });
     emit();
     return;
   }
@@ -125,7 +142,8 @@ async function run(file, folder, replace) {
       // it once, because every payload is the whole row.
       started: (row) => { id = row.id; put(row); progress(id, file.name, 0); },
       progress: (fraction) => progress(id, file.name, fraction),
-    });
+      remembered: () => state.uploads.delete(queued.file),
+    }, queued);
     state.uploads.delete(ready ? ready.id : id);
     if (ready) put(ready);
     emit();
@@ -180,13 +198,21 @@ async function carryOn() {
       continue;
     }
     if (row.proposition !== state.open) continue;
-    const name = row.handle ? row.handle.name : '';
+    const name = row.name || (row.handle ? row.handle.name : 'file');
     // A file that waited for a connection has no server row yet, so it starts
     // rather than resumes, and its placeholder leaves the list with it.
     if (row.queued) {
-      state.uploads.delete(row.file);
-      await upload.forget(row.file);
-      if (row.handle) await run(row.handle, row.folder, row.replace);
+      if (!row.handle) {
+        state.uploads.set(row.file, { name, at: 0, queued: true, reselect: true, row });
+        emit();
+        continue;
+      }
+      await run(row.handle, row.folder, row.replace, row);
+      emit();
+      continue;
+    }
+    if (!row.handle) {
+      state.uploads.set(row.file, { name, at: 0, reselect: true, row });
       emit();
       continue;
     }
@@ -248,9 +274,35 @@ function row(file) {
     file.state === 'ready'
       ? el('a', { class: 'dl', href: '#', title: 'Download', text: '↓',
           onclick: (e) => { e.preventDefault(); e.stopPropagation(); download(file); } })
-      : el('span', { class: 'dl mono', text: busy ? Math.round(busy.at * 100) + '%' : '…' }));
+      : el('span', { class: 'dl mono', text: busy ? Math.round(busy.at * 100) + '%' : '…' }),
+    busy && busy.reselect ? chooseUpload(busy) : null);
   li.addEventListener('click', () => openFile(file.id));
+  activate(li, () => openFile(file.id));
   return li;
+}
+
+function chooseUpload(held) {
+  const picker = el('input', { type: 'file', hidden: true });
+  const button = el('button', {
+    class: 'lnk', type: 'button', text: 'Choose file',
+    onclick: (e) => { e.preventDefault(); e.stopPropagation(); picker.click(); },
+  });
+  picker.addEventListener('click', (e) => e.stopPropagation());
+  picker.addEventListener('change', async (e) => {
+    e.stopPropagation();
+    const file = picker.files && picker.files[0];
+    if (!file || !held.row) return;
+    button.disabled = true;
+    try {
+      await upload.use(held.row, file);
+      state.uploads.delete(held.row.file);
+      await resumeWhatIsLeft();
+    } catch (err) {
+      say(err.message);
+      button.disabled = false;
+    }
+  });
+  return el('span', { class: 'resume' }, button, picker);
 }
 
 function second(file, busy) {
@@ -278,10 +330,17 @@ function clock(ms) {
 }
 
 export function openFile(id) {
+  if (unresolvedCard(state.openCard)) {
+    say('Choose keep mine or take theirs before opening a file.');
+    return false;
+  }
   state.openFile = id;
   state.openCard = null;
   state.openLink = null;
+  focusNext = id;
+  where('');
   emit();
+  return true;
 }
 
 function redraw(selector) {
@@ -322,7 +381,7 @@ export function renderFileDrawer(drawer) {
 
   const heading = el('h2', { text: file.name, spellcheck: 'false' });
   if (canEdit()) {
-    heading.addEventListener('click', () => {
+    const edit = () => {
       if (heading.isContentEditable) return;
       hold(true);
       editable(heading, file.name, (value) => {
@@ -330,8 +389,10 @@ export function renderFileDrawer(drawer) {
         if (!value || value === file.name) { emit(); return; }
         save(file, { name: value });
       });
-    });
-  }
+    };
+    heading.addEventListener('click', edit);
+    activate(heading, edit);
+  } else heading.tabIndex = -1;
   drawer.append(heading);
   drawer.append(preview(file, busy));
   drawer.append(props(file));
@@ -379,12 +440,22 @@ export function renderFileDrawer(drawer) {
     }));
   }
   drawer.append(buttons);
+  if (focusNext === file.id) {
+    focusNext = 0;
+    queueMicrotask(() => heading.focus());
+  }
   return true;
 }
 
 function close() {
+  returnTo = state.openFile;
   state.openFile = null;
   emit();
+  requestAnimationFrame(() => {
+    const row = returnTo && document.querySelector(`#flist .row[data-id="${returnTo}"]`);
+    returnTo = 0;
+    if (row) row.focus();
+  });
 }
 
 // preview is what the browser can show without the app ever holding the bytes:
@@ -463,7 +534,7 @@ function usedIn(file) {
     list.append(el('li', {},
       el('a', {
         href: '#board', text: card.title,
-        onclick: (e) => { e.preventDefault(); location.hash = 'board'; },
+        onclick: (e) => { e.preventDefault(); location.hash = 'board'; openCard(join.card_id); },
       }),
       canEdit() ? el('span', { class: 'dim', text: ' · ' }) : null,
       canEdit() ? el('button', {
@@ -477,9 +548,7 @@ function usedIn(file) {
 
 async function save(file, change) {
   try {
-    const answer = await api.patch('/files/' + file.id, {
-      name: file.name, folder: file.folder, ...change,
-    });
+    const answer = await api.patch('/files/' + file.id, change);
     const at = state.files.findIndex((f) => f.id === answer.file.id);
     if (at >= 0) state.files[at] = answer.file;
   } catch (err) {

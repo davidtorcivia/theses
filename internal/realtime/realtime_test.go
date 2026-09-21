@@ -453,6 +453,30 @@ func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {
 	}
 }
 
+func TestDeletedPropositionCannotReuseASocketsCachedMembership(t *testing.T) {
+	c := &client{
+		user: &store.User{ID: 2}, proposition: 7, member: map[int64]bool{7: true},
+		done: make(chan struct{}), out: make(chan []byte, 1),
+	}
+	deleted := core.Event{Proposition: 7, Entity: "proposition", EntityID: 7, Action: "delete"}
+	if !c.wants(deleted) {
+		t.Fatal("the member could not see the deletion")
+	}
+	c.membership(deleted)
+	select {
+	case <-c.done:
+	default:
+		t.Fatal("the deleted proposition's open socket stayed connected")
+	}
+
+	reused := core.Event{Proposition: 7, Entity: "proposition", EntityID: 7, Action: "create",
+		Actor: core.Actor{Kind: core.KindUser, ID: 3}}
+	c.membership(reused)
+	if c.wants(reused) {
+		t.Fatal("a former member could read a new proposition that reused the deleted id")
+	}
+}
+
 // An idle socket is checked on a timer as well, so a tab nobody is touching
 // does not keep receiving after the account behind it is signed out.
 func TestIdleSocketIsDroppedWhenTheSessionGoes(t *testing.T) {
@@ -479,10 +503,10 @@ func TestIdleSocketIsDroppedWhenTheSessionGoes(t *testing.T) {
 	}
 }
 
-// A tab that falls behind is told so while it is still connected, not once it
-// has gone, because the frame is what sends it to the activity table to fill
-// the hole.
-func TestForwardTellsATabThatFellBehind(t *testing.T) {
+// A dropped membership event could leave the socket's cached authorization
+// wider than the database, so a tab that falls behind reconnects and rebuilds
+// that cache before it receives anything else.
+func TestForwardDropsATabThatFellBehind(t *testing.T) {
 	bus := core.NewBus()
 	sub := bus.Subscribe(1)
 	defer sub.Close()
@@ -500,17 +524,15 @@ func TestForwardTellsATabThatFellBehind(t *testing.T) {
 	}
 	go c.forward(sub)
 
-	var first message
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a socket with a hole was not closed")
+	}
 	select {
 	case raw := <-c.out:
-		if err := json.Unmarshal(raw, &first); err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("nothing was forwarded")
-	}
-	if first.Type != "gap" {
-		t.Errorf("the first frame after a drop is %q, want gap", first.Type)
+		t.Fatalf("a socket with a hole was sent %s before it closed", raw)
+	default:
 	}
 }
 

@@ -411,6 +411,9 @@ func minutes(hhmm string) (int, bool) {
 	if !ok || len(h) != 2 || len(m) != 2 {
 		return 0, false
 	}
+	if h[0] < '0' || h[0] > '9' || m[0] < '0' || m[0] > '9' {
+		return 0, false
+	}
 	hours, err := strconv.Atoi(h)
 	if err != nil || hours > 23 {
 		return 0, false
@@ -439,9 +442,8 @@ func quietUntil(now int64, loc *time.Location, from, to string) int64 {
 	}
 	t := time.Unix(now, 0).In(loc)
 	at := t.Hour()*60 + t.Minute()
-	midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
 	ends := func(minutesPastMidnight, days int) int64 {
-		return midnight.AddDate(0, 0, days).Add(time.Duration(minutesPastMidnight) * time.Minute).Unix()
+		return time.Date(t.Year(), t.Month(), t.Day()+days, minutesPastMidnight/60, minutesPastMidnight%60, 0, 0, loc).Unix()
 	}
 	if start < end {
 		if at >= start && at < end {
@@ -467,10 +469,9 @@ func nextDigest(now int64, loc *time.Location, hhmm string) int64 {
 		at = 8 * 60
 	}
 	t := time.Unix(now, 0).In(loc)
-	midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
-	when := midnight.Add(time.Duration(at) * time.Minute).Unix()
+	when := time.Date(t.Year(), t.Month(), t.Day(), at/60, at%60, 0, 0, loc).Unix()
 	if when <= now {
-		when = midnight.AddDate(0, 0, 1).Add(time.Duration(at) * time.Minute).Unix()
+		when = time.Date(t.Year(), t.Month(), t.Day()+1, at/60, at%60, 0, 0, loc).Unix()
 	}
 	return when
 }

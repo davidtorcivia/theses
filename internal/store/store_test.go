@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,125 @@ import (
 	"testing"
 	"time"
 )
+
+func TestEmailMigrationRefusesExistingCaseVariantsAtomically(t *testing.T) {
+	ctx := context.Background()
+	db := openBeforeEmailMigration(t)
+	insertOldUser(t, db, 7, "ada", "Ada@example.com")
+	insertOldUser(t, db, 9, "grace", "ada@EXAMPLE.com")
+	if _, err := db.ExecContext(ctx, `INSERT INTO sessions
+		(user_id, hmac, epoch, created_at, expires_at) VALUES (7, x'07', 1, 0, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "005_email_nocase.sql"
+	if err := migrate(ctx, db); err == nil {
+		t.Fatal("migration accepted existing case-insensitive duplicate emails")
+	}
+	var migrations int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM schema_migrations WHERE name = ?`, name).Scan(&migrations); err != nil {
+		t.Fatal(err)
+	}
+	if migrations != 0 {
+		t.Fatal("failed migration was recorded as applied")
+	}
+	var indexes int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'users_email_nocase'`).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	if indexes != 0 {
+		t.Fatal("failed migration left its unique index behind")
+	}
+	var users, sessions int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&users); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if users != 2 || sessions != 1 {
+		t.Fatalf("failed migration left %d users and %d sessions, want 2 and 1", users, sessions)
+	}
+	var foreignKeys int
+	if err := db.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeys != 1 {
+		t.Fatal("failed migration returned its connection with foreign keys disabled")
+	}
+}
+
+func TestEmailMigrationPreservesUsersAndTheirForeignKeys(t *testing.T) {
+	ctx := context.Background()
+	db := openBeforeEmailMigration(t)
+	insertOldUser(t, db, 7, "ada", "ada@example.com")
+	if _, err := db.ExecContext(ctx, `INSERT INTO sessions
+		(id, user_id, hmac, epoch, created_at, expires_at) VALUES (11, 7, x'07', 1, 0, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	var handle string
+	if err := db.QueryRowContext(ctx, `SELECT handle FROM users WHERE id = 7`).Scan(&handle); err != nil {
+		t.Fatal(err)
+	}
+	if handle != "ada" {
+		t.Fatalf("migrated user handle = %q", handle)
+	}
+	var sessions int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE id = 11 AND user_id = 7`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 1 {
+		t.Fatal("migration lost a child session")
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM users WHERE id = 7`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sessions WHERE id = 11`).Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 0 {
+		t.Fatal("session no longer cascades after rebuilding users")
+	}
+}
+
+func openBeforeEmailMigration(t *testing.T) *sql.DB {
+	t.Helper()
+	ctx := context.Background()
+	db, err := open(filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.ExecContext(ctx, `CREATE TABLE schema_migrations (
+		name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"001_initial.sql", "002_activity_entity.sql", "003_client_keys.sql", "004_block_texts.sql"} {
+		body, err := migrations.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := applyMigration(ctx, db, name, string(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return db
+}
+
+func insertOldUser(t *testing.T, db *sql.DB, id int64, handle, email string) {
+	t.Helper()
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO users
+		(id, handle, email, name, initials, colour, role, password_hash, created_at)
+		VALUES (?, ?, ?, ?, 'XX', '#111', 'editor', 'x', 0)`, id, handle, email, handle); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestMigrateFreshAndIdempotent(t *testing.T) {
 	ctx := context.Background()

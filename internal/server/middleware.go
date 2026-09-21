@@ -92,17 +92,41 @@ func (s *Server) logAndRecover(next http.Handler) http.Handler {
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
 			if v := recover(); v != nil {
-				s.log.Error("panic serving request", "method", r.Method, "path", r.URL.Path, "panic", v)
+				s.log.Error("panic serving request", "method", r.Method, "path", logPath(r), "panic", v)
 				if !rec.written {
 					s.fail(w, r, errors.New("panic"))
 				}
 			}
 			s.log.Info("request",
-				"method", r.Method, "path", r.URL.Path, "status", rec.status,
+				"method", r.Method, "path", logPath(r), "status", rec.status,
 				"ms", time.Since(start).Milliseconds(), "addr", s.auth.ClientIP(r))
 		}()
 		next.ServeHTTP(rec, r)
 	})
+}
+
+// logPath names the route without copying a reset or invitation credential into
+// the process log. Pattern is populated after ServeMux dispatch; the fallback
+// covers middleware that answers before the mux sees the request.
+func logPath(r *http.Request) string {
+	if r.Pattern != "" {
+		if _, path, ok := strings.Cut(r.Pattern, " "); ok {
+			return path
+		}
+		return r.Pattern
+	}
+	p := r.URL.Path
+	for _, prefix := range []string{"/reset/", "/invite/"} {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			return prefix + "{token}" + rest[i:]
+		}
+		return prefix + "{token}"
+	}
+	return p
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
@@ -243,7 +267,7 @@ func (s *Server) csrfGuard(next http.Handler) http.Handler {
 			token = r.PostFormValue("csrf")
 		}
 		if !s.auth.CheckCSRF(seedOf(r), token) {
-			s.log.Warn("csrf token rejected", "path", r.URL.Path, "addr", s.auth.ClientIP(r))
+			s.log.Warn("csrf token rejected", "path", logPath(r), "addr", s.auth.ClientIP(r))
 			s.errorPage(w, r, http.StatusForbidden)
 			return
 		}

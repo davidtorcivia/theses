@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -109,6 +110,8 @@ type Reader func(ctx context.Context, q store.Querier, entity string, id int64) 
 type Service struct {
 	DB  *store.DB
 	Bus *Bus
+	// publishing keeps SQLite's commit order through delivery to subscribers.
+	publishing sync.Mutex
 	// Now is the clock, replaced in tests.
 	Now func() time.Time
 	// Read is how undo reads back the entity it restored.
@@ -180,6 +183,16 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 			return Event{}, err
 		}
 		if found {
+			// Keys are actor-wide, so reauthorize the original event as well as the
+			// proposition named by this attempt.
+			replayNeed := auth.CanRead
+			if e.Proposition == 0 {
+				// Detached core events are deletes whose proposition row is gone.
+				replayNeed = auth.CanSettings
+			}
+			if err := authorise(ctx, tx, a, e.Proposition, replayNeed); err != nil {
+				return Event{}, err
+			}
 			return e, nil
 		}
 	}
@@ -224,10 +237,9 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 		group.events = append(group.events, e)
 		return e, nil
 	}
-	if err := tx.Commit(); err != nil {
+	if err := s.commit(tx, []Event{e}); err != nil {
 		return Event{}, err
 	}
-	s.Bus.Publish(e)
 	return e, nil
 }
 
@@ -268,10 +280,16 @@ func (s *Service) Together(ctx context.Context, run func(context.Context) error)
 	if err := run(context.WithValue(ctx, groupKey{}, g)); err != nil {
 		return err
 	}
+	return s.commit(tx, g.events)
+}
+
+func (s *Service) commit(tx *sql.Tx, events []Event) error {
+	s.publishing.Lock()
+	defer s.publishing.Unlock()
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	for _, e := range g.events {
+	for _, e := range events {
 		s.Bus.Publish(e)
 	}
 	return nil

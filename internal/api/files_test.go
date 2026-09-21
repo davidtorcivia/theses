@@ -232,12 +232,10 @@ func TestFileRoutesAuthorisation(t *testing.T) {
 			token: h.token(h.owner, auth.ScopeFiles), want: http.StatusUnprocessableEntity,
 		},
 		{
-			// Clamped to the beginning rather than refused, so it gets as far
-			// as looking for the upload, which a file small enough for one PUT
-			// does not have.
-			name:   "a negative part number is the beginning",
+			// Small uploads resume with another signed PUT.
+			name:   "a negative part number resumes from the beginning",
 			method: "GET", target: "/api/v1/files/1/parts?after=-1",
-			token: h.token(h.owner, auth.ScopeFiles), want: http.StatusNotFound,
+			token: h.token(h.owner, auth.ScopeFiles), want: http.StatusOK,
 		},
 		{
 			name: "a URL that is not a web address is refused", method: "POST", target: "/api/v1/links",

@@ -104,7 +104,7 @@ func TestTickFiresOverdueTheMorningAfterAndNotAgain(t *testing.T) {
 
 	// A week late is not news every morning.
 	f.s.Now = func() int64 { return now + 7*24*60*60 }
-	if err := f.set.Set(context.Background(), "notify.last_tick", []string{"0"}, 0); err != nil {
+	if err := f.set.SetAs(context.Background(), "notify.last_tick", []string{"0"}, settings.System()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.Tick(context.Background()); err != nil {

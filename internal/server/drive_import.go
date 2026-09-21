@@ -70,7 +70,7 @@ func (s *Server) refuseJSON(w http.ResponseWriter, r *http.Request, err error) {
 		// anybody chose: a statement that would not run, a secret that will
 		// not decrypt, a bucket that broke. It goes in the log and comes back
 		// saying nothing, the same as every other route under /app.
-		s.log.Error("drive request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+		s.log.Error("drive request failed", "method", r.Method, "path", logPath(r), "err", err)
 		s.writeJSON(w, http.StatusInternalServerError,
 			map[string]string{"error": "something went wrong here"})
 	}

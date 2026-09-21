@@ -12,6 +12,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/notify"
+	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -321,6 +322,34 @@ func TestTheNoticeIsPrintedInsideItsOwnSection(t *testing.T) {
 	}
 }
 
+func TestSettingsFormDoesNotPartiallySave(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	if err := h.srv.settings.Set(context.Background(), "mail.host", []string{"old.example"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	res, body := h.postBack("/settings", url.Values{
+		"csrf": {h.csrf("/settings")}, "section": {"mail"},
+		"mail.host": {"new.example"}, "mail.port": {"70000"},
+	})
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "outside 1 to 65535") {
+		t.Fatalf("invalid settings form gave %d: %s", res.StatusCode, firstNotice(body))
+	}
+	if got := settings.Get[string](h.srv.settings, "mail.host"); got != "old.example" {
+		t.Errorf("mail.host = %q after rejected form", got)
+	}
+
+	_, body = h.postBack("/settings", url.Values{
+		"csrf": {h.csrf("/settings")}, "backups.last_ok_at": {"2000000000"},
+	})
+	if !strings.Contains(body, "maintained by the system") {
+		t.Errorf("crafted internal setting write was not refused: %s", firstNotice(body))
+	}
+	if got := settings.Get[int](h.srv.settings, "backups.last_ok_at"); got != 0 {
+		t.Errorf("backups.last_ok_at = %d after crafted form", got)
+	}
+}
+
 // The flash is what carries a value the page shows once across that redirect.
 func TestTheOneTimeValuesSurviveTheRedirectOnlyOnce(t *testing.T) {
 	h := newHarness(t)
@@ -356,6 +385,30 @@ func TestTheOneTimeValuesSurviveTheRedirectOnlyOnce(t *testing.T) {
 	}
 	if !strings.Contains(body, `data-copy="new-invite"`) {
 		t.Error("the invitation link has no Copy button")
+	}
+}
+
+func TestAPITokenCreationRollsBackWhenTheAuditWriteFails(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	if _, err := h.db.ExecContext(context.Background(), `CREATE TRIGGER fail_api_token_activity
+		BEFORE INSERT ON activity WHEN NEW.entity = 'api_token' AND NEW.action = 'create'
+		BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := h.post("/settings/tokens", url.Values{
+		"csrf": {h.csrf("/settings")}, "name": {"unseen token"}, "scopes": {"read"},
+	})
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("token create with a failed audit write gave %d", res.StatusCode)
+	}
+	var tokens int
+	if err := h.db.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM api_tokens WHERE name = 'unseen token'`).Scan(&tokens); err != nil {
+		t.Fatal(err)
+	}
+	if tokens != 0 {
+		t.Errorf("failed creation left %d active tokens", tokens)
 	}
 }
 

@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -245,7 +246,7 @@ func (db *DB) Migrate(ctx context.Context) error {
 	return migrate(ctx, db.db)
 }
 
-func migrate(ctx context.Context, db *sql.DB) error {
+func migrate(ctx context.Context, db *sql.DB) (retErr error) {
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		name       TEXT PRIMARY KEY,
 		applied_at INTEGER NOT NULL
@@ -275,28 +276,79 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	var pending []string
 	for _, name := range names {
-		if applied[name] {
-			continue
+		if !applied[name] {
+			pending = append(pending, name)
 		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	// Pin the batch so a table rebuild can disable foreign-key actions outside
+	// each transaction, then validate its schema before committing.
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`); err != nil {
+			if retErr == nil {
+				retErr = fmt.Errorf("reenable foreign keys after migrations: %w", err)
+			}
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+		conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys for migrations: %w", err)
+	}
+
+	for _, name := range pending {
 		body, err := migrations.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
 		}
-		if err := applyMigration(ctx, db, name, string(body)); err != nil {
+		if err := applyMigration(ctx, conn, name, string(body)); err != nil {
 			return fmt.Errorf("migration %s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func applyMigration(ctx context.Context, db *sql.DB, name, body string) error {
+type transactionBeginner interface {
+	BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+}
+
+func applyMigration(ctx context.Context, db transactionBeginner, name, body string) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, body); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	if rows.Next() {
+		var table, parent string
+		var rowid any
+		var foreignKey int
+		if err := rows.Scan(&table, &rowid, &parent, &foreignKey); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		return fmt.Errorf("foreign key violation in %s row %v referencing %s (%d)", table, rowid, parent, foreignKey)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -175,36 +174,6 @@ func TestRedirectIsNotFollowed(t *testing.T) {
 	}
 }
 
-// TestRequestGoesToTheCheckedAddress points a channel at a name nothing
-// resolves and hands the check the loopback address of the test server, so the
-// request can only arrive if the address that was checked is the address that
-// was dialed.
-func TestRequestGoesToTheCheckedAddress(t *testing.T) {
-	srv, got := serve(t, 200, "")
-	_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var asked []string
-	old := resolve
-	resolve = func(host string) ([]net.IP, error) {
-		asked = append(asked, host)
-		return []net.IP{net.IPv4(127, 0, 0, 1)}, nil
-	}
-	t.Cleanup(func() { resolve = old })
-
-	w := Webhook{URL: "http://pinned.invalid:" + port + "/hook", allowPrivate: true}
-	if err := w.Send(context.Background(), note); err != nil {
-		t.Fatal(err)
-	}
-	if got.path != "/hook" {
-		t.Errorf("path = %q", got.path)
-	}
-	if len(asked) != 1 || asked[0] != "pinned.invalid" {
-		t.Errorf("resolved %v, want pinned.invalid once", asked)
-	}
-}
-
 func TestNtfyRefusesPrivateAddresses(t *testing.T) {
 	// The admin port of a service on the same host.
 	err := (Ntfy{Server: "http://127.0.0.1:9000", Topic: "load"}).Send(context.Background(), note)
@@ -223,6 +192,9 @@ func TestWebhookRefusesPrivateAddresses(t *testing.T) {
 		"http://10.1.2.3/hook",
 		"http://192.168.1.10/hook",
 		"http://169.254.169.254/latest/meta-data/",
+		"http://100.64.0.1/hook",
+		"http://[64:ff9b::a00:1]/hook",
+		"http://[2002:0a00:0001::1]/hook",
 		"http://0.0.0.0/hook",
 		"file:///etc/passwd",
 		"gopher://example.com/",

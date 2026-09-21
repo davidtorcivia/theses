@@ -23,6 +23,7 @@ import (
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // PartSize is the multipart part size. B2 allows 5 MiB to 5 GiB parts and
@@ -223,6 +224,12 @@ func New(cfg Config) (*Client, error) {
 // of its folders land in the same one.
 func (c *Client) Bucket() string { return c.bucket }
 
+// SameBucket includes the endpoint because different providers can reuse a name.
+func (c *Client) SameBucket(other *Client) bool {
+	a, b := c.s3.Options(), other.s3.Options()
+	return c.bucket == other.bucket && a.Region == b.Region && aws.ToString(a.BaseEndpoint) == aws.ToString(b.BaseEndpoint)
+}
+
 // PresignPut returns a URL the browser PUTs the whole object to, and the
 // headers that were signed into it. The signature pins the content type and
 // the length, so an upload of a different size is rejected by the bucket. The
@@ -415,6 +422,10 @@ func (c *Client) Copy(ctx context.Context, from, to string) error {
 		Key:        aws.String(to),
 		CopySource: aws.String(src),
 	}); err != nil {
+		var missing smithy.APIError
+		if errors.As(err, &missing) && missing.ErrorCode() == "NoSuchKey" {
+			return fmt.Errorf("blob: copy %q: %w", from, ErrNotFound)
+		}
 		return fmt.Errorf("blob: copy %q to %q: %w", from, to, err)
 	}
 	return nil

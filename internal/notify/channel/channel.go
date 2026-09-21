@@ -3,14 +3,13 @@
 package channel
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
+
+	"github.com/davidtorcivia/theses/internal/safehttp"
 )
 
 const timeout = 10 * time.Second
@@ -30,68 +29,32 @@ type Note struct {
 	Tags     []string
 }
 
-// resolve is the name lookup, replaced in tests.
-var resolve = net.LookupIP
-
-// pinKey carries the address checkURL approved down to the dialler.
-type pinKey struct{}
-
-// client is shared by every HTTP channel. Redirects are not followed: a
-// destination that passed the address check and then redirects would walk
-// straight past it, and a redirect off an ntfy server would carry its token.
-// The dialler replaces the host with the address the check approved, so a
-// second answer to the same name cannot move the request afterwards.
+// client is used for Pushover's fixed API endpoint.
 var client = &http.Client{
 	Timeout:       timeout,
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	Transport: &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if ip, ok := ctx.Value(pinKey{}).(net.IP); ok {
-				if _, port, err := net.SplitHostPort(addr); err == nil {
-					addr = net.JoinHostPort(ip.String(), port)
-				}
-			}
-			return (&net.Dialer{Timeout: timeout}).DialContext(ctx, network, addr)
-		},
-	},
 }
 
-// checkURL refuses any scheme but http and https and, unless a test allows the
-// private ranges, any host resolving to an address inside the deployment. It
-// returns a context pinning the request to the address it checked, which is
-// what closes the gap between this lookup and the dial.
-// ponytail: only the first address is dialed, so a dual stack host has no
-// fallback if that one is unreachable, and replace with safehttp.Client once
-// merged.
-func checkURL(ctx context.Context, name, rawURL string, allowPrivate bool) (context.Context, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", name, err)
+var (
+	publicDestinationClient   = guardedClient()
+	loopbackDestinationClient = guardedClient(safehttp.AllowLoopback())
+)
+
+// destinationClient protects every account-supplied URL with the same address
+// checks used by the other outbound fetchers. Redirects stay visible to the
+// sender instead of carrying an ntfy token or webhook body to another host.
+func destinationClient(allowLoopback bool) *http.Client {
+	if allowLoopback {
+		return loopbackDestinationClient
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, fmt.Errorf("%s: refusing scheme %q", name, u.Scheme)
-	}
-	host := u.Hostname()
-	ips, err := resolve(host)
-	if err != nil {
-		return nil, fmt.Errorf("%s: resolve %q: %w", name, host, err)
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("%s: %q has no addresses", name, host)
-	}
-	if !allowPrivate {
-		for _, ip := range ips {
-			if !public(ip) {
-				return nil, fmt.Errorf("%s: %q resolves to %s, which is not a public address", name, host, ip)
-			}
-		}
-	}
-	return context.WithValue(ctx, pinKey{}, ips[0]), nil
+	return publicDestinationClient
 }
 
-func public(ip net.IP) bool {
-	return !ip.IsLoopback() && !ip.IsPrivate() && !ip.IsUnspecified() &&
-		!ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast()
+func guardedClient(opts ...safehttp.Option) *http.Client {
+	c := safehttp.Client(opts...)
+	c.Timeout = timeout
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
 }
 
 // check consumes the response and turns anything outside 2xx into an error

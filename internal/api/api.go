@@ -481,6 +481,9 @@ func (a *API) Describe(def settings.Def) SettingView {
 func (a *API) SettingViews() []SettingView {
 	out := make([]SettingView, 0, len(settings.Registry))
 	for _, def := range settings.Registry {
+		if def.Internal {
+			continue
+		}
 		out = append(out, a.Describe(def))
 	}
 	return out

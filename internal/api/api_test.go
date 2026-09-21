@@ -232,6 +232,9 @@ func TestSettingsHideSecretsAndWriteAsTheToken(t *testing.T) {
 	var secretSeen bool
 	for _, s := range decode(t, w)["settings"].([]any) {
 		s := s.(map[string]any)
+		if s["key"] == "backups.last_ok_at" || s["key"] == "notify.last_tick" {
+			t.Errorf("internal state is in the settings listing: %v", s)
+		}
 		if s["key"] == "mail.password" {
 			secretSeen = true
 			if s["secret"] != true || s["set"] != true {
@@ -298,6 +301,7 @@ func TestSettingsWriteRefusesWhatSettingsRefuses(t *testing.T) {
 		{"not a number", "/api/v1/settings/signin.session_days", `{"value":"soon"}`, http.StatusUnprocessableEntity},
 		{"out of range", "/api/v1/settings/signin.session_days", `{"value":4000}`, http.StatusUnprocessableEntity},
 		{"not a choice", "/api/v1/settings/workspace.release_day", `{"value":"Caturday"}`, http.StatusUnprocessableEntity},
+		{"internal state", "/api/v1/settings/backups.last_ok_at", `{"value":2000000000}`, http.StatusUnprocessableEntity},
 		{"not JSON", "/api/v1/settings/workspace.name", `hello`, http.StatusBadRequest},
 		{"no value", "/api/v1/settings/workspace.name", `{}`, http.StatusBadRequest},
 		{"list of numbers", "/api/v1/settings/defaults.columns", `{"value":[1,2]}`, http.StatusBadRequest},

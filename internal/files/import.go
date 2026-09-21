@@ -43,18 +43,20 @@ func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
 	if size <= 0 || size > maxImport {
 		return File{}, ErrImportSize
 	}
-	// An import streams the bytes through this process, so a second one under
-	// the same client key writes the same object over itself rather than
-	// leaving anything in flight to pick up. Whether the row is new is nothing
-	// to it.
-	row, bucket, _, err := s.record(ctx, a, proposition, name, folder, size, 0)
+	row, bucket, again, err := s.record(ctx, a, proposition, name, folder, size, 0)
 	if err != nil {
 		return File{}, err
+	}
+	if again && row.Ready() {
+		return row, nil
+	}
+	if row.Size > maxImport {
+		return File{}, ErrImportSize
 	}
 	// Exactly the declared length is sent, whatever the other end goes on
 	// offering. A short body fails on the way out, and a long one is cut here
 	// rather than becoming an object that is not the size the row says.
-	if err := bucket.PutStream(ctx, row.ObjectKey, io.LimitReader(body, size), size, contentType(row.Name)); err != nil {
+	if err := bucket.PutStream(ctx, row.ObjectKey, io.LimitReader(body, row.Size), row.Size, contentType(row.Name)); err != nil {
 		// The likeliest way to get here is the browser going away mid copy,
 		// which cancels this context. Clearing up needs a live one, or the row
 		// stays at uploading with nothing behind it until the sweep.

@@ -18,6 +18,7 @@ type Def struct {
 	Kind     Kind
 	Default  any
 	Secret   bool
+	Internal bool
 	Label    string
 	Hint     string
 	Choices  []string
@@ -75,10 +76,10 @@ var Registry = []Def{
 	// What the last run did, written by the scheduler, read by the settings page
 	// and by readyz. Settings rather than a table because there is one of each
 	// and the page already reads settings.
-	{Key: "backups.last_at", Kind: KindInt, Default: 0, Label: "Last run"},
-	{Key: "backups.last_ok_at", Kind: KindInt, Default: 0, Label: "Last successful run"},
-	{Key: "backups.last_size", Kind: KindInt, Default: 0, Label: "Last archive size"},
-	{Key: "backups.last_error", Kind: KindText, Default: "", Label: "Last failure"},
+	{Key: "backups.last_at", Kind: KindInt, Default: 0, Internal: true, Label: "Last run"},
+	{Key: "backups.last_ok_at", Kind: KindInt, Default: 0, Internal: true, Label: "Last successful run"},
+	{Key: "backups.last_size", Kind: KindInt, Default: 0, Internal: true, Label: "Last archive size"},
+	{Key: "backups.last_error", Kind: KindText, Default: "", Internal: true, Label: "Last failure"},
 
 	{Key: "mail.host", Kind: KindString, Default: "", Label: "SMTP host"},
 	{Key: "mail.port", Kind: KindInt, Default: 587, Min: 1, Max: 65535, Label: "Port"},
@@ -99,7 +100,7 @@ var Registry = []Def{
 	// What the daily pass last did, written by the worker and read by it, as a
 	// date in the form 20260918. Settings rather than a table because there is
 	// one of it, which is what backups.last_at already does.
-	{Key: "notify.last_tick", Kind: KindInt, Default: 0, Label: "Last daily pass"},
+	{Key: "notify.last_tick", Kind: KindInt, Default: 0, Internal: true, Label: "Last daily pass"},
 
 	// Integrations. Everything an outside service authenticates with is a
 	// secret, including the Drive token, which is one JSON object holding the

@@ -104,7 +104,7 @@ func TestAddLinkIsAttributedToTheTokenOwner(t *testing.T) {
 
 	var added files.Link
 	if res := h.call(cs, "add_link", map[string]any{
-		"proposition": proposition, "url": page, "note": "Chapter 3.", "question": "II",
+		"proposition": proposition, "url": page, "note": "Chapter 3.", "question": "II", "key": "annotated-link",
 	}, &added); res.IsError {
 		t.Fatalf("add_link: %v", res.Content)
 	}
@@ -116,6 +116,19 @@ func TestAddLinkIsAttributedToTheTokenOwner(t *testing.T) {
 	}
 	if !strings.Contains(added.Citation, "Ada Lovelace") {
 		t.Fatalf("citation %q", added.Citation)
+	}
+	var replayed files.Link
+	if res := h.call(cs, "add_link", map[string]any{
+		"proposition": proposition, "url": page, "note": "Changed.", "question": "III", "key": "annotated-link",
+	}, &replayed); res.IsError {
+		t.Fatalf("replay: %v", res.Content)
+	}
+	if replayed.ID != added.ID || replayed.Note != added.Note || replayed.Question == nil || *replayed.Question != "II" {
+		t.Fatalf("annotations changed on replay: %+v", replayed)
+	}
+	var events int
+	if err := h.db.QueryRowContext(context.Background(), `SELECT count(*) FROM activity WHERE entity = 'link' AND entity_id = ?`, added.ID).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("link command events = %d, err %v", events, err)
 	}
 
 	var kind, actorID, via string
@@ -140,6 +153,25 @@ func TestAddLinkIsAttributedToTheTokenOwner(t *testing.T) {
 	}
 	if attached.Action != "attach" {
 		t.Fatalf("action %q", attached.Action)
+	}
+}
+
+func TestInvalidLinkAnnotationsDoNotCreateALink(t *testing.T) {
+	h := newHarness(t)
+	proposition, _, page := h.withFiles(t)
+	cs := h.connect(auth.ScopeRead, auth.ScopeWrite)
+	for _, fields := range []map[string]any{
+		{"question": "V"},
+		{"note": strings.Repeat("x", board.MaxBody+1)},
+	} {
+		fields["proposition"], fields["url"] = proposition, page
+		if res := h.call(cs, "add_link", fields, nil); !res.IsError {
+			t.Fatal("invalid annotations accepted")
+		}
+	}
+	var count int
+	if err := h.db.QueryRowContext(context.Background(), `SELECT count(*) FROM links`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("partial links = %d, err %v", count, err)
 	}
 }
 

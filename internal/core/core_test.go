@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -31,6 +33,70 @@ func TestBusFansOutPerProposition(t *testing.T) {
 	case e := <-two.C:
 		t.Errorf("subscriber on 2 got an event for 1: %+v", e)
 	default:
+	}
+}
+
+func TestConcurrentCommandsPublishInCommitOrder(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	bus := NewBus()
+	sub := bus.Subscribe(0)
+	defer sub.Close()
+	s := New(db, bus)
+	id, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "ada", Email: "ada@example.com", Name: "Ada Lovelace",
+		Initials: "AL", Colour: "#111", Role: auth.RoleOwner, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	who := Actor{Kind: KindUser, ID: id, Name: "Ada Lovelace"}
+
+	const commands = 32
+	start := make(chan struct{})
+	errs := make(chan error, commands)
+	var wg sync.WaitGroup
+	for range commands {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := s.Do(ctx, who, 0, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+				return Change{Entity: "test", Action: "set", After: map[string]any{"set": true}}, nil
+			})
+			errs <- err
+		}()
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent commands did not finish")
+	}
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var previous int64
+	for range commands {
+		var e Event
+		select {
+		case e = <-sub.C:
+		case <-time.After(2 * time.Second):
+			t.Fatal("committed event was not published")
+		}
+		if e.Seq <= previous {
+			t.Fatalf("event %d was published after %d", e.Seq, previous)
+		}
+		previous = e.Seq
 	}
 }
 

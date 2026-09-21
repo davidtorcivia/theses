@@ -759,6 +759,161 @@ func TestRenameAndDeleteMoveTheFile(t *testing.T) {
 	}
 }
 
+func TestDeletingAPropositionRemovesItsMirrorsBeforeTheIDIsReused(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	oldDocument := f.doc
+	manual := filepath.Join(filepath.Dir(path), "private-notes.md")
+	if err := os.WriteFile(manual, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := f.board.DeleteProposition(ctx, f.who["owner"], f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.applied(ctx, nil, deleted)
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the deleted proposition kept its mirror at %s", path)
+	}
+	if body, err := os.ReadFile(manual); err != nil || string(body) != "keep me" {
+		t.Fatalf("deleting the proposition removed a manual file: %q, %v", body, err)
+	}
+
+	replacement, err := f.board.CreateProposition(ctx, f.who["owner"], "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.EntityID != f.prop {
+		t.Fatalf("replacement proposition id = %d, want reused %d", replacement.EntityID, f.prop)
+	}
+	document, err := f.CreateDocument(ctx, f.who["owner"], replacement.EntityID, "Research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.EntityID != oldDocument {
+		t.Fatalf("replacement document id = %d, want reused %d", document.EntityID, oldDocument)
+	}
+	if err := f.Mirror(ctx, document.EntityID, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the replacement proposition was not mirrored: %v", err)
+	}
+}
+
+func TestDroppedEventReconciliationPreservesHandEditsAndRejectsAReusedDocumentID(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	manual := strings.Replace(read(t, path), "## Is it true?", "## Hand edit", 1)
+	if err := os.WriteFile(path, []byte(manual), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	blocks := f.blocks(t)
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version,
+		"A browser edit whose event was dropped.", false); err != nil {
+		t.Fatal(err)
+	}
+
+	stale := filepath.Join(f.root, "999-deleted", "stale.md")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("old proposition"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.written[stale] = mirrored{document: f.doc, proposition: f.prop + 1000, hash: hashOf([]byte("old proposition"))}
+	movedEdit := filepath.Join(f.root, "998-old-title", "research.md")
+	if err := os.MkdirAll(filepath.Dir(movedEdit), 0o755); err != nil {
+		f.mu.Unlock()
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(movedEdit, []byte("manual edit in an old path"), 0o600); err != nil {
+		f.mu.Unlock()
+		t.Fatal(err)
+	}
+	f.written[movedEdit] = mirrored{document: f.doc, proposition: f.prop, hash: hashOf([]byte("what the app wrote"))}
+	f.mu.Unlock()
+
+	f.reconcile(ctx, nil)
+	if got := read(t, path); got != manual {
+		t.Fatal("reconciliation overwrote a hand edit that was waiting to import")
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reconciliation kept a stale mirror after its document id was reused: %v", err)
+	}
+	if body, err := os.ReadFile(movedEdit); err != nil || string(body) != "manual edit in an old path" {
+		t.Fatalf("reconciliation removed a hand edit from an old path: %q, %v", body, err)
+	}
+	f.mu.Lock()
+	_, tracked := f.written[movedEdit]
+	f.mu.Unlock()
+	if tracked {
+		t.Fatal("old-path hand edit remained attached to a potentially reused document id")
+	}
+}
+
+func TestDroppedDeleteDoesNotAttachAHandEditToAnIdenticalReplacement(t *testing.T) {
+	ctx := context.Background()
+	f, path := mirrorFixture(t)
+	f.mu.Lock()
+	oldGeneration := f.written[path].generation
+	f.mu.Unlock()
+	if oldGeneration == 0 {
+		t.Fatal("the original mirror has no document generation")
+	}
+	oldEdit := strings.Replace(read(t, path), "## Is it true?", "## Old hand edit", 1)
+	if err := os.WriteFile(path, []byte(oldEdit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.board.DeleteProposition(ctx, f.who["owner"], f.prop); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := f.board.CreateProposition(ctx, f.who["owner"], "Tidal Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := f.CreateDocument(ctx, f.who["owner"], replacement.EntityID, "Research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.EntityID != f.prop || document.EntityID != f.doc {
+		t.Fatalf("replacement ids = proposition %d document %d, want reused %d and %d",
+			replacement.EntityID, document.EntityID, f.prop, f.doc)
+	}
+	_, replacementPath, err := f.paths(ctx, document.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacementPath != path {
+		t.Fatalf("replacement path = %q, want identical %q", replacementPath, path)
+	}
+	if document.Seq == oldGeneration {
+		t.Fatalf("replacement reused document generation %d", oldGeneration)
+	}
+
+	f.reconcile(ctx, nil)
+	if got := read(t, path); got != oldEdit {
+		t.Fatal("reconciliation destroyed the old hand edit")
+	}
+	f.mu.Lock()
+	_, tracked := f.written[path]
+	f.mu.Unlock()
+	if tracked {
+		t.Fatal("old hand edit stayed attached to the replacement document generation")
+	}
+	if err := f.Import(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range f.blocks(t) {
+		if strings.Contains(block.Text, "Old hand edit") {
+			t.Fatal("old hand edit was imported into the identical replacement")
+		}
+	}
+}
+
 // The watcher end to end: a file saved on disk becomes blocks, and the file the
 // watcher itself writes does not come back round as an import.
 func TestRunImportsAHandEditAndNotItsOwnWrites(t *testing.T) {
@@ -1098,6 +1253,42 @@ func TestMirrorRecoversFromAWriteThatDidNotLand(t *testing.T) {
 	}
 	if !strings.Contains(read(t, path), "# Written after the block cleared") {
 		t.Fatalf("the mirror never wrote again:\n%s", read(t, path))
+	}
+}
+
+func TestMirrorDoesNotOverwriteAnUnreadableUnknownFile(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, t.TempDir())
+	_, path, err := f.paths(ctx, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const handEdit = "an unreadable hand edit\n"
+	if err := os.WriteFile(path, []byte(handEdit), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("file permissions are not enforced")
+	}
+
+	if err := f.Mirror(ctx, f.doc, nil, false); err == nil {
+		t.Fatal("mirror overwrote a file it could not inspect")
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, path); got != handEdit {
+		t.Fatalf("unreadable hand edit was replaced with %q", got)
+	}
+	f.mu.Lock()
+	_, tracked := f.written[path]
+	f.mu.Unlock()
+	if tracked {
+		t.Fatal("unreadable unknown file was claimed as a mirror")
 	}
 }
 

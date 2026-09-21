@@ -677,9 +677,9 @@ the sweep abandons an upload after are 48 hours of silence, and every batch
 pushes them out again.
 
 A part number past the end of the upload is `422`, and so is a file that is
-already `ready`, because the upload is over. A negative one is the beginning. A
-file small enough to have gone in one PUT has no multipart upload to resume and
-is `404`.
+already `ready`, because the upload is over. A negative one is the beginning.
+A file small enough for one PUT returns a fresh `url` and `headers`, with the
+same shape as its creation response. The client sends the whole file again.
 
 ## `POST /api/v1/files/{id}/complete`
 
@@ -689,6 +689,11 @@ declared, renders a thumbnail if it is an image it reads, and only then marks
 the file `ready`. The body may carry `duration_ms`, `width` and `height` as the
 client measured them; an image the server rendered a thumbnail for reports its
 own dimensions instead.
+
+Object keys are opaque. New uploads include a random path component; completing
+a file up to 64 MiB copies it to a separate final key before marking it ready.
+Clients must use the returned row and download endpoint rather than retaining
+the upload key as the completed object's location.
 
 ```json
 {"file": {"id": 9, "name": "tides.md", "state": "ready", "size": 12}}

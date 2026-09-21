@@ -21,11 +21,14 @@ func (s *Settings) Delete(ctx context.Context, key string, actor Actor) error {
 	if !ok {
 		return fmt.Errorf("settings: unknown key %s", key)
 	}
+	if def.Internal && actor.Kind != "system" {
+		return fmt.Errorf("%s is maintained by the system", def.Label)
+	}
 
-	// Same lock as SetAs, for the same reason: the row and the cache are
-	// written together so two writers cannot leave them disagreeing.
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Same writer lock as SetManyAs and reload: preserve database/cache order
+	// without making cache readers wait for SQLite.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 
 	before := ""
 	old, err := store.GetSetting(ctx, s.db, key)
@@ -56,7 +59,9 @@ func (s *Settings) Delete(ctx context.Context, key string, actor Actor) error {
 		return fmt.Errorf("%w: %w", ErrStorage, err)
 	}
 
+	s.mu.Lock()
 	delete(s.present, key)
 	delete(s.values, key)
+	s.mu.Unlock()
 	return nil
 }

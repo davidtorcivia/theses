@@ -164,6 +164,37 @@ type readerFunc func([]byte) (int, error)
 
 func (r readerFunc) Read(p []byte) (int, error) { return r(p) }
 
+func TestImportReplayKeepsCompletedBytes(t *testing.T) {
+	f := setup(t)
+	keyed := func() context.Context {
+		ctx, err := core.WithKey(context.Background(), "import-retry")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ctx
+	}
+	first, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("xyz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != first.ID || !again.Ready() {
+		t.Fatalf("replayed file: %+v", again)
+	}
+	r, err := f.bucket.Get(context.Background(), first.ObjectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	body, err := io.ReadAll(r)
+	if err != nil || string(body) != "abc" {
+		t.Fatalf("replay changed contents: %q, %v", body, err)
+	}
+}
+
 // And a source that is longer than it said is cut to the declared length, so
 // the object is always the size the row promises.
 func TestImportWritesNoMoreThanTheDeclaredSize(t *testing.T) {

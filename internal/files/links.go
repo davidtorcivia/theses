@@ -25,7 +25,20 @@ const fetchTimeout = 20 * time.Second
 // database takes its write lock immediately; a page that refuses, times out or
 // is not a page at all still saves the link with its address.
 func (s *Service) AddLink(ctx context.Context, a core.Actor, proposition int64, raw string) (core.Event, error) {
+	return s.AddLinkWithNote(ctx, a, proposition, raw, "", "")
+}
+
+// AddLinkWithNote saves annotations in the same command as the fetched link.
+func (s *Service) AddLinkWithNote(ctx context.Context, a core.Actor, proposition int64, raw, note, questionText string) (core.Event, error) {
 	address, err := webURL(raw)
+	if err != nil {
+		return core.Event{}, err
+	}
+	note, err = board.Field(note, board.MaxBody)
+	if err != nil {
+		return core.Event{}, err
+	}
+	questionValue, err := question(questionText)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -38,9 +51,9 @@ func (s *Service) AddLink(ctx context.Context, a core.Actor, proposition int64, 
 		res, err := tx.ExecContext(ctx, `INSERT INTO links
 			(proposition_id, url, canonical_url, title, author, year, kind, note_md,
 			 question, added_by, created_at, fetched_at, text_for_search)
-			VALUES (?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			proposition, address, meta.CanonicalURL, meta.Title, meta.Author,
-			year(meta), meta.Kind, by(a), s.now(), fetched, meta.Text)
+			year(meta), meta.Kind, note, questionValue, by(a), s.now(), fetched, meta.Text)
 		if err != nil {
 			return core.Change{}, err
 		}
@@ -81,34 +94,53 @@ type Edit struct {
 // fields are short, one person edits one at a time, and the last write wins as
 // it does for a card's due date.
 func (s *Service) EditLink(ctx context.Context, a core.Actor, id int64, in Edit) (core.Event, error) {
-	title, err := board.Field(in.Title, board.MaxLine)
-	if err != nil {
-		return core.Event{}, err
-	}
-	author, err := board.Field(in.Author, board.MaxLine)
-	if err != nil {
-		return core.Event{}, err
-	}
-	note, err := board.Field(in.Note, board.MaxBody)
-	if err != nil {
-		return core.Event{}, err
-	}
-	yr, err := board.Field(in.Year, board.MaxWord)
-	if err != nil {
-		return core.Event{}, err
-	}
-	kind := strings.TrimSpace(in.Kind)
-	if kind != "" && !known(kind, Kinds) {
-		return core.Event{}, ErrKind
-	}
-	q, err := question(strings.TrimSpace(in.Question))
-	if err != nil {
-		return core.Event{}, err
+	return s.PatchLink(ctx, a, id, LinkPatch{&in.Title, &in.Author, &in.Year, &in.Kind, &in.Note, &in.Question})
+}
+
+type LinkPatch struct {
+	Title    *string `json:"title"`
+	Author   *string `json:"author"`
+	Year     *string `json:"year"`
+	Kind     *string `json:"kind"`
+	Note     *string `json:"note_md"`
+	Question *string `json:"question"`
+}
+
+// PatchLink writes only supplied fields inside the command transaction.
+func (s *Service) PatchLink(ctx context.Context, a core.Actor, id int64, in LinkPatch) (core.Event, error) {
+	assignments := []string{"id = id"}
+	var values []any
+	for _, field := range []struct {
+		name  string
+		value *string
+		limit int
+	}{
+		{"title", in.Title, board.MaxLine}, {"author", in.Author, board.MaxLine},
+		{"year", in.Year, board.MaxWord}, {"kind", in.Kind, board.MaxWord},
+		{"note_md", in.Note, board.MaxBody}, {"question", in.Question, board.MaxWord},
+	} {
+		if field.value == nil {
+			continue
+		}
+		text, err := board.Field(*field.value, field.limit)
+		if err != nil {
+			return core.Event{}, err
+		}
+		var value any = text
+		if field.name == "kind" && text != "" && !known(text, Kinds) {
+			return core.Event{}, ErrKind
+		}
+		if field.name == "question" {
+			value, err = question(text)
+			if err != nil {
+				return core.Event{}, err
+			}
+		}
+		assignments = append(assignments, field.name+" = ?")
+		values = append(values, value)
 	}
 	return s.link(ctx, a, id, auth.CanEdit, "update", func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE links
-			SET title = ?, author = ?, year = ?, kind = ?, note_md = ?, question = ?
-			WHERE id = ?`, title, author, yr, kind, note, q, id)
+		_, err := tx.ExecContext(ctx, `UPDATE links SET `+strings.Join(assignments, ", ")+` WHERE id = ?`, append(values, id)...)
 		return err
 	})
 }

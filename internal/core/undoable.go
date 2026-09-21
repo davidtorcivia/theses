@@ -9,7 +9,7 @@ package core
 func Undoable(entity, action string, before, after []byte, undone bool) bool {
 	spec, ok := undoable[entity]
 	if !ok || undone || len(before) == 0 || len(after) == 0 ||
-		action == "create" || action == "undo" ||
+		action == "create" || action == "undo" || action == "archive" ||
 		(action == "delete" && !spec.tombstone) {
 		return false
 	}
