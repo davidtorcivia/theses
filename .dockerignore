@@ -11,3 +11,9 @@ theses.exe
 *.db-wal
 *.db-shm
 node_modules
+!docs/
+docs/*
+!docs/embed.go
+!docs/SKILLS.md
+!docs/api.md
+!docs/connections.md
