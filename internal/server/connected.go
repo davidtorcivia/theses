@@ -1,6 +1,8 @@
 package server
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -95,4 +97,37 @@ func (s *Server) getBacklinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"items": out})
+}
+
+func (s *Server) getProduction(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(r.URL.Query().Get("proposition"), 10, 64)
+	ok, err := board.Readable(r.Context(), s.db, userOf(r), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	var cardID int64
+	if err := s.db.QueryRowContext(r.Context(), `SELECT coalesce(card_id,0) FROM production_templates WHERE proposition_id=?`, id).Scan(&cardID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.fail(w, r, err)
+		return
+	}
+	var card *board.Card
+	if cardID > 0 {
+		row, err := board.GetCard(r.Context(), s.db, cardID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		card = &row
+	}
+	var recordings int
+	if err := s.db.QueryRowContext(r.Context(), `SELECT count(*) FROM files WHERE proposition_id=? AND folder='Recordings' AND state='ready'`, id).Scan(&recordings); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"card": card, "recordings": recordings})
 }

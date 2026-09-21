@@ -50,12 +50,12 @@ var undoable = map[string]undoSpec{
 	// has nothing to put back, and an undo of a refetch therefore restores the
 	// fields that are shown and not the ones that are not.
 	//
-	// A file's are the two that do not describe the object in the bucket:
+	// A file's metadata does not describe the object in the bucket:
 	// putting back a size, a key or a state would say something about the
 	// bucket that is not true, and naming none of the columns a completion
 	// writes is what makes a finished upload not undoable.
 	"link": {table: "links", cols: []string{"title", "author", "year", "kind", "note_md", "question"}},
-	"file": {table: "files", cols: []string{"name", "folder"}},
+	"file": {table: "files", cols: []string{"name", "folder", "note_md", "tags"}},
 }
 
 // Undo puts back the before of one activity row and marks the row undone. The
@@ -112,6 +112,15 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		applied, err := decode(after.String)
 		if err != nil {
 			return Change{}, err
+		}
+		if entity == "file" {
+			cols := []string{}
+			for _, col := range spec.cols {
+				if _, existed := fields[col]; existed && !same(fields[col], applied[col]) {
+					cols = append(cols, col)
+				}
+			}
+			spec.cols = cols
 		}
 		// A change that moved none of the columns undo can write moved
 		// something else: an assignee, a note. Putting the columns back would
@@ -208,6 +217,9 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		// old text back has to move it forward, not backward.
 		if spec.versioned {
 			set = append(set, "version = version + 1")
+		}
+		if entity == "file" && (slices.Contains(spec.cols, "note_md") || slices.Contains(spec.cols, "tags")) {
+			set = append(set, "metadata_version = metadata_version + 1")
 		}
 		args = append(args, id)
 		if _, err := tx.ExecContext(ctx,

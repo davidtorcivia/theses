@@ -761,6 +761,28 @@ object keeps the key it was written under, so a link already handed out goes on
 working. A move between folders that live in different buckets is `422`:
 download it and upload it again.
 
+Notes and tags are optional `note_md` and `tags` fields. Updating either requires the current `metadata_version`; stale or omitted versions return `409` with the current version. Tags are comma-separated, normalized to lowercase, limited to 12 tags of 32 characters, and reject tabs and line breaks. Notes are indexed for search. Metadata changes can be undone independently of later renames.
+
+## `GET /api/v1/files/{id}`
+
+Scope `read`. Returns `{"file": {...}}` for a current or historical version, subject to proposition access. Includes `note_md`, `tags`, `metadata_version`, and `comment_revision`.
+
+## `GET POST /api/v1/files/{id}/comments`
+
+GET requires `read` and returns `{"comments": [...]}` ordered by timestamp. POST requires `write` and accepts `{"body_md":"Cut this pause","position_ms":3000}`. Only ready files in Recordings accept comments. Timestamps must be nonnegative, at most 24 hours, and within the known recording duration. POST accepts `Idempotency-Key` and returns `{"file": {...}}` with an advanced `comment_revision`.
+
+## `DELETE /api/v1/files/{id}/comments/{comment}`
+
+Scope `write`. Deletes only the caller's own comment and returns `{"deleted":true}`. Archived proposition restrictions apply.
+
+## `POST /api/v1/propositions/{id}/production-template`
+
+Scope `write`. Creates an assigned card with Review, Record, Edit, and Publish checklist items, or returns the existing template card. Concurrent calls create one card. Returns `{"card": {...},"event": {...}}`. This does not publish or change proposition status.
+
+## `GET /api/v1/storage/orphans` and `POST /api/v1/storage/cleanup`
+
+Scope `admin`, workspace owners only. GET inspects durable file deletion records older than seven days in pages of 100, using `before` from the previous response when `more` is true and returns `{"objects":[{"deletion":123,"file":1,"folder":"Documents","key":"...","size":123}]}`. Only exact app-owned objects older than seven days qualify. Current files, active uploads, retained versions, and backups are protected. Unknown objects, deletions without retained historical evidence, and old storage configurations require manual inspection. POST accepts one reported object, repeats discovery and reference checks, deletes that object, and returns its audit event. No automatic bucket sweep runs.
+
 ## `DELETE /api/v1/files/{id}`
 
 Scope `files`. Removes the row, then the object, its thumbnail and any
@@ -1227,6 +1249,14 @@ one endpoint serves every tool.
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
 | `annotate_link` | `write` | Changes a saved link's note, kind and question. |
+| `get_file` | `read` | Reads a current or historical file and its metadata. |
+| `edit_file` | `write` | Updates names, folders, notes and tags with metadata version checks. |
+| `list_file_comments` | `read` | Reads timestamped recording comments. |
+| `add_file_comment` | `write` | Adds a recording comment with an optional retry key. |
+| `delete_file_comment` | `write` | Deletes the caller's recording comment. |
+| `production_template` | `write` | Creates or returns the assigned production checklist. |
+| `storage_orphans` | `admin` | Reports eligible deleted-file objects for an owner. |
+| `storage_cleanup` | `admin` | Rechecks and deletes one reported object for an owner. |
 | `list_files` | `read` | Lists the files uploaded to one proposition, with their folder, size and state. |
 | `get_download_url` | `read` | Returns a download link for one file that works for a few minutes. |
 | `request_upload` | `files` | Makes a file row and returns its presigned URLs. |

@@ -767,3 +767,8 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
 .outline { margin: .5rem 0 1rem; }
 .outline summary { cursor: pointer; padding: .5rem 0; }
 .outline li { margin: .5rem 0; }
+.production-calendar table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: .75rem; }
+.production-calendar td { vertical-align: top; border: 1px solid var(--hair); padding: .4rem; height: 4rem; overflow-wrap: anywhere; }
+.production-calendar td a { display: block; font-size: .75rem; margin-top: .3rem; color: var(--y); }
+.production-calendar input { max-width: 12rem; padding: .5rem 0; }
+.production-calendar th, .production-calendar caption { padding: .5rem 0; }

@@ -61,6 +61,9 @@ func SessionHandler(a *API, svc *files.Service, user func(*http.Request) *store.
 
 func mount(mux *http.ServeMux, prefix string, a *API, svc *files.Service, wrap wrapper) {
 	f := &fileAPI{API: a, svc: svc}
+	mux.HandleFunc("GET "+prefix+"/storage/orphans", wrap(auth.ScopeAdmin, f.orphans))
+	mux.HandleFunc("POST "+prefix+"/storage/cleanup", wrap(auth.ScopeAdmin, f.cleanup))
+	mux.HandleFunc("POST "+prefix+"/propositions/{id}/production-template", wrap(auth.ScopeWrite, f.productionTemplate))
 
 	mux.HandleFunc("GET "+prefix+"/links", wrap(auth.ScopeRead, f.listLinks))
 	mux.HandleFunc("POST "+prefix+"/links", wrap(auth.ScopeWrite, f.addLink))
@@ -76,6 +79,10 @@ func mount(mux *http.ServeMux, prefix string, a *API, svc *files.Service, wrap w
 	mux.HandleFunc("GET "+prefix+"/files/{id}/download", wrap(auth.ScopeRead, f.download))
 	mux.HandleFunc("GET "+prefix+"/files/{id}/thumb", wrap(auth.ScopeRead, f.thumb))
 	mux.HandleFunc("GET "+prefix+"/files/{id}/versions", wrap(auth.ScopeRead, f.versions))
+	mux.HandleFunc("GET "+prefix+"/files/{id}", wrap(auth.ScopeRead, f.getFile))
+	mux.HandleFunc("GET "+prefix+"/files/{id}/comments", wrap(auth.ScopeRead, f.fileComments))
+	mux.HandleFunc("POST "+prefix+"/files/{id}/comments", wrap(auth.ScopeWrite, f.addFileComment))
+	mux.HandleFunc("DELETE "+prefix+"/files/{id}/comments/{comment}", wrap(auth.ScopeWrite, f.deleteFileComment))
 	mux.HandleFunc("PATCH "+prefix+"/files/{id}", wrap(auth.ScopeWrite, f.editFile))
 	mux.HandleFunc("DELETE "+prefix+"/files/{id}", wrap(auth.ScopeFiles, f.deleteFile))
 
@@ -188,14 +195,11 @@ func (f *fileAPI) versions(w http.ResponseWriter, r *http.Request, a core.Actor)
 
 // editFile changes only the fields the body names.
 func (f *fileAPI) editFile(w http.ResponseWriter, r *http.Request, a core.Actor) {
-	var in struct {
-		Name   *string `json:"name"`
-		Folder *string `json:"folder"`
-	}
+	var in files.FilePatch
 	if !f.read(w, r, &in) {
 		return
 	}
-	e, err := f.svc.PatchFile(r.Context(), a, path(r, "id"), in.Name, in.Folder)
+	e, err := f.svc.PatchFileDetails(r.Context(), a, path(r, "id"), in)
 	if err != nil {
 		f.refuse(w, r, err)
 		return
@@ -275,4 +279,74 @@ func path(r *http.Request, name string) int64 {
 func id(r *http.Request, name string) int64 {
 	n, _ := strconv.ParseInt(r.URL.Query().Get(name), 10, 64)
 	return n
+}
+
+func (f *fileAPI) getFile(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	row, err := f.svc.ReadFile(r.Context(), a, path(r, "id"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"file": row})
+}
+func (f *fileAPI) fileComments(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	rows, err := f.svc.FileComments(r.Context(), a, path(r, "id"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"comments": rows})
+}
+func (f *fileAPI) addFileComment(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	var in struct {
+		Body     string `json:"body_md"`
+		Position int64  `json:"position_ms"`
+	}
+	if !f.read(w, r, &in) {
+		return
+	}
+	e, err := f.svc.AddFileComment(r.Context(), a, path(r, "id"), in.Position, in.Body)
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"file": e.After})
+}
+func (f *fileAPI) deleteFileComment(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	e, err := f.svc.DeleteFileComment(r.Context(), a, path(r, "id"), path(r, "comment"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "file": e.After})
+}
+
+func (f *fileAPI) productionTemplate(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	e, err := f.Board.ProductionTemplate(r.Context(), a, path(r, "id"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"card": e.After, "event": e})
+}
+
+func (f *fileAPI) orphans(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	report, err := f.svc.OrphanPage(r.Context(), a, id(r, "before"))
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, report)
+}
+func (f *fileAPI) cleanup(w http.ResponseWriter, r *http.Request, a core.Actor) {
+	var in files.Orphan
+	if !f.read(w, r, &in) {
+		return
+	}
+	e, err := f.svc.CleanupObject(r.Context(), a, in)
+	if err != nil {
+		f.refuse(w, r, err)
+		return
+	}
+	f.writeJSON(w, http.StatusOK, map[string]any{"event": e})
 }

@@ -77,7 +77,7 @@ func TestLinkAndFileToolsAreListed(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{"list_links": true, "add_link": true, "list_files": true,
-		"get_download_url": true, "attach_to_card": true}
+		"get_download_url": true, "attach_to_card": true, "get_file": true, "edit_file": true, "list_file_comments": true, "add_file_comment": true, "delete_file_comment": true, "production_template": true, "storage_orphans": true, "storage_cleanup": true}
 	for _, tool := range res.Tools {
 		if !want[tool.Name] {
 			continue
@@ -222,5 +222,17 @@ func TestFileToolsRefuseWhatTheTokenMayNotDo(t *testing.T) {
 				t.Fatalf("%s went through: %v", tc.tool, res.StructuredContent)
 			}
 		})
+	}
+}
+
+func TestFileMetadataToolsRequireWrite(t *testing.T) {
+	h := newHarness(t)
+	h.withFiles(t)
+	cs := h.connect(auth.ScopeRead)
+	for _, name := range []string{"edit_file", "add_file_comment", "delete_file_comment", "production_template", "storage_cleanup"} {
+		args := map[string]any{"file": 1, "proposition": 1, "comment": 1, "position_ms": 0, "body_md": "note", "folder": "Documents", "key": "unknown", "size": 1}
+		if res := h.call(cs, name, args, nil); !res.IsError {
+			t.Fatalf("%s accepted read-only token", name)
+		}
 	}
 }

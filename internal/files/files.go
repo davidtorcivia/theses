@@ -30,6 +30,7 @@ import (
 // second bucket without anything here knowing about settings. HTTP is the
 // outbound client link metadata is fetched with, safehttp's in production.
 type Service struct {
+	ReserveMaintenance func() (func(), error)
 	*core.Service
 	Bucket func(ctx context.Context, folder string) (*blob.Client, error)
 	HTTP   *http.Client
@@ -139,26 +140,25 @@ type Link struct {
 // A File is one row of the files list. The object key is in it because the
 // drawer shows where a thing landed in the bucket, and knowing the key is not
 // a way to read the object: every download is a presigned GET.
-//
-// ponytail: the mockup draws a note field on a file and the table has no
-// column for one. The plan does not ask for it, so it is left out rather than
-// added to the schema; a note_md column beside the link's is the upgrade if
-// anybody misses it.
 type File struct {
-	ID          int64  `json:"id"`
-	Proposition int64  `json:"proposition_id"`
-	Name        string `json:"name"`
-	Folder      string `json:"folder"`
-	Kind        string `json:"kind"`
-	Size        int64  `json:"size"`
-	ObjectKey   string `json:"object_key"`
-	VersionOf   *int64 `json:"version_of"`
-	DurationMS  *int64 `json:"duration_ms"`
-	Width       *int64 `json:"width"`
-	Height      *int64 `json:"height"`
-	UploadedBy  *int64 `json:"uploaded_by"`
-	State       string `json:"state"`
-	CreatedAt   int64  `json:"created_at"`
+	CommentRevision int64  `json:"comment_revision"`
+	Note            string `json:"note_md"`
+	Tags            string `json:"tags"`
+	MetadataVersion int64  `json:"metadata_version"`
+	ID              int64  `json:"id"`
+	Proposition     int64  `json:"proposition_id"`
+	Name            string `json:"name"`
+	Folder          string `json:"folder"`
+	Kind            string `json:"kind"`
+	Size            int64  `json:"size"`
+	ObjectKey       string `json:"object_key"`
+	VersionOf       *int64 `json:"version_of"`
+	DurationMS      *int64 `json:"duration_ms"`
+	Width           *int64 `json:"width"`
+	Height          *int64 `json:"height"`
+	UploadedBy      *int64 `json:"uploaded_by"`
+	State           string `json:"state"`
+	CreatedAt       int64  `json:"created_at"`
 }
 
 // Ready is whether the object is in the bucket and verified.
@@ -184,13 +184,13 @@ func scanLink(row interface{ Scan(...any) error }) (Link, error) {
 }
 
 const fileColumns = `id, proposition_id, name, folder, kind, size, object_key, version_of,
-	duration_ms, width, height, uploaded_by, state, created_at`
+	duration_ms, width, height, uploaded_by, state, created_at, note_md, tags, metadata_version, comment_revision`
 
 func scanFile(row interface{ Scan(...any) error }) (File, error) {
 	var f File
 	var versionOf, duration, width, height, by sql.NullInt64
 	err := row.Scan(&f.ID, &f.Proposition, &f.Name, &f.Folder, &f.Kind, &f.Size, &f.ObjectKey,
-		&versionOf, &duration, &width, &height, &by, &f.State, &f.CreatedAt)
+		&versionOf, &duration, &width, &height, &by, &f.State, &f.CreatedAt, &f.Note, &f.Tags, &f.MetadataVersion, &f.CommentRevision)
 	f.VersionOf, f.DurationMS = number(versionOf), number(duration)
 	f.Width, f.Height, f.UploadedBy = number(width), number(height), number(by)
 	return f, err

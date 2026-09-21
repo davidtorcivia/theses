@@ -181,6 +181,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	// client, which is the only outbound fetch the app makes.
 	s.blobs = newBuckets()
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
+	s.files.ReserveMaintenance = s.backups.ReserveMaintenance
 	s.api.Board, s.api.Files = s.board, s.files
 	mcp.Files(s.mcp, s.files)
 	mcp.Board(s.mcp, s.board, s.files, s.backups.Now)
@@ -347,6 +348,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /shell", s.offlineShell)
 	mux.HandleFunc("GET /app/activity", s.requireUser(s.getActivity))
 	mux.HandleFunc("GET /app/search", s.requireUser(s.getSearch))
+	mux.HandleFunc("GET /app/production", s.requireUser(s.getProduction))
 	mux.HandleFunc("GET /app/my-work", s.requireUser(s.getMyWork))
 	mux.HandleFunc("GET /app/backlinks", s.requireUser(s.getBacklinks))
 

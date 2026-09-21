@@ -54,7 +54,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		a.fail(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
 		a.fail(w, http.StatusNotFound, "that is not there")
-	case errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrColumnNotEmpty),
+	case errors.Is(err, files.ErrMaintenance), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, core.ErrNotUndoable), errors.Is(err, docs.ErrSourceBase):
 		a.fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, board.ErrNotYours):
@@ -77,7 +77,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
 		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),
-		errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),
+		errors.Is(err, files.ErrTimestamp), errors.Is(err, files.ErrTags), errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),
 		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
 		errors.Is(err, files.ErrPart):
 		a.fail(w, http.StatusUnprocessableEntity, err.Error())

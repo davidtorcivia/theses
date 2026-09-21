@@ -7,7 +7,7 @@ import { renderDrawer, openCard } from './drawer.js';
 import { openPanel } from './activity.js';
 import { beforeRender, afterRender } from './docs.js';
 
-import { openFile } from './files.js';
+import { openFile, loadFileTarget } from './files.js';
 import { openLink } from './links.js';
 import { parseTarget } from './anchors.js';
 import { say } from './dom.js';
@@ -74,6 +74,13 @@ async function routeTarget() {
     if (state.loaded !== state.open && !state.fromCache) { say('This item could not be loaded. Retry when connected.'); return; }
     const rows = kind === 'file' ? state.files : state.links;
     if (rows.some((row) => row.id === id)) { (kind === 'file' ? openFile : openLink)(id); return; }
+    if (kind === 'file') {
+      try {
+        const found = await loadFileTarget(id);
+        if (generation !== routing) return;
+        if (found) { openFile(id); return; }
+      } catch { /* The unavailable target message below reveals no metadata. */ }
+    }
   } else if (kind === 'card' || kind === 'comment') {
     const card = kind === 'card' ? state.cards.get(id)
       : [...state.cards.values()].find((c) => (c.comments || []).some((comment) => comment.id === id));
