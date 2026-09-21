@@ -9,6 +9,7 @@ import (
 
 var agentDocumentPaths = map[string]bool{
 	"/SKILLS.md":      true,
+	"/legal.md":       true,
 	"/api.md":         true,
 	"/connections.md": true,
 }

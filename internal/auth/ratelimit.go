@@ -23,6 +23,7 @@ type limit struct {
 }
 
 var limitsByBucket = map[string]limit{
+	"legal":      {n: 30, window: time.Minute},
 	BucketLogin:  {n: 10, window: 5 * time.Minute},
 	BucketReset:  {n: 5, window: time.Hour},
 	BucketInvite: {n: 20, window: time.Hour},

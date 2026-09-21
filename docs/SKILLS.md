@@ -187,3 +187,7 @@ files, evidence and calendar events have a seven-day recovery window. Restore
 requires current delete permission. Check the returned event and original
 resource; never assume an item was restored from its absence in trash.
 Do not delete a proposition to remove one item: proposition deletion is permanent.
+
+## Recording releases
+
+Use `list_releases`, `get_release`, `save_release`, and `list_release_submissions` to manage or export recording releases. `preview_release_email` reads intended messages; `notify_release_participants` sends email and requires explicit user authorization. Never sign a participant's release for them. Share the public link for their own consent. [Contracts and fields](legal.md).

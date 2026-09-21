@@ -23,6 +23,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
 	"github.com/davidtorcivia/theses/internal/integrations"
+	"github.com/davidtorcivia/theses/internal/legal"
 	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/mcp"
 	"github.com/davidtorcivia/theses/internal/notify"
@@ -134,6 +135,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
 	s.api.Workflow = workflow.New(s.board.Service)
+	s.api.Legal = legal.New(s.board.Service)
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
 		return settings.Get[string](set, "defaults.document_template")
@@ -194,6 +196,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	}
 	s.api.Diagnostics = s.diagnostics
 	mcp.Workflow(s.mcp)
+	mcp.Legal(s.mcp)
 	mcp.Files(s.mcp, s.files)
 	mcp.Board(s.mcp, s.board, s.files, s.backups.Now)
 
@@ -388,6 +391,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /app/drive", s.requireUser(s.getDriveList))
 	mux.Handle("POST /app/drive/import", s.api.WithKey(http.HandlerFunc(s.requireUser(s.postDriveImport))))
 
+	s.legalRoutes(mux)
 	mux.HandleFunc("POST /p/{id}/publish", s.requireUser(s.postPublish))
 	return mux
 }

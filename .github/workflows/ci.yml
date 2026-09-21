@@ -33,6 +33,8 @@ jobs:
         run: docker build --build-arg VERSION="${{ github.sha }}" -t theses:ci .
       - name: Browser workflow
         run: npm run test:browser
+      - name: Recording release workflow
+        run: THESES_BROWSER_TEST=1 THESES_BROWSER_SCRIPT=../../web/browser_legal.mjs go test ./internal/server -run '^TestBrowserWorkflow$' -count=1 -v
       - name: Recovery and accessibility workflow
         run: THESES_BROWSER_TEST=1 THESES_BROWSER_SCRIPT=../../web/browser_recovery.mjs go test ./internal/server -run '^TestBrowserWorkflow$' -count=1 -v
       - name: Click feedback budget

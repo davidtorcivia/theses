@@ -104,6 +104,7 @@ function head(p) {
     'aria-expanded': String(state.panel), 'aria-controls': 'drawer',
     onclick: () => state.panel ? closePanel() : openPanel(),
   }, 'Activity', held ? el('i', { text: ' ' + held }) : null));
+  if (canEdit()) tabs.append(el('a', { class: 'tab', href: '/legal?proposition=' + p.id }, 'Releases'));
   tabs.append(el('a', { class: 'tab', href: p.kind === 'show' ? '/show/settings' : `/p/${p.id}/settings` },
     p.kind === 'show' ? 'Show settings' : 'Settings'));
 

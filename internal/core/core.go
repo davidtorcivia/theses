@@ -20,12 +20,13 @@ import (
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
-// The two kinds of thing that can make a change. An API token and an MCP
-// client are not among them: they are a way for a person to act, recorded in
-// Via. Only the document mirror's watcher has no person behind it.
+// API tokens and MCP clients act as users, recorded in Via. The document
+// watcher acts as a file; public release submissions use the system actor.
 const (
-	KindUser = "user"
-	KindFile = "file"
+	KindUser    = "user"
+	KindFile    = "file"
+	KindPublic  = "system"
+	SignRelease = "sign_release"
 )
 
 // Actor is who is making the change. ID and Name are the person, which is what
@@ -209,6 +210,9 @@ func (s *Service) Do(ctx context.Context, a Actor, proposition int64, need strin
 	if err != nil {
 		return Event{}, err
 	}
+	if a.Kind == KindPublic && (change.Entity != "legal_submission" || change.Action != "sign" || change.Detached || change.Proposition != 0) {
+		return Event{}, ErrForbidden
+	}
 
 	at := s.Now().Unix()
 	before, err := marshal(change.Before)
@@ -307,6 +311,10 @@ func (s *Service) commit(tx *sql.Tx, events []Event) error {
 // authorise resolves the actor's role and, for anyone but an owner, checks that
 // the actor is a member of the proposition.
 func authorise(ctx context.Context, tx *sql.Tx, a Actor, proposition int64, need string) error {
+	// Public signing validates the link and agreement version inside its command.
+	if a.Kind == KindPublic && need == SignRelease && proposition > 0 {
+		return nil
+	}
 	role, userID, err := resolve(ctx, tx, a)
 	if err != nil {
 		return err

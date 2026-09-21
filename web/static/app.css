@@ -672,7 +672,6 @@ dialog.drive .acts{gap:.8rem;justify-content:space-between}
   /* Five tabs where the mockup had four, so the row was wrapping to a second
      line and the rule under it stopped halfway across. Tighter tracking and
      smaller type fit all five, and the rule runs the full width again. */
-  .tabs{flex-wrap:nowrap}
   .tabs .tab{padding:.5rem .5rem;font-size:12px;letter-spacing:.04em;white-space:nowrap}
   .tabs .tab:first-child{padding-left:.2rem}
   .tabs .tab.on{padding-left:.5rem}

@@ -39,6 +39,9 @@ var providers = []string{"backblaze", "r2", "s3"}
 
 // Registry is every setting the app knows. A key not here cannot be written.
 var Registry = []Def{
+	{Key: "workspace.legal_rights_holder", Kind: KindString, Default: "", Label: "Release rights holder"},
+	{Key: "workspace.legal_email_subject", Kind: KindString, Default: "{title} is now available", Label: "Participant email subject"},
+	{Key: "workspace.legal_email_body", Kind: KindText, Default: "Hello {name},\n\nThank you for taking part in {brand}. The episode is now available:\n\n{url}\n\nThank you,\n{brand}", Label: "Participant email template"},
 	{Key: "workspace.name", Kind: KindString, Default: "Workspace", Label: "Name"},
 	{Key: "workspace.episode_start", Kind: KindInt, Default: 1, Min: 0, Max: 10000, Label: "Episode numbering starts at"},
 	{Key: "workspace.release_day", Kind: KindChoice, Default: "Monday", Choices: days, Label: "Release day"},
