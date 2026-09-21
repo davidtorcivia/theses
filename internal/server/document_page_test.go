@@ -20,11 +20,12 @@ func TestShellCarriesTheDocuments(t *testing.T) {
 	h.setupOwner()
 	owner := h.owner()
 
-	if _, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power"); err != nil {
+	e, err := h.srv.board.CreateProposition(ctx, owner, "Tidal Power")
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	state := h.payload("/")
+	state := h.payload("/p/" + strconv.FormatInt(e.EntityID, 10))
 	want := []string{"Research", "Script", "Show notes"}
 	if len(state.Documents) != len(want) {
 		t.Fatalf("the payload carries %+v", state.Documents)

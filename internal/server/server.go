@@ -136,6 +136,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
 		return settings.Get[string](set, "defaults.document_template")
 	}, log)
+	s.backups.RestoreFiles = s.docs.WithMirrorPaused
 	s.api.Docs, s.hub.Docs = s.docs, s.docs
 	// A new proposition arrives with the three documents every episode has, so
 	// that nobody meets an empty document area and has to guess what goes in it.
@@ -147,6 +148,9 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 			}
 		}
 		return nil
+	}
+	if _, err := board.EnsureShow(context.Background(), db); err != nil {
+		return nil, fmt.Errorf("ensure Show workspace: %w", err)
 	}
 
 	// Links and files hang off the same command service, registered after the
@@ -245,6 +249,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /invite/{token}/authenticator", s.postEnrol)
 
 	mux.HandleFunc("GET /{$}", s.requireUser(s.getShell))
+	mux.HandleFunc("GET /show", s.requireUser(s.getShell))
+	mux.HandleFunc("GET /show/settings", s.requireUser(s.showSettings(s.getPropositionSettings)))
+	mux.HandleFunc("POST /show/settings", s.requireUser(s.showSettings(s.postPropositionSettings)))
 	mux.HandleFunc("GET /p/{id}", s.requireUser(s.getProposition))
 	mux.HandleFunc("GET /p/{id}/settings", s.requireUser(s.getPropositionSettings))
 	mux.HandleFunc("POST /p/{id}/settings", s.requireUser(s.postPropositionSettings))

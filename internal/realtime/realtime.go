@@ -345,6 +345,16 @@ func (c *client) forward(sub *core.Subscription) {
 			c.membership(e)
 			continue
 		}
+		if e.Entity == "member" && e.EntityID == c.user.ID && len(e.After) == 0 {
+			// The removal is the last event this person may read from this
+			// proposition. Send it under the membership that existed before it,
+			// then narrow the socket's cached authorization.
+			if c.wants(e) {
+				c.send(message{Type: "event", Event: &e})
+			}
+			c.membership(e)
+			continue
+		}
 		c.membership(e)
 		if c.wants(e) {
 			c.send(message{Type: "event", Event: &e})

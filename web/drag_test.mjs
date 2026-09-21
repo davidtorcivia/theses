@@ -4,7 +4,7 @@ globalThis.document = { querySelector: () => null };
 globalThis.addEventListener = () => {};
 globalThis.getComputedStyle = (node) => node.style;
 
-const { scrollParent } = await import('./static/app/drag.js');
+const { scrollParent, movable } = await import('./static/app/drag.js');
 const page = { parentElement: null, style: { overflowY: 'visible' }, scrollHeight: 900, clientHeight: 900 };
 const rail = { parentElement: page, style: { overflowY: 'auto' }, scrollHeight: 1200, clientHeight: 500 };
 const list = { parentElement: rail, style: { overflowY: 'visible' }, scrollHeight: 1200, clientHeight: 1200 };
@@ -15,3 +15,9 @@ rail.scrollHeight = rail.clientHeight;
 assert.equal(scrollParent(row), null, 'a panel with no overflow leaves scrolling to the window');
 
 console.log('drag scroll container cases pass');
+
+let pointer;
+movable({ classList: { add() {} }, addEventListener(name, run) { if (name === 'pointerdown') pointer = run; } }, {});
+for (const tag of ['a', 'button']) {
+  pointer({ button: 0, target: { closest: (selector) => selector.split(', ').includes(tag) } });
+}

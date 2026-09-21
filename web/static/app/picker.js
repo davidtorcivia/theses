@@ -3,6 +3,7 @@
 
 import { $, $$, el, initials } from './dom.js';
 import { state } from './state.js';
+import { propositionMatches, propositionToken, propositionLabel } from './references.js';
 
 let pickerAnchor = null;
 let mentionField = null;
@@ -104,20 +105,25 @@ export function mentionable(field) {
     return contenteditableCaret(field, getSelection());
   };
 
-  field.addEventListener('input', () => {
-    const typed = read().slice(0, caret()).match(/(?:^|\s)@([a-z0-9-]*)$/i);
+  field.addEventListener('input', (e) => {
+    if (e.isComposing) { closePicker(); return; }
+    const typed = read().slice(0, caret()).match(/(?:^|\s)@([^\s@\[\]]*)$/u);
     closePicker();
     if (!typed) return;
     const q = typed[1].toLowerCase();
-    const hits = [...state.users.values()].filter((u) =>
-      u.handle.startsWith(q) || u.name.toLowerCase().startsWith(q) || u.initials.toLowerCase().startsWith(q));
+    const people = [...state.users.values()].filter((u) =>
+      u.handle.startsWith(q) || u.name.toLowerCase().startsWith(q) || u.initials.toLowerCase().startsWith(q)).slice(0, 8);
+    const hits = [
+      ...people.map((person) => ({ person, token: '@' + person.handle })),
+      ...propositionMatches(state.props, q).map((proposition) => ({ proposition, token: propositionToken(proposition.id) })),
+    ];
     if (!hits.length) return;
 
-    const picker = el('div', { id: 'picker', role: 'listbox' }, el('div', { class: 'pt mono', text: 'Mention' }));
-    for (const [index, person] of hits.entries()) {
+    const picker = el('div', { id: 'picker', role: 'listbox' }, el('div', { class: 'pt mono', text: 'People and propositions' }));
+    for (const [index, hit] of hits.entries()) {
       const choose = () => {
         const at = caret();
-        const before = read().slice(0, at).replace(/@[a-z0-9-]*$/i, '@' + person.handle + ' ');
+        const before = read().slice(0, at).replace(/@[^\s@\[\]]*$/u, hit.token + ' ');
         const rest = before + read().slice(at);
         if (field.value !== undefined) {
           field.value = rest;
@@ -127,8 +133,13 @@ export function mentionable(field) {
           writeContenteditable(field, rest, before.length);
         }
         closePicker();
+        field.dispatchEvent(new Event('input', { bubbles: true }));
       };
-      const button = row(person, false, choose);
+      const button = hit.person ? row(hit.person, false, choose) : el('button', {
+        type: 'button', role: 'option', 'aria-selected': 'false',
+        onclick: (e) => { e.stopPropagation(); choose(); },
+      }, el('span', { class: 'n', text: propositionLabel(hit.proposition) }),
+      el('span', { class: 'mono role', text: hit.proposition.status }));
       button.id = 'mention-option-' + index;
       button.tabIndex = -1;
       button.addEventListener('mousedown', (e) => {
@@ -148,6 +159,7 @@ export function mentionable(field) {
   });
 
   field.addEventListener('keydown', (e) => {
+    if (e.isComposing) { e.stopImmediatePropagation(); return; }
     const picker = $('#picker');
     if (!picker || mentionField !== field) return;
     handleMentionKey(e, picker, field);
@@ -177,6 +189,7 @@ export function writeContenteditable(field, text, at) {
 }
 
 export function handleMentionKey(e, picker, field) {
+  if (e.isComposing) return;
   const choices = [...picker.querySelectorAll('button')];
   const at = choices.findIndex((choice) => choice.getAttribute('aria-selected') === 'true');
   if (e.key === 'Enter') {

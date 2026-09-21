@@ -406,6 +406,36 @@ func TestSocketSendsNoEventsForAPropositionTheTabCannotRead(t *testing.T) {
 	}
 }
 
+func TestSocketSendsRemovalFromANonOpenPropositionBeforeRevokingIt(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+
+	created, err := r.boards.CreateProposition(ctx, r.actor("ada"), "Wave Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := created.EntityID
+	if _, err := r.boards.AddMember(ctx, r.actor("ada"), other, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+
+	member := r.mustDial("grace")
+	read(t, member, "presence")
+	if _, err := r.boards.RemoveMember(ctx, r.actor("ada"), other, r.users["grace"].ID); err != nil {
+		t.Fatal(err)
+	}
+	removed := read(t, member, "event")
+	if removed.Event == nil || removed.Event.Entity != "member" || removed.Event.Action != "remove" ||
+		removed.Event.Proposition != other || removed.Event.EntityID != r.users["grace"].ID {
+		t.Fatalf("removed member got %+v", removed)
+	}
+
+	if _, err := r.boards.EditProposition(ctx, r.actor("ada"), other, "Secret rename", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	readNothing(t, member)
+}
+
 // A socket is only as good as the session behind it. Signing out everywhere
 // stops the writes, and being removed from the proposition stops the reading.
 func TestSocketDropsARevokedSessionAndARemovedMember(t *testing.T) {

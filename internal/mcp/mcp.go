@@ -276,15 +276,23 @@ func (s *Server) setSetting(ctx context.Context, req *sdk.CallToolRequest, in se
 // workspace is the resource: enough for a client to know where it has connected
 // and what it may ask for next.
 func (s *Server) workspace(ctx context.Context, req *sdk.ReadResourceRequest) (*sdk.ReadResourceResult, error) {
-	if _, err := principal(ctx, auth.ScopeRead); err != nil {
+	p, err := principal(ctx, auth.ScopeRead)
+	if err != nil {
 		return nil, err
 	}
-	var people, propositions int
-	if err := s.db.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM users),
-		(SELECT count(*) FROM propositions WHERE archived_at IS NULL)`).
-		Scan(&people, &propositions); err != nil {
+	var people int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM users`).Scan(&people); err != nil {
 		return nil, s.failed("read the workspace", err)
+	}
+	visible, err := s.api.Propositions(ctx, p)
+	if err != nil {
+		return nil, s.failed("read the workspace", err)
+	}
+	propositions := 0
+	for _, proposition := range visible {
+		if proposition.Kind != "show" && proposition.ArchivedAt == nil {
+			propositions++
+		}
 	}
 	text := fmt.Sprintf(`%s is a THESES workspace: one board, one document set,
 one link list and one file list per proposition, and an activity log of every

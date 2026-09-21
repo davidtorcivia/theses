@@ -13,7 +13,7 @@ function groups() {
   const last = statuses[statuses.length - 1] || 'released';
   const live = [], ideas = [], out = [];
   for (const p of state.props) {
-    if (p.archived_at) continue;
+    if (p.kind === 'show' || p.archived_at) continue;
     if (p.status === first) ideas.push(p);
     else if (p.status === last) out.push(p);
     else live.push(p);
@@ -32,7 +32,7 @@ const drawn = new Map();
 
 function entry(p) {
   const released = state.statuses[state.statuses.length - 1] || 'released';
-  const key = JSON.stringify([p.number, p.title, p.status, p.episode, p.archived_at,
+  const key = JSON.stringify([p.kind, p.number, p.title, p.status, p.episode, p.archived_at,
     p.id === state.open, state.can.edit, state.can.delete, released]);
   const was = drawn.get(p.id);
   if (was && was.key === key) return was.node;
@@ -44,16 +44,17 @@ function entry(p) {
   // above, and a node built before somebody edited the statement in the work
   // area would put the old one back.
   const id = p.id;
-  let tail = p.status;
+  let tail = p.kind === 'show' ? '' : p.status;
   if (p.archived_at) tail = 'archived';
   else if (p.status === released && p.episode) tail = 'ep ' + p.episode;
-  const title = el('span', { class: 't', text: p.title + ' ' },
-    el('span', { class: 'st', text: tail }));
+  const title = el('span', { class: 't', text: p.title + (tail ? ' ' : '') },
+    tail ? el('span', { class: 'st', text: tail }) : null);
   const menu = el('div', { class: 'menu', hidden: true });
   const li = el('li', {
-    class: 'ws' + (p.archived_at ? ' arch' : '') + (p.id === state.open ? ' on' : ''),
+    class: 'ws' + (p.kind === 'show' ? ' showpin' : '') +
+      (p.archived_at ? ' arch' : '') + (p.id === state.open ? ' on' : ''),
     'data-n': p.id, 'data-status': p.status,
-  }, el('span', { class: 'no', text: num(p.number) }), title);
+  }, p.kind === 'show' ? null : el('span', { class: 'no', text: num(p.number) }), title);
 
   if (state.can.edit) {
     const more = el('button', { class: 'more', 'aria-label': 'More', type: 'button', text: '…' });
@@ -63,7 +64,9 @@ function entry(p) {
       for (const m of $$('#rail .menu')) m.hidden = true;
       menu.hidden = wasOpen;
     });
-    const menu_items = p.archived_at
+    const menu_items = p.kind === 'show'
+      ? [['Rename', 'rename'], ['Settings', 'settings']]
+      : p.archived_at
       ? [['Restore', 'archive'], ['Delete', 'delete']]
       : [['Rename', 'rename'], ['Settings', 'settings'], ['Archive', 'archive'], ['Delete', 'delete']];
     for (const [label, act] of menu_items) {
@@ -84,7 +87,7 @@ function entry(p) {
   // The same pointer drag the board uses, for the same reason: a finger fires
   // no drag event, so the rail could not be ordered on a phone either. An
   // archived proposition has no place in the order and so is not carried.
-  if (!p.archived_at) {
+  if (p.kind !== 'show' && !p.archived_at) {
     movable(li, {
       zone: '#rail ul.order',
       drop: () => {
@@ -126,9 +129,9 @@ function rename(id, title) {
 }
 
 function run(act, id) {
-  if (act === 'settings') { location.href = `/p/${id}/settings`; return; }
   const p = proposition(id);
   if (!p) return;
+  if (act === 'settings') { location.href = p.kind === 'show' ? '/show/settings' : `/p/${id}/settings`; return; }
   if (act === 'archive') {
     send(p.archived_at ? 'proposition.restore' : 'proposition.archive', { proposition: id })
       .catch((err) => say(err.message));
@@ -145,14 +148,29 @@ function run(act, id) {
 }
 
 export function go(id) {
-  document.body.classList.remove('rail-open');
-  if (id !== state.open) location.href = '/p/' + id;
+  // Closing the active row does not navigate, so chrome must synchronize
+  // the narrow rail's focus, inert state and disclosure state.
+  const toggle = $('#railtoggle');
+  if (document.body.classList.contains('rail-open') && toggle) toggle.click();
+  else document.body.classList.remove('rail-open');
+  const p = proposition(id);
+  if (p && id !== state.open) location.href = p.kind === 'show' ? '/show' : '/p/' + id;
 }
 
 // The groups and the lists inside them are made once and kept, so that a row
 // nothing happened to is never taken out of the page. Only the heading, which
 // carries a count, is drawn again.
 const parts = new Map();
+
+function showNode(row, keep) {
+  let part = parts.get('show');
+  if (!part) {
+    part = { node: el('ul', { class: 'show', 'aria-label': 'Show workspace' }) };
+    parts.set('show', part);
+  }
+  children(part.node, [row], keep);
+  return part.node;
+}
 
 function groupNode(id, name, rows, keep) {
   let part = parts.get(id);
@@ -218,10 +236,13 @@ export function renderRail() {
     .filter((group) => group.rows.length);
   // The same entry as any other, so an archived proposition still opens and
   // still carries the two things its menu has left, restore and delete.
-  const archived = state.props.filter((p) => p.archived_at).map(entry);
-  const keep = new Set([...shown.flatMap((group) => group.rows), ...archived]);
+  const show = state.props.find((p) => p.kind === 'show');
+  const showRow = show ? entry(show) : null;
+  const archived = state.props.filter((p) => p.kind !== 'show' && p.archived_at).map(entry);
+  const keep = new Set([showRow, ...shown.flatMap((group) => group.rows), ...archived].filter(Boolean));
 
   children(rail, [
+    showRow && showNode(showRow, keep),
     el('div', { class: 'railtop' }, filter),
     shown.map((group) => groupNode(group.id, group.name, group.rows, keep)),
     archived.length && archivedNode(archived, keep),

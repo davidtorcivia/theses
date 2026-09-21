@@ -3,7 +3,7 @@
 // the two text fields carry the version they started from.
 
 import { $, el, clear, add, initials, inline, say, editable, ask } from './dom.js';
-import { state, user, byHandle, emit, hold, canEdit, material, target, baseText, unresolvedCard } from './state.js';
+import { state, user, byHandle, proposition, emit, hold, canEdit, material, target, baseText, unresolvedCard } from './state.js';
 import { send, where, newKey, count, chosen, resend, letGo, Conflict } from './net.js';
 import { file as fileRefusal } from './offline.js';
 import { openPicker, closePicker, mentionable } from './picker.js';
@@ -154,7 +154,7 @@ function attachDialog(card) {
   dialog.showModal();
 }
 
-const rendered = (text) => inline(text, byHandle);
+const rendered = (text) => inline(text, byHandle, proposition);
 
 // restoreFocus puts the keyboard back on the card the drawer was showing, now
 // that the board has been drawn again and that card is a node once more. Once,
@@ -263,10 +263,11 @@ export function renderDrawer() {
     el('span', { class: 'mono', text: (column ? column.name : '') + ' · ' + (card.done_at ? 'done' : 'open') }),
     close));
 
-  const heading = el('h2', { text: card.title, spellcheck: 'false', 'data-k': 'title' });
+  const heading = el('h2', { spellcheck: 'false', 'data-k': 'title' }, rendered(card.title));
   if (canEdit()) {
-    const edit = () => {
-      if (heading.isContentEditable) return;
+    mentionable(heading);
+    const edit = (e) => {
+      if (heading.isContentEditable || e?.target.closest('a')) return;
       hold(true);
       editable(heading, card.title, (value) => {
         hold(false);
@@ -582,7 +583,7 @@ function when(unix) {
 
 function noteForm(card) {
   const field = el('textarea', { rows: '1', 'data-k': 'note',
-    placeholder: 'Write a note. @ to mention someone. ⌘↵ posts.' });
+    placeholder: 'Write a note. @ people or propositions. ⌘↵ posts.' });
   mentionable(field);
   field.addEventListener('focus', () => hold(true));
   field.addEventListener('blur', () => hold(false));

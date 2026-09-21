@@ -19,6 +19,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/davidtorcivia/theses/internal/blob"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -87,6 +88,10 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	if err != nil {
 		return fmt.Errorf("the archive does not hold a database this version can open: %w", err)
 	}
+	if _, err := board.EnsureShow(ctx, check); err != nil {
+		check.Close()
+		return err
+	}
 	if err := validateRestore(ctx, check); err != nil {
 		check.Close()
 		return err
@@ -100,14 +105,29 @@ func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
 	defer b.Freeze(false)
 
 	aside := b.db.Path() + "." + stamp + ".aside"
-	if err := b.db.Swap(ctx, dbPath, aside); err != nil {
-		return err
+	installed := false
+	swap := func() error {
+		if err := b.db.Swap(ctx, dbPath, aside); err != nil {
+			return err
+		}
+		installed = true
+		// The database is the backup's from here. Anything that fails after this is
+		// a restore that half happened, and saying "nothing was changed" about it
+		// would send whoever reads it looking in the wrong place.
+		if err := b.afterSwap(ctx, docsPath, stamp, key, m, actorID); err != nil {
+			return fmt.Errorf("%w: %w", ErrPartial, err)
+		}
+		return nil
 	}
-	// The database is the backup's from here. Anything that fails after this is
-	// a restore that half happened, and saying "nothing was changed" about it
-	// would send whoever reads it looking in the wrong place.
-	if err := b.afterSwap(ctx, docsPath, stamp, key, m, actorID); err != nil {
-		return fmt.Errorf("%w: %w", ErrPartial, err)
+	if b.RestoreFiles != nil {
+		if err := b.RestoreFiles(ctx, swap); err != nil {
+			if installed && !errors.Is(err, ErrPartial) {
+				return fmt.Errorf("%w: %w", ErrPartial, err)
+			}
+			return err
+		}
+	} else if err := swap(); err != nil {
+		return err
 	}
 	b.log.Warn("restored from a backup", "key", key, "aside", aside)
 	return nil

@@ -104,12 +104,25 @@ type Service struct {
 	// is deleted when a timer fires with nothing edited since the last one, so
 	// the timers stop when the editing does.
 	pending map[int64]*timer
+	// revisionPaused keeps an in-flight edit from arming a timer against the
+	// database a restore is replacing. revisionActive lets the restore wait for
+	// a timer that was already inside its database work.
+	revisionPaused bool
+	revisionActive int
+	revisionCond   *sync.Cond
 	// written is the hash of the bytes this process last wrote to each mirror
 	// file, and the document that file belongs to. An fsnotify event whose
 	// content hashes to what is recorded here is this process hearing its own
 	// write; a path that is not in here at all was never written by us and is
 	// never imported.
 	written map[string]mirrored
+
+	// mirrorPause is owned by Run. A restore sends the filesystem swap through
+	// it so the watcher, its debounce queue and the hashes describing the old
+	// tree are gone before any path changes underneath them.
+	mirrorPause   chan mirrorPause
+	mirrorStarted chan struct{}
+	mirrorDone    chan struct{}
 }
 
 type timer struct {
@@ -149,11 +162,15 @@ func New(c *core.Service, dir string, template func() string, log *slog.Logger) 
 		}
 		return nil, core.ErrNotFound
 	}
-	return &Service{
+	s := &Service{
 		Service: c, Template: template, Every: RevisionEvery, Debounce: Debounce,
 		log: log, root: dir,
 		pending: map[int64]*timer{}, written: map[string]mirrored{},
+		mirrorPause: make(chan mirrorPause), mirrorStarted: make(chan struct{}),
+		mirrorDone: make(chan struct{}),
 	}
+	s.revisionCond = sync.NewCond(&s.mu)
+	return s
 }
 
 // Markdown is a document as one string: its blocks in order, separated by blank

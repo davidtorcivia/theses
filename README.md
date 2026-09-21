@@ -2,6 +2,8 @@
 
 A workspace per proposition: a board on top, shared markdown documents underneath, links and files beside them, several people editing live, and agents as first-class authors through a REST API and MCP.
 
+The shared **Show** workspace at `/show` holds the overall kanban, notes and file repository. It is pinned above the proposition list and available to every account, with editing controlled by each account's role. Type `@` in notes or card text to pick a person or proposition. **+ Proposition** adds a linked card whose title and status update with the proposition; moving that card tracks show work without changing the proposition's production status.
+
 ## Status
 
 Pre-alpha. Under active development; parts of this document and the docs it links describe what is being built.

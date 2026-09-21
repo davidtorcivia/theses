@@ -18,6 +18,7 @@ import (
 // about membership, about an archived proposition and about who may delete are
 // the ones in internal/board and are not written twice.
 func (a *API) boardRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/show", a.scoped(auth.ScopeRead, a.getShow))
 	mux.HandleFunc("GET /api/v1/propositions", a.scoped(auth.ScopeRead, a.listPropositions))
 	mux.HandleFunc("POST /api/v1/propositions", a.scoped(auth.ScopeWrite, a.createProposition))
 	mux.HandleFunc("GET /api/v1/propositions/{id}", a.scoped(auth.ScopeRead, a.getProposition))
@@ -117,6 +118,15 @@ func (a *API) decodeUpTo(w http.ResponseWriter, r *http.Request, most int64, int
 }
 
 // Propositions.
+
+func (a *API) getShow(w http.ResponseWriter, r *http.Request, p Principal) {
+	show, err := a.Show(r.Context(), p)
+	if err != nil {
+		a.refuse(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"proposition": show})
+}
 
 func (a *API) listPropositions(w http.ResponseWriter, r *http.Request, p Principal) {
 	out, err := a.Propositions(r.Context(), p)
@@ -645,6 +655,18 @@ func (a *API) Proposition(ctx context.Context, p Principal, id int64) (board.Pro
 		return board.Proposition{}, err
 	}
 	return board.GetProposition(ctx, a.db, id)
+}
+
+// Show is the permanent workspace this token may read.
+func (a *API) Show(ctx context.Context, p Principal) (board.Proposition, error) {
+	show, err := board.GetShow(ctx, a.db)
+	if err != nil {
+		return board.Proposition{}, err
+	}
+	if err := a.Readable(ctx, p, show.ID); err != nil {
+		return board.Proposition{}, err
+	}
+	return show, nil
 }
 
 // memberships is every proposition this token's owner is a member of.

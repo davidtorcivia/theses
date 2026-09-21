@@ -33,6 +33,11 @@ func Board(s *Server, b *board.Service, svc *files.Service, backupNow func(conte
 		Annotations: reads("List the propositions"),
 	}, t.listPropositions)
 	sdk.AddTool(s.srv, &sdk.Tool{
+		Name:        "get_show",
+		Description: "Reads the permanent Show workspace shared with every user.",
+		Annotations: reads("Read the Show workspace"),
+	}, t.getShow)
+	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "get_proposition",
 		Description: "Reads one proposition: its title, statement, blurb, status, episode, target date and members.",
 		Annotations: reads("Read a proposition"),
@@ -182,6 +187,18 @@ func (t *boardTools) wrote(req *sdk.CallToolRequest, tool string, id int64, p ap
 
 type propositionsOut struct {
 	Propositions []board.Proposition `json:"propositions"`
+}
+
+func (t *boardTools) getShow(ctx context.Context, req *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, propositionOut, error) {
+	p, err := principal(ctx, auth.ScopeRead)
+	if err != nil {
+		return nil, propositionOut{}, err
+	}
+	show, err := t.api.Show(ctx, p)
+	if err != nil {
+		return nil, propositionOut{}, t.refusal("read the Show workspace", err)
+	}
+	return nil, propositionOut{Proposition: show}, nil
 }
 
 func (t *boardTools) listPropositions(ctx context.Context, req *sdk.CallToolRequest, _ noArgs) (*sdk.CallToolResult, propositionsOut, error) {
@@ -541,7 +558,11 @@ func (t *boardTools) propositionText(ctx context.Context, p api.Principal, id in
 		return "", "", t.failed("read the board", err)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%d. %s\nStatus: %s\n", one.Number, one.Title, one.Status)
+	if one.Kind == "show" {
+		fmt.Fprintf(&b, "%s\nShared Show workspace\n", one.Title)
+	} else {
+		fmt.Fprintf(&b, "%d. %s\nStatus: %s\n", one.Number, one.Title, one.Status)
+	}
 	if one.Episode != nil {
 		fmt.Fprintf(&b, "Episode: %s\n", *one.Episode)
 	}

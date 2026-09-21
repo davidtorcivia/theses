@@ -34,7 +34,7 @@ export function start(renderRest) {
     // one. That is a page with nothing on it until the connection is back,
     // which is bad; waiting for the read before opening the socket is a page
     // that never finds out the connection is back at all, which is worse.
-    restore(state.open).catch(() => false).then(drawQueued).then(emit);
+    restore(state.open, location.pathname === '/show' || location.pathname === '/').catch(() => false).then(drawQueued).then(emit);
   }
 
   const render = () => {
@@ -75,6 +75,7 @@ export function start(renderRest) {
   syncRail();
 
   document.addEventListener('keydown', (e) => {
+    if (e.isComposing || $('dialog[open]')) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       openPalette();

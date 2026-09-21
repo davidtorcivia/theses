@@ -785,19 +785,37 @@ func (s *Service) touch(document int64, a core.Actor) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.revisionPaused {
+		return
+	}
 	if t, ok := s.pending[document]; ok {
 		t.edited, t.actor = true, a
 		return
 	}
 	t := &timer{actor: a, edited: true}
-	t.stop = time.AfterFunc(s.Every, func() { s.tick(document) })
+	t.stop = time.AfterFunc(s.Every, func() {
+		s.mu.Lock()
+		if s.pending[document] != t {
+			s.mu.Unlock()
+			return
+		}
+		s.revisionActive++
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			s.revisionActive--
+			s.revisionCond.Broadcast()
+			s.mu.Unlock()
+		}()
+		s.tick(document, t)
+	})
 	s.pending[document] = t
 }
 
-func (s *Service) tick(document int64) {
+func (s *Service) tick(document int64, expected *timer) {
 	s.mu.Lock()
 	t, ok := s.pending[document]
-	if !ok {
+	if !ok || t != expected {
 		s.mu.Unlock()
 		return
 	}
@@ -862,10 +880,25 @@ func (s *Service) Editing() int {
 
 // Stop cancels every armed timer, for a process on its way out.
 func (s *Service) Stop() {
+	s.pauseRevisionTimers()
+	s.resumeRevisionTimers()
+}
+
+func (s *Service) pauseRevisionTimers() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.revisionPaused = true
 	for id, t := range s.pending {
 		t.stop.Stop()
 		delete(s.pending, id)
 	}
+	for s.revisionActive > 0 {
+		s.revisionCond.Wait()
+	}
+}
+
+func (s *Service) resumeRevisionTimers() {
+	s.mu.Lock()
+	s.revisionPaused = false
+	s.mu.Unlock()
 }

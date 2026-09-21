@@ -4,6 +4,25 @@ A REST API under `/api/v1` and an MCP server at `/mcp`. Both take the same
 bearer tokens and the same scopes, and both write to the same activity log as
 the browser does.
 
+## Show workspace and proposition references
+
+`GET /api/v1/show` and MCP `get_show` return the permanent shared workspace.
+It has `kind: "show"` and number 0; ordinary propositions have
+`kind: "proposition"`. Existing board, document and file endpoints accept its
+ID. All accounts belong to Show, while their roles still control writes.
+Show cannot be archived, deleted, scheduled or published, and its membership
+cannot be edited. Its title, description, columns and contents can be edited.
+
+Store `@[p:42]` in notes or card text to reference proposition ID 42. A card
+whose title is that token acts as a linked proposition card. The browser
+resolves its current title and status only when the reader has access to the
+target. Missing or inaccessible targets display "Unavailable proposition".
+Server-rendered markdown and plain text use the generic label "Proposition
+42" and never copy private target metadata. `[label](/p/42)` and
+`[Show](/show)` are also supported. Card movement does not change the target's
+status. The Show UI uses Board, Notes and Files; existing link endpoints also
+remain available to API clients.
+
 ## Tokens and scopes
 
 A token is created in the app and shown once. It starts with `thes_` and is sent

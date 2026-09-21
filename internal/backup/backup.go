@@ -93,6 +93,9 @@ type Backup struct {
 	log     *slog.Logger
 	version string
 	primary Bucket
+	// RestoreFiles pauses the markdown watcher around the database and docs
+	// tree swap, then reconciles the installed tree before writes resume.
+	RestoreFiles func(context.Context, func() error) error
 
 	// now is time.Now outside the tests.
 	now func() time.Time

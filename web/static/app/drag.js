@@ -100,7 +100,7 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
   node.addEventListener('pointerdown', (e) => {
     // A button on the row answers for itself, a second mouse button is not a
     // drag, and a row is already in somebody's hand.
-    if (active || e.button !== 0 || e.target.closest('button')) return;
+    if (active || e.button !== 0 || e.target.closest('button, a')) return;
     if (handle) {
       if (!e.target.closest(handle)) return;
       // A press on a handle is never a request to open what is under it,

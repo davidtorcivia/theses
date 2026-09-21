@@ -26,6 +26,8 @@ var (
 	// ErrArchived is an edit to a proposition that has been put away. Restoring
 	// it and deleting it are the two things still allowed.
 	ErrArchived = errors.New("that proposition is archived; restore it first")
+	// ErrShow is a mutation of the permanent shared workspace or its membership.
+	ErrShow = errors.New("the Show workspace is permanent and shared with everyone")
 	// ErrTooLong is a field with more in it than the field is for.
 	ErrTooLong = errors.New("that is longer than this field takes")
 	// ErrQuestion is a card filed under something that is not one of the four.
@@ -80,17 +82,24 @@ func Fits(value string, most int) error {
 // action alone a card delete, a column delete and a checklist item's removal
 // all let themselves through, and archiving refused itself.
 func archived(ctx context.Context, tx *sql.Tx, proposition int64, entity, action string) error {
-	if proposition == 0 || (entity == "proposition" && (action == "restore" || action == "delete")) {
+	if proposition == 0 {
 		return nil
 	}
 	var at sql.NullInt64
+	var kind string
 	err := tx.QueryRowContext(ctx,
-		`SELECT archived_at FROM propositions WHERE id = ?`, proposition).Scan(&at)
+		`SELECT archived_at, kind FROM propositions WHERE id = ?`, proposition).Scan(&at, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.ErrNotFound
 	}
 	if err != nil {
 		return err
+	}
+	if kind == "show" && ((entity == "proposition" && action != "edit" && action != "undo") || entity == "member") {
+		return ErrShow
+	}
+	if entity == "proposition" && (action == "restore" || action == "delete") {
+		return nil
 	}
 	if at.Valid {
 		return ErrArchived
@@ -207,20 +216,20 @@ func (s *Service) createProposition(ctx context.Context, a core.Actor, title str
 	return s.do(ctx, a, 0, auth.CanEdit, "proposition", "create", func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		var number int64
 		if err := tx.QueryRowContext(ctx,
-			`SELECT coalesce(max(number), 0) + 1 FROM propositions`).Scan(&number); err != nil {
+			`SELECT coalesce(max(number), 0) + 1 FROM propositions WHERE kind = 'proposition'`).Scan(&number); err != nil {
 			return core.Change{}, err
 		}
 		position, err := last(ctx, tx, "propositions", "", 0)
 		if err != nil {
 			return core.Change{}, err
 		}
-		res, err := tx.ExecContext(ctx, `INSERT INTO propositions
-			(number, title, status, position, created_at) VALUES (?, ?, ?, ?, unixepoch())`,
-			number, title, defaults.Status, position)
+		id, err := nextPropositionID(ctx, tx)
 		if err != nil {
 			return core.Change{}, err
 		}
-		id, err := res.LastInsertId()
+		_, err = tx.ExecContext(ctx, `INSERT INTO propositions
+			(id, number, title, status, position, created_at) VALUES (?, ?, ?, ?, ?, unixepoch())`,
+			id, number, title, defaults.Status, position)
 		if err != nil {
 			return core.Change{}, err
 		}

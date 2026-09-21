@@ -18,7 +18,10 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 
 	"github.com/davidtorcivia/theses/internal/blob"
+	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/config"
+	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -177,9 +180,78 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 		t.Errorf("the date read out of the key is %s", list[0].When)
 	}
 
+	commands := core.New(f.db, core.NewBus())
+	boards := board.New(commands, func() board.Defaults { return board.Defaults{} })
+	mirror := docs.New(boards.Service, filepath.Join(f.dir, docsEntry), func() string { return "" },
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mirror.Debounce = 20 * time.Millisecond
+	mirror.Every = 0
+	f.b.RestoreFiles = mirror.WithMirrorPaused
+	watchCtx, stopWatch := context.WithCancel(ctx)
+	watchDone := make(chan struct{})
+	go func() { defer close(watchDone); mirror.Run(watchCtx) }()
+	defer func() {
+		stopWatch()
+		select {
+		case <-watchDone:
+		case <-time.After(5 * time.Second):
+			t.Error("timed out stopping the document mirror")
+		}
+	}()
+	// Wait for Run to own the current tree before Restore asks it to release it.
+	waitBackup(t, "the document mirror to start", func() bool {
+		return mirror.WithMirrorPaused(ctx, func() error { return nil }) == nil
+	})
+
 	if err := f.b.Restore(ctx, m.Name, 0); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
+
+	show, err := board.GetShow(ctx, f.db)
+	if err != nil || show.Kind != "show" || len(show.Members) == 0 {
+		t.Fatalf("restore initializes the shared Show workspace: %+v, %v", show, err)
+	}
+	var showDocument int64
+	if err := f.db.QueryRowContext(ctx, `SELECT id FROM documents
+		WHERE proposition_id = ? AND slug = 'show-overview'`, show.ID).Scan(&showDocument); err != nil {
+		t.Fatal(err)
+	}
+	showPath := filepath.Join(f.dir, docsEntry, "0-show", "show-overview.md")
+	if _, err := os.Stat(showPath); err != nil {
+		t.Fatalf("the Show document seeded during restore has no mirror: %v", err)
+	}
+
+	content, err := os.ReadFile(showPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := showPath + ".saving"
+	if err := os.WriteFile(tmp, append(content, []byte("\nTyped after restore.\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, showPath); err != nil {
+		t.Fatal(err)
+	}
+	waitBackup(t, "the restored tree's hand edit", func() bool {
+		blocks, err := docs.Blocks(ctx, f.db, showDocument)
+		return err == nil && len(blocks) == 1 && blocks[0].Text == "Typed after restore."
+	})
+	blocks, err := docs.Blocks(ctx, f.db, showDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ownerID int64
+	if err := f.db.QueryRowContext(ctx, `SELECT id FROM users WHERE role = 'owner' ORDER BY id LIMIT 1`).Scan(&ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mirror.SetBlock(ctx, core.Actor{Kind: core.KindUser, ID: ownerID, Name: "Ada Lovelace"},
+		blocks[0].ID, blocks[0].Version, "Written after restore.", false); err != nil {
+		t.Fatal(err)
+	}
+	waitBackup(t, "the restored tree's database edit", func() bool {
+		body, err := os.ReadFile(showPath)
+		return err == nil && strings.Contains(string(body), "Written after restore.")
+	})
 
 	if got := f.workspaceName(); got != `"before"` {
 		t.Errorf("the database was not put back: workspace.name is %s", got)
@@ -214,6 +286,18 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	if n != 1 {
 		t.Errorf("the restore left %d activity rows", n)
 	}
+}
+
+func waitBackup(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 func TestManifestSaysWhatIsInside(t *testing.T) {

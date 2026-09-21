@@ -125,7 +125,7 @@ func TestBoardToolsAreListedWithTheirHints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reading := map[string]bool{"list_propositions": true, "get_proposition": true,
+	reading := map[string]bool{"list_propositions": true, "get_show": true, "get_proposition": true,
 		"list_cards": true, "activity": true}
 	want := map[string]bool{"create_proposition": true, "set_status": true,
 		"create_card": true, "move_card": true, "assign_card": true,
@@ -163,7 +163,16 @@ func TestBoardToolsAreListedWithTheirHints(t *testing.T) {
 func TestTheBoardToolsWriteAsThePersonAndTheClient(t *testing.T) {
 	h := newHarness(t)
 	f := h.withBoard(t)
+	show, err := board.EnsureShow(context.Background(), h.db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cs := h.connect(auth.ScopeRead, auth.ScopeWrite)
+	var showOut propositionOut
+	h.call(cs, "get_show", map[string]any{}, &showOut)
+	if showOut.Proposition.ID != show.ID || showOut.Proposition.Kind != "show" {
+		t.Fatalf("show = %+v", showOut.Proposition)
+	}
 
 	var made writeOut
 	h.call(cs, "create_proposition", map[string]any{"title": "Deep Water"}, &made)
@@ -174,7 +183,7 @@ func TestTheBoardToolsWriteAsThePersonAndTheClient(t *testing.T) {
 
 	var list propositionsOut
 	h.call(cs, "list_propositions", map[string]any{}, &list)
-	if len(list.Propositions) != 2 {
+	if len(list.Propositions) != 3 {
 		t.Fatalf("propositions = %+v", list.Propositions)
 	}
 	var one propositionOut
@@ -421,6 +430,18 @@ func TestPropositionResources(t *testing.T) {
 	who := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
 	if _, err := h.srv.api.Docs.CreateDocument(ctx, who, f.prop, "Research"); err != nil {
 		t.Fatal(err)
+	}
+
+	show, err := board.EnsureShow(ctx, h.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := cs.ReadResource(ctx, &sdk.ReadResourceParams{URI: "theses://proposition/" + strconv.FormatInt(show.ID, 10)})
+	if err != nil || len(shared.Contents) != 1 {
+		t.Fatalf("Show resource: %v, %v", shared, err)
+	}
+	if text := shared.Contents[0].Text; !strings.Contains(text, "Shared Show workspace") || strings.Contains(text, "Status:") {
+		t.Fatalf("Show resource has episode metadata: %s", text)
 	}
 
 	id := strconv.FormatInt(f.prop, 10)

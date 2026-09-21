@@ -798,7 +798,7 @@ func TestRenameAndDeleteMoveTheFile(t *testing.T) {
 	}
 }
 
-func TestDeletingAPropositionRemovesItsMirrorsBeforeTheIDIsReused(t *testing.T) {
+func TestDeletingAPropositionRemovesItsMirrorsBeforeADocumentIDIsReused(t *testing.T) {
 	ctx := context.Background()
 	f, path := mirrorFixture(t)
 	oldDocument := f.doc
@@ -823,8 +823,8 @@ func TestDeletingAPropositionRemovesItsMirrorsBeforeTheIDIsReused(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.EntityID != f.prop {
-		t.Fatalf("replacement proposition id = %d, want reused %d", replacement.EntityID, f.prop)
+	if replacement.EntityID == f.prop {
+		t.Fatalf("replacement reused proposition id %d", f.prop)
 	}
 	document, err := f.CreateDocument(ctx, f.who["owner"], replacement.EntityID, "Research")
 	if err != nil {
@@ -836,7 +836,14 @@ func TestDeletingAPropositionRemovesItsMirrorsBeforeTheIDIsReused(t *testing.T) 
 	if err := f.Mirror(ctx, document.EntityID, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); err != nil {
+	_, replacementPath, err := f.paths(ctx, document.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacementPath != path {
+		t.Fatalf("replacement path = %q, want reused number/title path %q", replacementPath, path)
+	}
+	if _, err := os.Stat(replacementPath); err != nil {
 		t.Fatalf("the replacement proposition was not mirrored: %v", err)
 	}
 }
@@ -893,7 +900,7 @@ func TestDroppedEventReconciliationPreservesHandEditsAndRejectsAReusedDocumentID
 	}
 }
 
-func TestDroppedDeleteDoesNotAttachAHandEditToAnIdenticalReplacement(t *testing.T) {
+func TestDroppedDeleteDoesNotAttachAHandEditToAnIdenticalPathReplacement(t *testing.T) {
 	ctx := context.Background()
 	f, path := mirrorFixture(t)
 	f.mu.Lock()
@@ -918,9 +925,9 @@ func TestDroppedDeleteDoesNotAttachAHandEditToAnIdenticalReplacement(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.EntityID != f.prop || document.EntityID != f.doc {
-		t.Fatalf("replacement ids = proposition %d document %d, want reused %d and %d",
-			replacement.EntityID, document.EntityID, f.prop, f.doc)
+	if replacement.EntityID == f.prop || document.EntityID != f.doc {
+		t.Fatalf("replacement ids = proposition %d document %d, want a new proposition and reused document %d",
+			replacement.EntityID, document.EntityID, f.doc)
 	}
 	_, replacementPath, err := f.paths(ctx, document.EntityID)
 	if err != nil {
@@ -941,14 +948,14 @@ func TestDroppedDeleteDoesNotAttachAHandEditToAnIdenticalReplacement(t *testing.
 	_, tracked := f.written[path]
 	f.mu.Unlock()
 	if tracked {
-		t.Fatal("old hand edit stayed attached to the replacement document generation")
+		t.Fatal("old hand edit stayed attached to the reused document id")
 	}
 	if err := f.Import(ctx, path); err != nil {
 		t.Fatal(err)
 	}
 	for _, block := range f.blocks(t) {
 		if strings.Contains(block.Text, "Old hand edit") {
-			t.Fatal("old hand edit was imported into the identical replacement")
+			t.Fatal("old hand edit was imported into the replacement document")
 		}
 	}
 }
@@ -1444,6 +1451,166 @@ func TestRunImportsEveryFileItFindsAtStart(t *testing.T) {
 	})
 	cancel()
 	<-done
+}
+
+func TestWithMirrorPausedRebuildsTheWatcherOnTheInstalledTree(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := setup(t, t.TempDir())
+	f.Stop()
+	f.Debounce = 20 * time.Millisecond
+	f.Every = time.Hour
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("timed out stopping the document mirror")
+		}
+	}()
+
+	_, mirrorPath, err := f.paths(ctx, f.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the original mirror", func() bool {
+		_, err := os.Stat(mirrorPath)
+		return err == nil
+	})
+
+	blocks := f.blocks(t)
+	if _, err := f.SetBlock(ctx, f.who["editor"], blocks[0].ID, blocks[0].Version,
+		"# Before the swap", false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the revision timer", func() bool { return f.Editing() == 1 })
+	waitFor(t, "the pre-swap write", func() bool {
+		body, err := os.ReadFile(mirrorPath)
+		return err == nil && strings.Contains(string(body), "# Before the swap")
+	})
+
+	aside := f.root + ".aside"
+	swapErr := errors.New("swap stopped after installing the tree")
+	if err := f.WithMirrorPaused(ctx, func() error {
+		if err := os.Rename(f.root, aside); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(f.root, 0o755); err != nil {
+			return err
+		}
+		return swapErr
+	}); !errors.Is(err, swapErr) {
+		t.Fatalf("failed swap callback = %v", err)
+	}
+	if f.Editing() != 0 {
+		t.Fatal("a periodic revision timer from the replaced database survived the swap")
+	}
+	if body, err := os.ReadFile(mirrorPath); err != nil || !strings.Contains(string(body), "# Before the swap") {
+		t.Fatalf("the installed tree was not caught up: %q, %v", body, err)
+	}
+
+	terminal := strings.Replace(read(t, mirrorPath), "## Who pays?", "## Typed after restore", 1)
+	save(t, mirrorPath, terminal)
+	waitFor(t, "a hand edit in the installed tree", func() bool {
+		for _, block := range f.blocks(t) {
+			if block.Text == "## Typed after restore" {
+				return true
+			}
+		}
+		return false
+	})
+
+	for _, block := range f.blocks(t) {
+		if block.Text != "## Typed after restore" {
+			continue
+		}
+		if _, err := f.SetBlock(ctx, f.who["editor"], block.ID, block.Version,
+			"## Written after restore", false); err != nil {
+			t.Fatal(err)
+		}
+		break
+	}
+	waitFor(t, "a database edit in the installed tree", func() bool {
+		body, err := os.ReadFile(mirrorPath)
+		return err == nil && strings.Contains(string(body), "## Written after restore")
+	})
+}
+
+func TestWithMirrorPausedHonoursLifecycleAndDisabledMirrors(t *testing.T) {
+	direct := setup(t, "")
+	called := false
+	if err := direct.WithMirrorPaused(context.Background(), func() error {
+		called = true
+		return nil
+	}); err != nil || !called {
+		t.Fatalf("disabled mirror callback = %v, called %v", err, called)
+	}
+
+	idle := setup(t, t.TempDir())
+	called = false
+	if err := idle.WithMirrorPaused(context.Background(), func() error { called = true; return nil }); !errors.Is(err, errMirrorStopped) || called {
+		t.Fatalf("idle mirror callback = %v, called %v", err, called)
+	}
+
+	runCtx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); idle.Run(runCtx) }()
+	waitSignal(t, "the document mirror to start", idle.mirrorStarted)
+	if err := idle.WithMirrorPaused(context.Background(), func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	acceptedCtx, cancelAccepted := context.WithCancel(context.Background())
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	released := false
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
+	result := make(chan error, 1)
+	go func() {
+		result <- idle.WithMirrorPaused(acceptedCtx, func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	waitSignal(t, "the accepted restore callback", entered)
+	cancelAccepted()
+	select {
+	case err := <-result:
+		t.Fatalf("accepted callback returned before it finished: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(release)
+	released = true
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("accepted callback = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the accepted restore callback")
+	}
+
+	stop()
+	waitSignal(t, "the document mirror to stop", done)
+	if err := idle.WithMirrorPaused(context.Background(), func() error { return nil }); !errors.Is(err, errMirrorStopped) {
+		t.Fatalf("stopped mirror callback = %v", err)
+	}
+}
+
+func waitSignal(t *testing.T, what string, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
 }
 
 // Paragraphs the file adds go in in the order the file has them, whether or not

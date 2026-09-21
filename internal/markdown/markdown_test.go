@@ -50,6 +50,26 @@ func TestRenderBlock(t *testing.T) {
 			want: "<p>(<b class=\"mention\" data-handle=\"ada-two\">@ada-two</b>)</p>\n",
 		},
 		{
+			name: "proposition reference",
+			in:   "Compare @[p:42] with the transcript.",
+			want: "<p>Compare <a class=\"proposition-ref\" data-proposition=\"42\" href=\"/p/42\">Proposition 42</a> with the transcript.</p>\n",
+		},
+		{
+			name: "proposition reference inside a word",
+			in:   "draft@[p:42] and draft_@[p:43]",
+			want: "<p>draft@[p:42] and draft_@[p:43]</p>\n",
+		},
+		{
+			name: "proposition reference inside code",
+			in:   "`@[p:42]`\n\n```\n@[p:43]\n```",
+			want: "<p><code>@[p:42]</code></p>\n<pre><code>@[p:43]\n</code></pre>\n",
+		},
+		{
+			name: "proposition reference inside a link label",
+			in:   "[compare **@[p:42]**](https://example.com)",
+			want: "<p><a href=\"https://example.com\" rel=\"noopener\">compare <strong>Proposition 42</strong></a></p>\n",
+		},
+		{
 			name: "address is not a mention",
 			in:   "Write to ada@example.com.",
 			want: "<p>Write to <a href=\"mailto:ada@example.com\" rel=\"noopener\">ada@example.com</a>.</p>\n",
@@ -99,11 +119,9 @@ func TestRenderBlock(t *testing.T) {
 			in:   "[the archive](ftp://example.com/x)",
 			want: "<p>[the archive](ftp://example.com/x)</p>\n",
 		},
-		{
-			name: "a relative link is text",
-			in:   "[the other page](/p/1)",
-			want: "<p>[the other page](/p/1)</p>\n",
-		},
+		{name: "a proposition link", in: "[the other page](/p/1)", want: "<p><a href=\"/p/1\">the other page</a></p>\n"},
+		{name: "the show link", in: "[the show](/show)", want: "<p><a href=\"/show\">the show</a></p>\n"},
+		{name: "another relative link is text", in: "[settings](/settings)", want: "<p>[settings](/settings)</p>\n"},
 		{
 			name: "heading and list",
 			in:   "# Findings\n\n- one\n- two",
@@ -176,6 +194,16 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 			want: "<p><b class=\"mention\" data-handle=\"ada\">@ada</b>&quot; onclick=&quot;steal()</p>\n",
 		},
 		{
+			name: "invalid proposition references stay text",
+			in:   `@[p:0] @[p:-1] @[p:1\" onclick=\"steal()] @[p:999999999999999999999999]`,
+			want: "<p>@[p:0] @[p:-1] @[p:1&quot; onclick=&quot;steal()] @[p:999999999999999999999999]</p>\n",
+		},
+		{
+			name: "lookalike internal links stay text",
+			in:   `[one](/p/0) [two](/p/-1) [three](/p/1?next=javascript:alert(1))`,
+			want: "<p>[one](/p/0) [two](/p/-1) [three](/p/1?next=javascript:alert(1))</p>\n",
+		},
+		{
 			name: "markup inside a note",
 			in:   `[AL: <script>x</script> & "q"]`,
 			want: "<p><mark class=\"note\" data-by=\"AL\">AL: &lt;script&gt;x&lt;/script&gt; &amp; &quot;q&quot;</mark></p>\n",
@@ -216,7 +244,7 @@ func TestRenderBlockEscapesHostileInput(t *testing.T) {
 // back reference point at inside the same page.
 var (
 	hrefs       = regexp.MustCompile(`href="([^"]*)"`)
-	allowedHref = regexp.MustCompile(`^(?:(?i:https?)://|(?i:mailto):|#)`)
+	allowedHref = regexp.MustCompile(`^(?:(?i:https?)://|(?i:mailto):|#|/show$|/p/[1-9][0-9]*$)`)
 )
 
 func TestRenderDocument(t *testing.T) {
@@ -240,6 +268,8 @@ func TestPlain(t *testing.T) {
 		{"link text without the target", "See [the paper](https://example.com/x).", "See the paper."},
 		{"autolink keeps the url", "See https://example.com/x", "See https://example.com/x"},
 		{"mention", "Ask @ada about it.", "Ask @ada about it."},
+		{"proposition reference", "Compare @[p:42] now.", "Compare Proposition 42 now."},
+		{"proposition reference in code stays literal", "`@[p:42]`", "@[p:42]"},
 		{"notes", "[AL: check this] and [check the date]", "AL: check this and check the date"},
 		{"footnote marker dropped", "A claim.[^1]\n\n[^1]: The source.", "A claim.\n\nThe source."},
 		{"code span", "Run `go test ./...` first.", "Run go test ./... first."},
@@ -270,6 +300,8 @@ func TestMentions(t *testing.T) {
 		{"`@ada`", nil},
 		{"**@ada**", []string{"ada"}},
 		{"(@ada)", []string{"ada"}},
+		{"@[p:42]", nil},
+		{"@[p:42] and @ada", []string{"ada"}},
 	}
 	for _, tt := range tests {
 		got := Mentions(tt.source)

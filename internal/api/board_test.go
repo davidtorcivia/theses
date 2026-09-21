@@ -60,6 +60,25 @@ func newBoardHarness(t *testing.T) *boardHarness {
 		card: card.EntityID, stranger: stranger}
 }
 
+func TestShowIsAvailableAtItsStableRESTEndpoint(t *testing.T) {
+	h := newHarness(t)
+	want, err := board.EnsureShow(context.Background(), h.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := h.do("GET", "/api/v1/show", h.token(auth.ScopeRead), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET show gave %d: %s", w.Code, w.Body)
+	}
+	var got struct {
+		Proposition board.Proposition `json:"proposition"`
+	}
+	into(t, w, &got)
+	if got.Proposition.ID != want.ID || got.Proposition.Kind != "show" || got.Proposition.Number != 0 {
+		t.Fatalf("show = %+v", got.Proposition)
+	}
+}
+
 // tokenFor is a token belonging to somebody other than the harness owner.
 func (h *boardHarness) tokenFor(user *store.User, scopes ...string) string {
 	h.Helper()

@@ -341,6 +341,10 @@ export function apply(ev) {
       const row = now || was;
       const p = proposition(row.proposition_id);
       if (!p) break;
+      if (!now && row.user_id === state.me && user(state.me).role !== 'owner') {
+        state.props = state.props.filter((item) => item.id !== row.proposition_id);
+        break;
+      }
       const members = new Set(p.members || []);
       if (now) members.add(row.user_id); else members.delete(row.user_id);
       p.members = [...members].sort((a, b) => a - b);
@@ -912,7 +916,8 @@ async function askTwice(read) {
 // restore boots this page from what the last visit left behind. It answers
 // false when nothing was cached for the proposition asked for, which is what
 // the page says out loud rather than drawing an empty board.
-export async function restore(open) {
+export async function restore(open, show = false) {
+  if (show) { open = await offline.showID(); state.open = open; }
   const row = await askTwice(() => offline.cached(open));
   if (!row || row.v !== VERSION) return false;
   boot(row.payload);

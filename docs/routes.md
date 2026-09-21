@@ -5,7 +5,9 @@ What the browser sees. The machine surfaces, `/api/v1` and `/mcp`, are in
 
 | Route | What it is |
 | --- | --- |
-| `GET /` | The app shell. |
+| `GET /` | The app shell, opening Show. |
+| `GET /show` | The shared Show board, notes and files. |
+| `GET POST /show/settings` | Show name, description and board columns. |
 | `GET /p/{id}` | Open a proposition: the shell with that one loaded. |
 | `GET /p/{id}/settings` | The proposition's own settings: its members and its status. |
 | `POST /p/{id}/settings` | Save them. |
