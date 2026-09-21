@@ -101,6 +101,20 @@ try {
   await waitAsync(async ({id,next}) => { const html=await (await fetch(location.pathname)).text();const document=new DOMParser().parseFromString(html,'text/html');const payload=JSON.parse(document.querySelector('#payload').textContent);return payload.board.cards.some(c=>c.id===id&&String(c.column_id)===next); }, {id:movedID,next});
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByText('Production calendar', { exact: true }).click(); await page.getByRole('table').waitFor();
+  await page.getByLabel('Production month',{exact:true}).fill('2026-11');
+  await page.getByRole('heading',{name:'November 2026',exact:true}).waitFor();
+  assert.equal(await page.locator('.production-calendar thead th').count(),7);
+  await page.locator('.calendar-scroll').getByText('Thanksgiving',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Next month',exact:true}).click();
+  await page.getByRole('heading',{name:'December 2026',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Previous month',exact:true}).click();
+  await page.getByLabel('U.S. holidays & observances',{exact:true}).uncheck();
+  assert.equal(await page.locator('.calendar-holiday').count(),0);
+  await page.getByLabel('U.S. holidays & observances',{exact:true}).check();
+  await page.getByLabel('Production month',{exact:true}).fill('2028-02');
+  assert.equal(await page.locator('.calendar-scroll td time').count(),29);
+  await page.getByLabel('Production month',{exact:true}).fill('2026-09');
+
   await visit('/p/' + fixture.proposition + '#activity');
   await page.waitForFunction(() => document.querySelector('#activitytab')?.getAttribute('aria-expanded') === 'true');
   await page.locator('#activitytab').click();
@@ -135,6 +149,7 @@ try {
   await page.getByRole('button',{name:'Recording view',exact:true}).click();
   await page.locator('.recording-pin summary').click();
   await page.getByLabel('Recording cues',{exact:true}).fill('Pause before the conclusion.');
+  if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.recording-view').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/recording-view.png'});
   await page.getByRole('button',{name:'Pin saved script',exact:true}).click();
   await page.locator('.recording-cues').filter({hasText:'Pause before the conclusion.'}).waitFor();
   await page.getByRole('button',{name:'Start timer',exact:true}).click();
@@ -146,6 +161,7 @@ try {
   await page.locator('.review-item strong').filter({hasText:'approved'}).waitFor();
   await page.getByRole('button',{name:'Request review of current version',exact:true}).click();
   await page.getByLabel('Review feedback',{exact:true}).nth(1).waitFor();
+  if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.workflow-dialog').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/review-dialog.png'});
   await page.getByLabel('Review feedback',{exact:true}).nth(0).fill('Keep this unfinished feedback.');
   await page.getByRole('button',{name:'Approve version',exact:true}).nth(1).click();
   await page.waitForFunction(()=>document.querySelector('[aria-label="Review feedback"]')?.value==='Keep this unfinished feedback.');
@@ -153,13 +169,32 @@ try {
   await page.locator('.review-item').getByText('Keep this unfinished feedback.',{exact:true}).waitFor();
   await page.locator('dialog header').getByRole('button',{name:'Close',exact:true}).click();
   await page.getByText('Research & references',{exact:true}).click();
+  const checkResearchLayout=async()=>{
+    const layout=await page.locator('.research-toolbar').evaluate(node=>{
+      const rects=[...node.children].map(child=>{const r=child.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,height:r.height};});
+      return {display:getComputedStyle(node).display,rects,overflow:document.documentElement.scrollWidth>innerWidth};
+    });
+    assert.ok(['flex','grid'].includes(layout.display));assert.equal(layout.overflow,false);
+    for(const [i,a] of layout.rects.entries()){
+      assert.ok(a.height>=38);
+      for(const b of layout.rects.slice(i+1))assert.ok(a.right+4<=b.x||b.right+4<=a.x||a.bottom+4<=b.y||b.bottom+4<=a.y,'Research actions need a visible gap');
+    }
+  };
+  await page.locator('.research-toolbar').waitFor();await checkResearchLayout();
+
   await page.getByRole('button',{name:'Add evidence',exact:true}).click();
   await page.getByLabel('Reference title',{exact:true}).fill('Energy reference');
+  if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.workflow-dialog').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/evidence-dialog.png'});
   await page.getByLabel('Exact quotation',{exact:true}).fill('A checked source quotation.');
   await page.getByLabel('Page, section, or timestamp',{exact:true}).fill('p. 42');
   await page.getByLabel('Source checked and claim verified',{exact:true}).check();
   await page.getByRole('button',{name:'Save evidence',exact:true}).click();
   await page.locator('.evidence-item strong').filter({hasText:'Energy reference'}).waitFor();
+
+  for(const width of [320,390,768,1440]){
+    await page.setViewportSize({width,height:1000});await checkResearchLayout();
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.research').screenshot({animations:'disabled',style:'#top{visibility:hidden}',path:process.env.THESES_SCREENSHOT_DIR+'/research-'+width+'.png'});
+  }
   const evidenceId=await page.locator('.evidence-item').first().getAttribute('id');
   await visit('/p/'+fixture.proposition+'#'+evidenceId);
   await page.waitForFunction(id=>document.activeElement?.id===id,evidenceId);
@@ -196,6 +231,7 @@ try {
   await page.getByLabel('Speaker label',{exact:true}).fill('Host Ada');
   await page.getByRole('button',{name:'Save passage',exact:true}).click();
   await page.locator('.transcript-segment strong').filter({hasText:'Host Ada'}).waitFor();
+  if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.transcript').screenshot({animations:'disabled',path:process.env.THESES_SCREENSHOT_DIR+'/transcript-controls.png'});
   await page.getByRole('button',{name:'Add as comment',exact:true}).click();
   await page.getByRole('button',{name:'Resolve',exact:true}).click();
   await page.getByRole('button',{name:'Reopen',exact:true}).waitFor();
@@ -242,6 +278,40 @@ try {
   await page.getByRole('button', { name: 'Activity', exact: true }).click(); await page.keyboard.press('Escape');
   const timings = await page.evaluate(() => ({ navigation_ms: performance.getEntriesByType('navigation')[0]?.duration, long_tasks: window.longTasks.length, longest_task_ms: Math.max(0, ...window.longTasks), heap_bytes: performance.memory?.usedJSHeapSize }));
   if(process.env.THESES_SCREENSHOT_DIR){await visit('/show');await page.locator('.production-calendar summary').first().click();await page.locator('.calendar-agenda').waitFor();await page.getByText('My work',{exact:true}).click();await page.screenshot({path:process.env.THESES_SCREENSHOT_DIR+'/show-mobile.png',fullPage:true});await page.setViewportSize({width:1440,height:1000});await page.screenshot({path:process.env.THESES_SCREENSHOT_DIR+'/show-desktop.png',fullPage:true});}
+
+  await visit('/show');await page.locator('.production-calendar summary').first().click();
+  await page.getByLabel('Production month',{exact:true}).fill('2026-11');
+  for(const width of [320,390,768,1440]){
+    await page.setViewportSize({width,height:1000});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Calendar overflow at '+width);
+    await page.getByRole('table').waitFor();
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.production-calendar').screenshot({animations:'disabled',style:'#top{visibility:hidden}',path:process.env.THESES_SCREENSHOT_DIR+'/calendar-'+width+'.png'});
+  }
+  await page.getByRole('link',{name:'Calendar sync',exact:true}).click();
+  await page.getByRole('button',{name:'Create subscription link',exact:true}).click();
+  const calendarURL=await page.locator('#calendar-url').inputValue();
+  await context.grantPermissions(['clipboard-read','clipboard-write']);
+  await page.getByRole('button',{name:'Copy subscription link',exact:true}).click();
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),calendarURL);
+  const calendarPath=new URL(calendarURL).pathname;
+  const subscriber=await browser.newContext();
+  const feed=await subscriber.request.get(fixture.url+calendarPath);
+  assert.equal(feed.status(),200);assert.match(await feed.text(),/BEGIN:VCALENDAR/);
+  for(const width of [320,1440]){
+    await page.setViewportSize({width,height:1000});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Calendar settings overflow at '+width);
+    for(const button of await page.locator('#calendar button').all())assert.ok((await button.boundingBox()).height>=40,'Calendar sync touch target');
+    if(process.env.THESES_SCREENSHOT_DIR)await page.locator('#calendar').screenshot({animations:'disabled',style:'#top{visibility:hidden}',path:process.env.THESES_SCREENSHOT_DIR+'/calendar-sync-'+width+'.png'});
+  }
+  await page.getByRole('button',{name:'Replace subscription link',exact:true}).click();
+  const replacement=new URL(await page.locator('#calendar-url').inputValue()).pathname;
+  assert.notEqual(replacement,calendarPath);
+  assert.equal((await subscriber.request.get(fixture.url+calendarPath)).status(),404);
+  assert.equal((await subscriber.request.get(fixture.url+replacement)).status(),200);
+  await page.getByRole('button',{name:'Revoke subscription',exact:true}).click();
+  assert.equal((await subscriber.request.get(fixture.url+replacement)).status(),404);
+  await page.getByRole('button',{name:'Create subscription link',exact:true}).waitFor();
+  await subscriber.close();
   assert.deepEqual(errors, []);
   console.log('PASS drafts, mentions, links, filters, move controls, outline, production, history, upload retry, notes, private access, offline recovery, worker cache replacement, mobile');
   console.log('Lab sample (not field INP): ' + JSON.stringify({ cards: 500, filter_ms, ...timings }));

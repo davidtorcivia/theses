@@ -116,7 +116,7 @@ func logPath(r *http.Request) string {
 		return r.Pattern
 	}
 	p := r.URL.Path
-	for _, prefix := range []string{"/reset/", "/invite/"} {
+	for _, prefix := range []string{"/reset/", "/invite/", "/calendar/"} {
 		if !strings.HasPrefix(p, prefix) {
 			continue
 		}
@@ -156,7 +156,7 @@ func machinePath(p string) bool {
 // session cookie once signed in, a cookie of its own before that.
 func (s *Server) browserSeed(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if machinePath(r.URL.Path) {
+		if machinePath(r.URL.Path) || strings.HasPrefix(r.URL.Path, "/calendar/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -185,7 +185,7 @@ func seedOf(r *http.Request) string {
 
 // setupGate sends everything to /setup until an owner exists.
 func (s *Server) setupGate(next http.Handler) http.Handler {
-	exempt := []string{"/setup", "/static/", "/healthz", "/readyz"}
+	exempt := []string{"/setup", "/static/", "/healthz", "/readyz", "/calendar/"}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if machinePath(r.URL.Path) || s.hasUsers.Load() {
 			next.ServeHTTP(w, r)

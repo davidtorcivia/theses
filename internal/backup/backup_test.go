@@ -159,12 +159,22 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	f := newFake(t)
 	f.save("workspace.name", "before")
 	f.writeDoc("10-proposition/research.md", "before")
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO calendar_subscriptions(user_id,token_hash) SELECT id,zeroblob(32) FROM users LIMIT 1`); err != nil {
+		t.Fatal(err)
+	}
 
 	m, err := f.b.Run(ctx)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
+	var beforeRestoreSubscriptions int
+	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM calendar_subscriptions`).Scan(&beforeRestoreSubscriptions); err != nil || beforeRestoreSubscriptions != 1 {
+		t.Fatalf("backup subscription fixture: %d, %v", beforeRestoreSubscriptions, err)
+	}
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM calendar_subscriptions`); err != nil {
+		t.Fatal(err)
+	}
 	// Everything the archive holds changes after it was taken.
 	f.save("workspace.name", "after")
 	f.writeDoc("10-proposition/research.md", "after")
@@ -208,6 +218,10 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 
+	var subscriptions int
+	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM calendar_subscriptions`).Scan(&subscriptions); err != nil || subscriptions != 0 {
+		t.Fatalf("restored subscription credentials: %d, %v", subscriptions, err)
+	}
 	show, err := board.GetShow(ctx, f.db)
 	if err != nil || show.Kind != "show" || len(show.Members) == 0 {
 		t.Fatalf("restore initializes the shared Show workspace: %+v, %v", show, err)
