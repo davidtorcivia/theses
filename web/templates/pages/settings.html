@@ -36,6 +36,11 @@
             <label class="f"><span class="l">Release time</span><input name="workspace.release_time" value="{{index .S "workspace.release_time"}}"><small>24 hour, in the workspace time zone.</small></label>
             <label class="f"><span class="l">Time zone</span><input name="workspace.timezone" value="{{index .S "workspace.timezone"}}"><small>An IANA name, for example America/New_York.</small></label>
           </div>
+          <div class="row2">
+            <label class="f"><span class="l">Release rights holder</span><input name="workspace.legal_rights_holder" value="{{index .S "workspace.legal_rights_holder"}}"><small>The legal entity receiving recording rights.</small></label>
+            <label class="f"><span class="l">Participant email subject template</span><input name="workspace.legal_email_subject" value="{{index .S "workspace.legal_email_subject"}}"></label>
+          </div>
+          <label class="f"><span class="l">Participant email body template</span><textarea name="workspace.legal_email_body" rows="6">{{index .S "workspace.legal_email_body"}}</textarea><small>Use {name}, {brand}, {title} and {url}. New releases start with this template.</small></label>
           <button class="save" type="submit">Save</button>
         </div>
       </section>

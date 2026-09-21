@@ -218,3 +218,34 @@ func TestTogetherRollsBackAndPublishesOnlyOnCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestPublicActorOnlySignsReleases(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := New(db, NewBus())
+	_, err := db.ExecContext(ctx, `INSERT INTO propositions(id,number,title,status,position,created_at) VALUES(1,1,'Episode','idea','a',1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Actor{Kind: KindPublic, Name: "Public participant"}
+	cases := []struct {
+		need    string
+		prop    int64
+		change  Change
+		allowed bool
+	}{
+		{SignRelease, 1, Change{Entity: "legal_submission", Action: "sign"}, true},
+		{auth.CanEdit, 1, Change{Entity: "legal_submission", Action: "sign"}, false},
+		{SignRelease, 0, Change{Entity: "legal_submission", Action: "sign"}, false},
+		{SignRelease, 1, Change{Entity: "card", Action: "sign"}, false},
+		{SignRelease, 1, Change{Entity: "legal_submission", Action: "edit"}, false},
+		{SignRelease, 1, Change{Entity: "legal_submission", Action: "sign", Detached: true}, false},
+		{SignRelease, 1, Change{Entity: "legal_submission", Action: "sign", Proposition: 2}, false},
+	}
+	for _, c := range cases {
+		_, err := s.Do(ctx, a, c.prop, c.need, func(context.Context, *sql.Tx) (Change, error) { return c.change, nil })
+		if (err == nil) != c.allowed {
+			t.Fatalf("%+v: %v", c, err)
+		}
+	}
+}

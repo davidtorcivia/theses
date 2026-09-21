@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/davidtorcivia/theses/internal/legal"
 )
 
 // Palette is the eight colors a person can be. The mockup fixed this list, and
@@ -20,6 +22,10 @@ var Palette = []string{"#1100ff", "#d0021b", "#0a8a3a", "#b35c00", "#7b2cbf", "#
 
 // layoutFor says which layout each page is wrapped in.
 var layoutFor = map[string]string{
+	"legal_manage.html":  "legal.html",
+	"legal_public.html":  "legal.html",
+	"legal_receipt.html": "legal.html",
+	"legal_qr.html":      "legal.html",
 	"login.html":         "auth.html",
 	"setup.html":         "auth.html",
 	"enrol.html":         "auth.html",
@@ -134,9 +140,12 @@ func parseTemplates(fsys fs.FS, funcs template.FuncMap) (map[string]*template.Te
 
 func (s *Server) funcs() template.FuncMap {
 	return template.FuncMap{
-		"asset":  s.assets.URL,
-		"join":   strings.Join,
-		"colour": colourClass,
+		"asset":        s.assets.URL,
+		"legalKey":     legal.Token,
+		"governingLaw": legal.GoverningLaw,
+		"addOne":       func(n int) int { return n + 1 },
+		"join":         strings.Join,
+		"colour":       colourClass,
 		"firstName": func(name string) string {
 			first, _, _ := strings.Cut(name, " ")
 			return first

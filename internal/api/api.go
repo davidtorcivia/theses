@@ -17,6 +17,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
 	"github.com/davidtorcivia/theses/internal/files"
+	"github.com/davidtorcivia/theses/internal/legal"
 	"github.com/davidtorcivia/theses/internal/search"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
@@ -24,6 +25,7 @@ import (
 )
 
 type API struct {
+	Legal       *legal.Service
 	Workflow    *workflow.Service
 	Diagnostics func(context.Context) (map[string]any, error)
 	db          *store.DB

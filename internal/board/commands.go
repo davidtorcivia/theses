@@ -22,9 +22,9 @@ var (
 	// ErrNotYours is deleting somebody else's note.
 	ErrNotYours = errors.New("that is not yours to delete")
 	// ErrEmpty is a title or a note with nothing in it.
-	ErrEmpty = errors.New("that needs some text")
-	// ErrArchived is an edit to a proposition that has been put away. Restoring
-	// it and deleting it are the two things still allowed.
+	ErrEmpty         = errors.New("that needs some text")
+	ErrLegalReleases = errors.New("this proposition has recording releases; archive it to retain signed records")
+	// ErrArchived is an edit to a proposition that has been put away.
 	ErrArchived = errors.New("that proposition is archived; restore it first")
 	// ErrShow is a mutation of the permanent shared workspace or its membership.
 	ErrShow = errors.New("the Show workspace is permanent and shared with everyone")
@@ -376,6 +376,13 @@ func (s *Service) RestoreProposition(ctx context.Context, a core.Actor, id int64
 
 func (s *Service) DeleteProposition(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
 	return s.proposition(ctx, a, id, auth.CanDelete, "delete", func(ctx context.Context, tx *sql.Tx, _ Proposition) error {
+		var releases int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM legal_releases WHERE proposition_id=?`, id).Scan(&releases); err != nil {
+			return err
+		}
+		if releases > 0 {
+			return ErrLegalReleases
+		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM propositions WHERE id = ?`, id)
 		return err
 	})

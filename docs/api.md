@@ -1453,3 +1453,7 @@ The API and MCP reject an expired key on each new request, including previously
 initialized MCP sessions. `/me` and `whoami` expose `token.expires_at` as Unix
 seconds when set. Expiry does not broaden scope or proposition membership. Per-key proposition allowlists are not supported;
 use an account with the appropriate proposition membership for narrower access.
+
+## Recording releases
+
+`/api/v1/legal/releases` supports listing and saving links; `/<id>` reads a link, `/<id>/submissions` exports signed records, and POST `/<id>/preview` and `/<id>/notify` prepare or send participant emails. All operations require an editing role and membership in the assigned workspace, in addition to token scope. See [release request contracts and MCP mappings](legal.md#api-and-mcp). Public signing is intentionally separate from agent operations.

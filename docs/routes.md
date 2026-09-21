@@ -143,3 +143,7 @@ workflow requests need a connection. Source drafts persist separately, while
 uncertain workflow retry keys generally live only in the open UI. See
 [recovery boundaries](agent-recovery.md#boundaries) before closing or reloading
 an operation whose result is unknown.
+
+## Recording releases
+
+`/legal?proposition=<id>` creates a release; `/releases/<id>` manages it, with `/export` for saved records and POST `/notify` for email preview/send. These require an editing role and workspace membership. `/legal/<token>` is the public consent form, `/qr` displays its branded QR card, `/qr.svg` serves the artwork, and `/receipt/<receipt>` holds the private signed copy. [Details](legal.md).

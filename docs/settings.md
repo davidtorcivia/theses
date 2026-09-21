@@ -171,3 +171,7 @@ are separate credentials from API keys; see [calendar.md](calendar.md).
 
 The bootstrap variables, read once at startup and listed read-only with a line
 each on why they cannot be edited here. See [running.md](running.md).
+
+## Recording releases
+
+Workspace settings include the default rights-holding legal entity and participant email subject/body templates. New releases copy those defaults; existing links retain their saved values. Placeholders are `{name}`, `{brand}`, `{title}` and `{url}`. See [Recording releases](legal.md) for the signing and manual email workflow.

@@ -34,6 +34,7 @@ Open it. The first visit is `/setup`: it creates the owner account, enrolls an a
 - [Settings](docs/settings.md): what each section of `/settings` configures, including the bucket CORS rule and SMTP.
 - [Routes](docs/routes.md): every route the browser sees.
 - [Workflows](docs/workflows.md): Show notes, My work, production plans, research, recording and reviews.
+- [Recording releases](docs/legal.md): public signing links, branded QR cards, saved agreements and manual participant emails.
 - [Calendar](docs/calendar.md): events, tasks, U.S. holidays and Google/iCloud subscriptions.
 - [Transcription](docs/transcription.md): optional local Whisper, speaker-label limits and Pinecast handoff.
 - [Connections](docs/connections.md): personal keys, expiry and Claude Desktop setup.

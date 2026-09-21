@@ -54,7 +54,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		a.fail(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
 		a.fail(w, http.StatusNotFound, "that is not there")
-	case errors.Is(err, core.ErrRestoreConflict), errors.Is(err, files.ErrMaintenance), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrColumnNotEmpty),
+	case errors.Is(err, core.ErrRestoreConflict), errors.Is(err, files.ErrMaintenance), errors.Is(err, board.ErrLegalReleases), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, core.ErrNotUndoable), errors.Is(err, docs.ErrSourceBase):
 		a.fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, board.ErrNotYours):

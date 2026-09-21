@@ -116,6 +116,9 @@ func logPath(r *http.Request) string {
 		return r.Pattern
 	}
 	p := r.URL.Path
+	if strings.HasPrefix(p, "/legal/") {
+		return "/legal/{private}"
+	}
 	for _, prefix := range []string{"/reset/", "/invite/", "/calendar/"} {
 		if !strings.HasPrefix(p, prefix) {
 			continue

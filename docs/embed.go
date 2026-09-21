@@ -3,5 +3,5 @@ package docs
 
 import "embed"
 
-//go:embed SKILLS.md api.md connections.md
+//go:embed SKILLS.md api.md connections.md legal.md
 var AgentFiles embed.FS

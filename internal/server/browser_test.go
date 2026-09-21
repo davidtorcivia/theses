@@ -87,6 +87,7 @@ func TestBrowserWorkflow(t *testing.T) {
 		h.srv.ServeHTTP(w, r)
 	}))
 	t.Cleanup(browserServer.Close)
+	h.srv.cfg.BaseURL = browserServer.URL
 	// The fixture's independent anonymous context checks the same private targets.
 	origin, _ := url.Parse(h.http.URL)
 	cookies := []map[string]any{}

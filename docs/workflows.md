@@ -70,3 +70,7 @@ supported individual items for seven days. It cannot restore a deleted
 proposition or recover file bytes removed from storage. See
 [recovery](agent-recovery.md) for retries, conflicts and exclusions, and
 [connections](connections.md) for agents operating with your permissions.
+
+## Recording releases
+
+See [Recording releases](legal.md) for show/episode release links, NY/GA draft wording, public multi-person consent, immutable signed copies, QR downloads, and manually previewed participant emails. The staff UI starts at `/legal?proposition=<id>`; saved links are managed at `/releases/<id>`. Public signing is `/legal/<token>`. Staff API and MCP operations are listed in that guide. Participant signing is intentionally a public consent form, not an agent operation.
