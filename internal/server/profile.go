@@ -39,6 +39,7 @@ func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 		"CalendarActive": calendarActive,
 		"Tokens":         tokenViews(tokens),
 		"TokenWrite":     auth.Can(u.Role, auth.CanEdit),
+		"AgentGuideURL":  s.cfg.BaseURL + "/SKILLS.md",
 		"MCPURL":         s.cfg.BaseURL + "/mcp",
 		"APIURL":         s.cfg.BaseURL + "/api/v1",
 		"MCPConfig":      desktopMCPConfig(s.cfg.BaseURL + "/mcp"),

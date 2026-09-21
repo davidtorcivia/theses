@@ -72,6 +72,12 @@
           <button class="save" type="submit">Create personal key</button>
         </form>
         <p class="small dim">Use a separate key for each app so you can revoke one without interrupting the others. Treat keys like passwords.</p>
+        <details class="connection-guide"><summary>Agent instructions: SKILLS.md</summary>
+          <p>Give your agent this public guide URL. It explains authentication, API and MCP operations, permissions, safe retries, and version checks. Supply your personal key separately through the agent's secret settings.</p>
+          <label class="f"><span class="l">Agent guide URL</span><input id="agent-guide-url" readonly value="{{.AgentGuideURL}}"></label>
+          <button class="lnk" type="button" data-copy="agent-guide-url">Copy agent guide URL</button>
+          <p><a href="/SKILLS.md" download="SKILLS.md">Download SKILLS.md</a> · <a href="/api.md">Full API reference</a></p>
+        </details>
         <details class="connection-guide"><summary>Connect Claude Desktop</summary>
           {{if .MCPConfig}}<ol>
             <li>Install a current Node.js LTS release on your computer, then create a key above. Choose Read and edit if you want Claude to make changes.</li>

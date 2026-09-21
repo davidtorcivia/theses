@@ -4,6 +4,10 @@ Open **Profile → API & MCP**, give the key a name, and choose its permissions.
 
 The activity panel shows the account name with **via API** and the key name, or **via MCP** and the reported client name (falling back to the key name for older clients). The authenticated account identity is authoritative; client names are informational. The database keeps its existing `token:<name>` and `mcp:<name>` attribution values.
 
+## Agent instructions
+
+Give your agent the public `/SKILLS.md` URL from Profile, or download the Markdown file. It describes the API/MCP connection, permissions, workflows, retry keys and conflict handling. The guide links to `/api.md` and `/connections.md` from the same deployed app. These documents contain no account data or credentials and can be fetched without authentication. Supply your personal key separately through the client's secret configuration.
+
 ## Claude Desktop
 
 1. Install a current Node.js LTS version on your computer.
