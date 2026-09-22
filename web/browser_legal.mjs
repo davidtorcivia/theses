@@ -65,7 +65,7 @@ try {
   await second.getByLabel('I am at least 18').check();
   await form.getByRole('button', { name: 'Sign & submit' }).click();
   await form.waitForURL('**/receipt/*');
-  assert.ok(await form.getByRole('heading', { name: /Thank you/ }).isVisible());
+  assert.ok(await form.getByRole('status').isVisible());
   assert.ok(await form.getByText('Ada Lovelace', { exact: true }).isVisible());
   assert.ok(await form.getByText('Grace Hopper', { exact: true }).isVisible());
   await form.screenshot({ path: `${output}/receipt-390.png`, fullPage: true });

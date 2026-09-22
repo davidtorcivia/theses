@@ -42,11 +42,10 @@ func releaseQR(url, brand string) (string, error) {
 	}
 	chars := []rune(brand)
 	lines := wrapBrand(chars, 24)
-	scanY := max(190, 150+28*len(lines))
-	qrY := scanY + 30
-	height := qrY + 500
+	qrY := max(190, 150+28*len(lines))
+	height := qrY + 480
 	var out strings.Builder
-	fmt.Fprintf(&out, `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="%d" viewBox="0 0 600 %d"><rect width="600" height="%d" fill="#f0f0e8"/><rect x="24" y="24" width="552" height="%d" rx="3" fill="#fffef8" stroke="#d5d8cc"/><rect x="48" y="48" width="44" height="44" fill="#d9fa69"/><path d="M59 59l22 22m-15 0h15V66" fill="none" stroke="#171b19" stroke-width="3"/><text x="110" y="76" font-family="Arial,sans-serif" font-size="13" letter-spacing="2" fill="#171b19">RECORDING RELEASE</text>`, height*2, height, height, height-48)
+	fmt.Fprintf(&out, `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="%d" viewBox="0 0 600 %d"><rect width="600" height="%d" fill="#f0f0e8"/><rect x="24" y="24" width="552" height="%d" rx="3" fill="#fffef8" stroke="#d5d8cc"/><rect x="48" y="48" width="44" height="44" fill="#d9fa69"/><path d="M59 59l22 22m-15 0h15V66" fill="none" stroke="#171b19" stroke-width="3"/>`, height*2, height, height, height-48)
 	for i, line := range lines {
 		// Fit wide letters without relying on the viewer's installed font metrics.
 		fit := ""
@@ -66,7 +65,7 @@ func releaseQR(url, brand string) (string, error) {
 			}
 		}
 	}
-	fmt.Fprintf(&out, `</g><text x="48" y="%d" font-family="Arial,sans-serif" font-size="19" fill="#171b19">Scan to read &amp; sign.</text><text x="300" y="%d" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#596050">NO ACCOUNT NEEDED · AGES 18+</text></svg>`, scanY, qrY+465)
+	out.WriteString(`</g></svg>`)
 	return out.String(), nil
 }
 func wrapBrand(chars []rune, width int) []string {
