@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
@@ -40,6 +41,9 @@ type API struct {
 	// Board is the proposition and board commands, set the same way. Every
 	// board route is one of them with a token's actor.
 	Board *board.Service
+	// Backup is the archive and restore behind the settings page's buttons,
+	// set the same way.
+	Backup *backup.Backup
 }
 
 func New(db *store.DB, a *auth.Auth, set *settings.Settings, log *slog.Logger) *API {
@@ -252,6 +256,7 @@ func (a *API) Handler() http.Handler {
 	a.documentRoutes(mux)
 	a.fileRoutes(mux)
 	a.boardRoutes(mux)
+	a.backupRoutes(mux)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
@@ -26,11 +27,11 @@ import (
 //   - a refusal about the state of the thing rather than about the body is 409:
 //     an archived proposition, a column with cards still in it, a change that
 //     cannot be undone, markdown written from blocks the database can no longer
-//     produce the text of;
+//     produce the text of, a backup or a restore already running;
 //   - somebody else's note is 403, because the caller may write here and not to
 //     that row, and being told so gives nothing away;
-//   - object storage nobody has set up yet is 503, because it is this side that
-//     is not ready;
+//   - object storage or a backup key nobody has set up yet is 503, because it
+//     is this side that is not ready;
 //   - a body the rules refuse is 422. A body that is not JSON at all is 400,
 //     answered by the handlers where they decode it, and so are an
 //     Idempotency-Key that is not a key and an edit that names no field: each
@@ -54,12 +55,13 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		a.fail(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
 		a.fail(w, http.StatusNotFound, "that is not there")
-	case errors.Is(err, core.ErrRestoreConflict), errors.Is(err, files.ErrMaintenance), errors.Is(err, board.ErrLegalReleases), errors.Is(err, board.ErrUploading), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrColumnNotEmpty),
+	case errors.Is(err, backup.ErrBusy), errors.Is(err, core.ErrRestoreConflict), errors.Is(err, files.ErrMaintenance), errors.Is(err, board.ErrLegalReleases), errors.Is(err, board.ErrUploading), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrShow), errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, core.ErrNotUndoable), errors.Is(err, docs.ErrSourceBase):
 		a.fail(w, http.StatusConflict, err.Error())
 	case errors.Is(err, board.ErrNotYours):
 		a.fail(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, core.ErrRestoreBusy), errors.Is(err, files.ErrNoBucket):
+	case errors.Is(err, core.ErrRestoreBusy), errors.Is(err, files.ErrNoBucket),
+		errors.Is(err, backup.ErrNotConfigured), errors.Is(err, ErrNoBackups):
 		a.fail(w, http.StatusServiceUnavailable, err.Error())
 	case errors.Is(err, notify.ErrStorage):
 		// A failure to read or write is this side's, and its detail says

@@ -27,6 +27,7 @@ type harness struct {
 	auth    *auth.Auth
 	set     *settings.Settings
 	handler http.Handler
+	api     *API
 	user    *store.User
 	board   *board.Service
 	docs    *docs.Service
@@ -59,7 +60,7 @@ func newHarness(t *testing.T) *harness {
 	})
 	api.Docs = docs.New(b.Service, "", func() string { return "" }, log)
 	api.Board = b
-	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), user: user,
+	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), api: api, user: user,
 		board: b, docs: api.Docs}
 }
 

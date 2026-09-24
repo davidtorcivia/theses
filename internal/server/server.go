@@ -188,7 +188,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.blobs = newBuckets()
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
 	s.files.ReserveMaintenance = s.backups.ReserveMaintenance
-	s.api.Board, s.api.Files = s.board, s.files
+	s.api.Board, s.api.Files, s.api.Backup = s.board, s.files, s.backups
 	s.api.Workflow.Files = s.files
 	s.api.Workflow.WhisperURL = cfg.WhisperURL
 	if err := s.api.Workflow.Recover(context.Background()); err != nil {
