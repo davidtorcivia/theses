@@ -60,7 +60,7 @@ func (f *fixture) user(t *testing.T, handle string) int64 {
 func (f *fixture) channel(t *testing.T, c Channel, events ...string) Channel {
 	t.Helper()
 	c.VerifiedAt = now
-	saved, err := SaveChannel(context.Background(), f.db, f.set, c)
+	saved, err := SaveChannel(context.Background(), f.db, f.set, c, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}

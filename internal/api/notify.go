@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -153,8 +154,8 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 	a.writeJSON(w, http.StatusOK, view)
 }
 
-func (a *API) saveChannels(r *http.Request, p Principal, q store.Querier, list []channelIn) error {
-	existing, err := notify.ListChannels(r.Context(), q, a.set, p.User.ID)
+func (a *API) saveChannels(r *http.Request, p Principal, tx *sql.Tx, list []channelIn) error {
+	existing, err := notify.ListChannels(r.Context(), tx, a.set, p.User.ID)
 	if err != nil {
 		return err
 	}
@@ -198,13 +199,13 @@ func (a *API) saveChannels(r *http.Request, p Principal, q store.Querier, list [
 		if in.ID != 0 && !c.Config.SameDestination(was[in.ID].Config) {
 			c.VerifiedAt = 0
 		}
-		if _, err := notify.SaveChannel(r.Context(), q, a.set, c); err != nil {
+		if _, err := notify.SaveChannelTx(r.Context(), tx, a.set, c, p.Actor()); err != nil {
 			return err
 		}
 	}
 	for _, c := range existing {
 		if !kept[c.ID] {
-			if err := notify.DeleteChannel(r.Context(), q, c.ID, p.User.ID); err != nil {
+			if err := notify.DeleteChannelTx(r.Context(), tx, a.set, c.ID, p.User.ID, p.Actor()); err != nil {
 				return err
 			}
 		}

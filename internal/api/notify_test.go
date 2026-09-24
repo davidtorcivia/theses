@@ -9,6 +9,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/notify"
+	"github.com/davidtorcivia/theses/internal/settings"
 )
 
 func TestNotificationsNeedTheirScopes(t *testing.T) {
@@ -66,7 +67,7 @@ func TestNotificationsRoundTripWithoutSecrets(t *testing.T) {
 	// takes its verified state away.
 	if _, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{
 		ID: id, UserID: h.user.ID, Kind: notify.KindNtfy, VerifiedAt: 1,
-		Config: notify.Config{Topic: "alerts", Token: "tk_secret"}}); err != nil {
+		Config: notify.Config{Topic: "alerts", Token: "tk_secret"}}, settings.System()); err != nil {
 		t.Fatal(err)
 	}
 	w = h.do("PUT", "/api/v1/me/notifications", token,
@@ -148,7 +149,7 @@ func TestNotificationPUTRollsBackTheWholeReplacement(t *testing.T) {
 		h := newHarness(t)
 		kept, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{
 			UserID: h.user.ID, Kind: notify.KindEmail,
-		})
+		}, settings.System())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -199,7 +200,8 @@ func TestTestingSomebodyElsesChannelIsNotFound(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t)
 	hers, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{
-		Kind: notify.KindWebhook, Config: notify.Config{URL: "https://example.com/h"}})
+		Kind: notify.KindWebhook, Config: notify.Config{URL: "https://example.com/h", Events: []string{"moved"}}},
+		settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -356,9 +356,9 @@ const (
 
 // administration is what the log says about running the workspace rather than
 // about its work: a setting's value either side of a change, the address an
-// invitation went to, the name and scopes of a token. A token without admin
-// reads the log without these.
-const administration = `'setting', 'invitation', 'api_token'`
+// invitation went to, the name and scopes of a token, where a notification
+// channel points. A token without admin reads the log without these.
+const administration = `'setting', 'invitation', 'api_token', 'notification_channel'`
 
 // workspaceWide is every entity whose rows belong to the workspace rather than
 // to one proposition, and so are readable by anyone the scope allows. It is a

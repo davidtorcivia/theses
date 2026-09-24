@@ -162,14 +162,14 @@ func TestEveryFormRedirectsToItsSection(t *testing.T) {
 	hook, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
 		UserID: 0, Kind: notify.KindWebhook,
 		Config: notify.Config{URL: "https://127.0.0.1:1/hook", Events: []string{"mentioned"}},
-	})
+	}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}
 	mine, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
 		UserID: 1, Kind: notify.KindNtfy,
 		Config: notify.Config{Server: "https://127.0.0.1:1", Topic: "alerts"},
-	})
+	}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}

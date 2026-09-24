@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/notify"
+	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -263,7 +264,7 @@ func (s *Server) saveAndTest(w http.ResponseWriter, r *http.Request, c notify.Ch
 	// works before anything is sent to it, and saying so is the save's job.
 	// Email is the exception, verified by SaveChannel because the address is
 	// the account's own.
-	channel, err := notify.SaveChannel(r.Context(), s.db, s.settings, c)
+	channel, err := notify.SaveChannel(r.Context(), s.db, s.settings, c, settings.User(userOf(r).ID))
 	if errors.Is(err, store.ErrNotFound) {
 		s.errorPage(w, r, http.StatusNotFound)
 		return
@@ -306,7 +307,7 @@ func (s *Server) postChannelTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) postChannelDelete(w http.ResponseWriter, r *http.Request) {
-	if err := notify.DeleteChannel(r.Context(), s.db, pathID(r), userOf(r).ID); err != nil {
+	if err := notify.DeleteChannel(r.Context(), s.db, s.settings, pathID(r), userOf(r).ID, settings.User(userOf(r).ID)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.errorPage(w, r, http.StatusNotFound)
 			return
@@ -368,12 +369,6 @@ func (s *Server) postWorkspaceWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.Kind = notify.KindWebhook
-	if len(c.Config.Events) == 0 {
-		s.back(w, r, "/settings#integrations", map[string]any{
-			"Error": "A webhook that fires on nothing is a webhook nobody needs. Tick at least one event.",
-		})
-		return
-	}
 	s.saveAndTest(w, r, c, "", "/settings#integrations", settingsTo("integrations", true))
 }
 
@@ -392,7 +387,7 @@ func (s *Server) postWorkspaceWebhookTest(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) postWorkspaceWebhookDelete(w http.ResponseWriter, r *http.Request) {
-	if err := notify.DeleteChannel(r.Context(), s.db, pathID(r), 0); err != nil {
+	if err := notify.DeleteChannel(r.Context(), s.db, s.settings, pathID(r), 0, settings.User(userOf(r).ID)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.errorPage(w, r, http.StatusNotFound)
 			return
