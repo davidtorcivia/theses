@@ -523,6 +523,41 @@ func TestWorkspaceWebhookCanWaitForOneColumn(t *testing.T) {
 	}
 }
 
+// The column is the one the move put the card in, not wherever the card is
+// when the notice is queued: a catch-up after a restart reads the event late.
+func TestWorkspaceWebhookReadsTheColumnOffTheMove(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	f.onCard(t, 7, ada)
+	if _, err := f.db.ExecContext(context.Background(),
+		`INSERT INTO columns (id, proposition_id, name, position) VALUES (5, 3, 'Publication', 'b')`); err != nil {
+		t.Fatal(err)
+	}
+	f.channel(t, Channel{Kind: KindWebhook, Config: Config{
+		URL: "https://example.com/hook", Events: []string{"moved"}, Column: "Publication"}})
+
+	// The card sits in Research now, but this move put it in Publication.
+	into := f.move(t, ada, 7)
+	into.After = card(t, map[string]any{"id": 7, "column_id": 5})
+	if err := f.s.Handle(context.Background(), into); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 1 {
+		t.Fatalf("wrote %d rows for a move into Publication, want 1", len(got))
+	}
+	// And the other way: a move into Research does not fire because the card
+	// has since reached Publication.
+	if _, err := f.db.ExecContext(context.Background(), `UPDATE cards SET column_id = 5 WHERE id = 7`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 1 {
+		t.Fatalf("wrote %d rows, want still 1: that move went into Research", len(got))
+	}
+}
+
 func TestQuietUntil(t *testing.T) {
 	loc := time.UTC
 	at := func(h, m int) int64 { return time.Date(2026, 9, 8, h, m, 0, 0, loc).Unix() }

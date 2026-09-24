@@ -237,7 +237,7 @@ func (s *Service) queueWorkspace(ctx context.Context, tx *sql.Tx, m Notice, acto
 		// A webhook may name the column a card has to reach, which is how "a
 		// card reaching Publication" is one message rather than every move.
 		if c.Config.Column != "" && m.Event == "moved" {
-			name, err := columnOfCard(ctx, tx, m.Card)
+			name, err := columnName(ctx, tx, m.Column)
 			if err != nil {
 				return err
 			}
@@ -376,10 +376,9 @@ func propositionOfDocument(ctx context.Context, q store.Querier, document int64)
 	return id, err
 }
 
-func columnOfCard(ctx context.Context, q store.Querier, card int64) (string, error) {
+func columnName(ctx context.Context, q store.Querier, column int64) (string, error) {
 	var name string
-	err := q.QueryRowContext(ctx,
-		`SELECT c.name FROM cards k JOIN columns c ON c.id = k.column_id WHERE k.id = ?`, card).Scan(&name)
+	err := q.QueryRowContext(ctx, `SELECT name FROM columns WHERE id = ?`, column).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
