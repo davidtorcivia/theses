@@ -161,8 +161,8 @@ func TestDriveAuthURLAsksForARefreshToken(t *testing.T) {
 			t.Errorf("%s is %q, want %q", k, got, v)
 		}
 	}
-	if d.Connected() {
-		t.Error("Drive is connected before the code has been exchanged")
+	if d.token.Refresh != "" {
+		t.Error("Drive holds a refresh token before the code has been exchanged")
 	}
 	if !d.Configured() {
 		t.Error("Drive with a client id and secret is not configured")
@@ -180,8 +180,8 @@ func TestDriveExchangeAndRefresh(t *testing.T) {
 	if tok.Refresh != "refresh-1" || tok.Access != "access-1" {
 		t.Fatalf("exchange returned %+v", tok)
 	}
-	if !d.Connected() {
-		t.Fatal("Drive is not connected after the exchange")
+	if d.token.Refresh != "refresh-1" {
+		t.Fatal("Drive does not hold the refresh token after the exchange")
 	}
 	if got := g.grants[0].Get("grant_type"); got != "authorization_code" {
 		t.Fatalf("grant_type is %q", got)

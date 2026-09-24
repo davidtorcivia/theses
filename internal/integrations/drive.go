@@ -73,8 +73,6 @@ type Drive struct {
 	token                  Token
 }
 
-func (d *Drive) Name() string { return "Google Drive" }
-
 // Configure reads what the settings table holds. A token that will not parse is
 // the one error: it means the row was written under a different secret key or
 // by hand, and saying so is better than behaving as though nothing were
@@ -109,17 +107,11 @@ func (d *Drive) Configure(s Settings) error {
 }
 
 // Configured reports whether the client id and secret are in place, which is
-// what the Connect button needs; Connected is whether the flow was finished.
+// what the Connect button needs.
 func (d *Drive) Configured() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.clientID != "" && d.clientSecret != ""
-}
-
-func (d *Drive) Connected() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.clientID != "" && d.clientSecret != "" && d.token.Refresh != ""
 }
 
 // AuthURL is where the owner is sent to consent. access_type=offline and
