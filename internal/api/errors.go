@@ -32,9 +32,9 @@ import (
 //   - object storage nobody has set up yet is 503, because it is this side that
 //     is not ready;
 //   - a body the rules refuse is 422. A body that is not JSON at all is 400,
-//     answered by the handlers where they decode it, and so is an
-//     Idempotency-Key that is not a key: both are the request malformed rather
-//     than anything about the workspace.
+//     answered by the handlers where they decode it, and so are an
+//     Idempotency-Key that is not a key and an edit that names no field: each
+//     is the request malformed rather than anything about the workspace.
 func (a *API) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	if a.answer(w, err) {
 		return
@@ -50,7 +50,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 	case errors.As(err, &clash):
 		a.writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "that changed while you were editing it", "conflict": clash})
-	case errors.Is(err, core.ErrKey):
+	case errors.Is(err, core.ErrKey), errors.Is(err, ErrNoField):
 		a.fail(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, core.ErrNotFound), errors.Is(err, core.ErrForbidden):
 		a.fail(w, http.StatusNotFound, "that is not there")

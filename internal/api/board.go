@@ -188,9 +188,7 @@ func (a *API) createProposition(w http.ResponseWriter, r *http.Request, p Princi
 }
 
 // editProposition changes the fields the body names and leaves the rest as they
-// were. The commands take whole sets, because that is what a form posts, so the
-// row is read first and the body laid over it: naming one field is not a way to
-// clear the others.
+// were.
 func (a *API) editProposition(w http.ResponseWriter, r *http.Request, p Principal) {
 	id, ok := a.pathID(w, r, "proposition")
 	if !ok {
@@ -200,32 +198,56 @@ func (a *API) editProposition(w http.ResponseWriter, r *http.Request, p Principa
 	if !ok {
 		return
 	}
-	if body.Title == nil && body.Statement == nil && body.Blurb == nil &&
-		body.Status == nil && body.Episode == nil && body.TargetDate == nil {
-		a.fail(w, http.StatusBadRequest, "name a field to change")
-		return
+	a.applied(w, r, p, func() (core.Event, error) {
+		return a.EditProposition(r.Context(), p, actorOf(p), id, PropositionPatch{
+			Title: body.Title, Statement: body.Statement, Blurb: body.Blurb,
+			Status: body.Status, Episode: body.Episode, TargetDate: body.TargetDate,
+		})
+	})
+}
+
+// ErrNoField is an edit that names nothing to change.
+var ErrNoField = errors.New("name a field to change")
+
+// A PropositionPatch is the fields of a proposition an edit names. A field left
+// out keeps what the row holds and an empty string clears it.
+type PropositionPatch struct {
+	Title      *string `json:"title,omitempty" jsonschema:"what the proposition is called"`
+	Statement  *string `json:"statement,omitempty" jsonschema:"the claim the episode argues, as markdown"`
+	Blurb      *string `json:"blurb,omitempty" jsonschema:"the short description, as markdown"`
+	Status     *string `json:"status,omitempty" jsonschema:"one of the workspace's statuses, as get_settings reports defaults.statuses"`
+	Episode    *string `json:"episode,omitempty" jsonschema:"the episode number; an empty string clears it"`
+	TargetDate *string `json:"target_date,omitempty" jsonschema:"the release date as YYYY-MM-DD; an empty string clears it"`
+}
+
+// EditProposition changes the fields the patch names as one transaction, for
+// both surfaces. The commands take whole sets, because that is what a form
+// posts, so the row is read first and the patch laid over it: naming one field
+// is not a way to clear the others.
+func (a *API) EditProposition(ctx context.Context, p Principal, who core.Actor, id int64, in PropositionPatch) (core.Event, error) {
+	if in == (PropositionPatch{}) {
+		return core.Event{}, ErrNoField
 	}
-	who := actorOf(p)
-	a.together(w, r, func(ctx context.Context) (core.Event, error) {
+	return a.together(ctx, func(ctx context.Context) (core.Event, error) {
 		was, err := a.Proposition(ctx, p, id)
 		if err != nil {
 			return core.Event{}, err
 		}
 		var e core.Event
-		if body.Title != nil || body.Statement != nil || body.Blurb != nil {
-			if e, err = a.Board.EditProposition(ctx, who, id, or(body.Title, was.Title),
-				or(body.Statement, was.Statement), or(body.Blurb, was.Blurb)); err != nil {
+		if in.Title != nil || in.Statement != nil || in.Blurb != nil {
+			if e, err = a.Board.EditProposition(ctx, who, id, or(in.Title, was.Title),
+				or(in.Statement, was.Statement), or(in.Blurb, was.Blurb)); err != nil {
 				return core.Event{}, err
 			}
 		}
-		if body.Status != nil {
-			if e, err = a.Board.SetStatus(ctx, who, id, *body.Status); err != nil {
+		if in.Status != nil {
+			if e, err = a.Board.SetStatus(ctx, who, id, *in.Status); err != nil {
 				return core.Event{}, err
 			}
 		}
-		if body.Episode != nil || body.TargetDate != nil {
-			if e, err = a.Board.Schedule(ctx, who, id, or(body.Episode, some(was.Episode)),
-				or(body.TargetDate, some(was.TargetDate))); err != nil {
+		if in.Episode != nil || in.TargetDate != nil {
+			if e, err = a.Board.Schedule(ctx, who, id, or(in.Episode, some(was.Episode)),
+				or(in.TargetDate, some(was.TargetDate))); err != nil {
 				return core.Event{}, err
 			}
 		}
@@ -417,11 +439,6 @@ func (a *API) createCard(w http.ResponseWriter, r *http.Request, p Principal) {
 	})
 }
 
-// editCard is the one route that takes a base version. A card has one version
-// across its title and its description, so an edit that names both sends the
-// second command the version the first one left rather than the one the body
-// carried, and an edit that began before somebody else's is refused with 409
-// and the text that is in the card now.
 func (a *API) editCard(w http.ResponseWriter, r *http.Request, p Principal) {
 	id, ok := a.pathID(w, r, "card")
 	if !ok {
@@ -431,33 +448,55 @@ func (a *API) editCard(w http.ResponseWriter, r *http.Request, p Principal) {
 	if !ok {
 		return
 	}
-	if body.Title == nil && body.Description == nil && body.Question == nil && body.DueDate == nil {
-		a.fail(w, http.StatusBadRequest, "name a field to change")
-		return
+	a.applied(w, r, p, func() (core.Event, error) {
+		return a.EditCard(r.Context(), actorOf(p), id, CardPatch{
+			Title: body.Title, Description: body.Description, Question: body.Question,
+			DueDate: body.DueDate, BaseVersion: body.BaseVersion,
+		})
+	})
+}
+
+// A CardPatch is the fields of a card an edit names. A field left out keeps
+// what the card holds.
+type CardPatch struct {
+	Title       *string `json:"title,omitempty" jsonschema:"one line saying what the card is"`
+	Description *string `json:"description_md,omitempty" jsonschema:"the card's description as markdown"`
+	Question    *string `json:"question,omitempty" jsonschema:"one of I, II, III or IV, or an empty string for none"`
+	DueDate     *string `json:"due_date,omitempty" jsonschema:"YYYY-MM-DD, or an empty string for none"`
+	BaseVersion int64   `json:"base_version,omitempty" jsonschema:"the version list_cards reported, needed to change the title or the description"`
+}
+
+// EditCard is the one edit that takes a base version, for both surfaces. A
+// card has one version across its title and its description, so an edit that
+// names both sends the second command the version the first one left rather
+// than the one the patch carried, and an edit that began before somebody
+// else's is refused with the text that is in the card now.
+func (a *API) EditCard(ctx context.Context, who core.Actor, id int64, in CardPatch) (core.Event, error) {
+	if in.Title == nil && in.Description == nil && in.Question == nil && in.DueDate == nil {
+		return core.Event{}, ErrNoField
 	}
-	who := actorOf(p)
-	a.together(w, r, func(ctx context.Context) (core.Event, error) {
-		base := body.BaseVersion
+	return a.together(ctx, func(ctx context.Context) (core.Event, error) {
+		base := in.BaseVersion
 		var e core.Event
 		var err error
-		if body.Title != nil {
-			if e, err = a.Board.EditCardTitle(ctx, who, id, base, *body.Title); err != nil {
+		if in.Title != nil {
+			if e, err = a.Board.EditCardTitle(ctx, who, id, base, *in.Title); err != nil {
 				return core.Event{}, err
 			}
 			base = versionOf(e, base)
 		}
-		if body.Description != nil {
-			if e, err = a.Board.EditCardDescription(ctx, who, id, base, *body.Description); err != nil {
+		if in.Description != nil {
+			if e, err = a.Board.EditCardDescription(ctx, who, id, base, *in.Description); err != nil {
 				return core.Event{}, err
 			}
 		}
-		if body.Question != nil {
-			if e, err = a.Board.SetCardQuestion(ctx, who, id, *body.Question); err != nil {
+		if in.Question != nil {
+			if e, err = a.Board.SetCardQuestion(ctx, who, id, *in.Question); err != nil {
 				return core.Event{}, err
 			}
 		}
-		if body.DueDate != nil {
-			if e, err = a.Board.SetCardDue(ctx, who, id, *body.DueDate); err != nil {
+		if in.DueDate != nil {
+			if e, err = a.Board.SetCardDue(ctx, who, id, *in.DueDate); err != nil {
 				return core.Event{}, err
 			}
 		}
@@ -617,20 +656,16 @@ func (a *API) undo(w http.ResponseWriter, r *http.Request, p Principal) {
 	})
 }
 
-// together runs several commands as one transaction, so a body that names four
-// fields either lands whole or not at all, and answers with the last event.
-func (a *API) together(w http.ResponseWriter, r *http.Request, run func(context.Context) (core.Event, error)) {
+// together runs several commands as one transaction, so an edit that names
+// four fields either lands whole or not at all, and answers with the last event.
+func (a *API) together(ctx context.Context, run func(context.Context) (core.Event, error)) (core.Event, error) {
 	var e core.Event
-	err := a.Board.Together(r.Context(), func(ctx context.Context) error {
+	err := a.Board.Together(ctx, func(ctx context.Context) error {
 		var err error
 		e, err = run(ctx)
 		return err
 	})
-	if err != nil {
-		a.refuse(w, r, err)
-		return
-	}
-	a.writeJSON(w, http.StatusOK, map[string]any{"event": e})
+	return e, err
 }
 
 // Readable is the one visibility test, the same one the board, the documents
