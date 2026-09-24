@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/notify"
 	"github.com/davidtorcivia/theses/internal/settings"
 )
@@ -318,5 +320,52 @@ func TestWorkspaceWebhookRoutes(t *testing.T) {
 		if step.then != nil {
 			step.then(t, w.Body.String())
 		}
+	}
+}
+
+// A patch is laid over the webhook as committed, not as some earlier read of
+// it: two callers changing different fields at once both keep their change,
+// where a read outside the write would let the later one put back what the
+// earlier one replaced.
+func TestWebhookPatchesLandOnTheCommittedRow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	who := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	url := "https://example.com/hook"
+	hook, err := h.api.SaveWebhook(ctx, who, 0, WebhookPatch{URL: &url, Events: []string{"moved"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rounds = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*rounds)
+	for _, field := range []string{"column", "secret"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range rounds {
+				value := field + strconv.Itoa(i)
+				patch := WebhookPatch{Column: &value}
+				if field == "secret" {
+					patch = WebhookPatch{Secret: &value}
+				}
+				if _, err := h.api.SaveWebhook(ctx, who, hook.ID, patch); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	c, err := notify.GetChannel(ctx, h.db, h.set, hook.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := strconv.Itoa(rounds - 1)
+	if c.Config.Column != "column"+last || c.Config.Secret != "secret"+last || c.Config.URL != url {
+		t.Errorf("stored %+v, want both writers' last values", c.Config)
 	}
 }

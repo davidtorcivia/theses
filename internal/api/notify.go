@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -275,8 +276,8 @@ func (a *API) Webhooks(ctx context.Context) ([]ChannelView, error) {
 
 // webhook is one of the workspace's webhooks, and not there when the id names
 // somebody's own channel.
-func (a *API) webhook(ctx context.Context, id int64) (notify.Channel, error) {
-	c, err := notify.GetChannel(ctx, a.db, a.set, id)
+func (a *API) webhook(ctx context.Context, q store.Querier, id int64) (notify.Channel, error) {
+	c, err := notify.GetChannel(ctx, q, a.set, id)
 	if err == nil && c.UserID != 0 {
 		return notify.Channel{}, store.ErrNotFound
 	}
@@ -286,11 +287,19 @@ func (a *API) webhook(ctx context.Context, id int64) (notify.Channel, error) {
 // SaveWebhook adds a workspace webhook when id is zero and changes the one it
 // names otherwise. One that now points somewhere else is unproven again, and
 // nothing is sent to it until TestWebhook reaches it.
+//
+// The row is read inside the transaction that writes it, which holds the
+// write lock from the start, so a patch is laid over the row as committed and
+// two patches of different fields cannot undo each other.
 func (a *API) SaveWebhook(ctx context.Context, who core.Actor, id int64, in WebhookPatch) (ChannelView, error) {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ChannelView{}, fmt.Errorf("%w: save webhook: %w", notify.ErrStorage, err)
+	}
+	defer tx.Rollback()
 	was := notify.Channel{Kind: notify.KindWebhook}
 	if id != 0 {
-		var err error
-		if was, err = a.webhook(ctx, id); err != nil {
+		if was, err = a.webhook(ctx, tx, id); err != nil {
 			return ChannelView{}, err
 		}
 	}
@@ -310,9 +319,12 @@ func (a *API) SaveWebhook(ctx context.Context, who core.Actor, id int64, in Webh
 	if !c.Config.SameDestination(was.Config) {
 		c.VerifiedAt = 0
 	}
-	saved, err := notify.SaveChannel(ctx, a.db, a.set, c, settingsActor(who))
+	saved, err := notify.SaveChannelTx(ctx, tx, a.set, c, settingsActor(who))
 	if err != nil {
 		return ChannelView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ChannelView{}, fmt.Errorf("%w: save webhook: %w", notify.ErrStorage, err)
 	}
 	return channelView(saved, ""), nil
 }
@@ -333,7 +345,7 @@ type WebhookTest struct {
 // marks it verified when it arrives. Only a webhook that is not there is an
 // error; one that did not answer is the result.
 func (a *API) TestWebhook(ctx context.Context, id int64) (WebhookTest, error) {
-	c, err := a.webhook(ctx, id)
+	c, err := a.webhook(ctx, a.db, id)
 	if err != nil {
 		return WebhookTest{}, err
 	}

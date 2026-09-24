@@ -901,6 +901,10 @@ optional `column` a card move must land in to fire. A webhook with no event, an
 event the matrix does not hold and a URL that is not http or https are `422`.
 It arrives unverified and nothing is sent to it until its test reaches it.
 
+Creating a webhook does not honor `Idempotency-Key`: it is not a board
+command and keeps no key, so a create sent twice makes two webhooks. After a
+create whose answer never arrived, list the webhooks before sending it again.
+
 ```
 POST /api/v1/webhooks
 {"url": "https://example.com/hook", "secret": "...", "events": ["moved"]}
