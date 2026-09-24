@@ -619,7 +619,8 @@ POST /api/v1/links
 
 Scope `read` to read one, `write` to change or remove it. A PATCH changes the
 fields it names, `title`, `author`, `year`, `kind`, `note_md` and `question`,
-and leaves the rest as they were. A kind outside the list, and a question that
+and leaves the rest as they were. A kind outside the list (an empty kind
+included), and a question that
 is not `I`, `II`, `III`, `IV` or empty, are `422`. PATCH returns the link row
 with a top-level `event`; DELETE returns `{"deleted": true, "event": {...}}`.
 
@@ -627,7 +628,8 @@ with a top-level `event`; DELETE returns `{"deleted": true, "event": {...}}`.
 
 Scope `write`. Reads the page again and answers with the current link row and
 its top-level `event`. What the fetch finds replaces what is on the row, which is why this is
-a button and not a background job.
+a button and not a background job. A page that cannot be read is `422` and the
+row stays as it was.
 
 ## `GET /api/v1/files?proposition=`
 

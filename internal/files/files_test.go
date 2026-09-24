@@ -224,8 +224,8 @@ func TestArchivedIsReadOnly(t *testing.T) {
 	if _, err := f.AddLink(ctx, f.who["editor"], f.prop, page(t, "<title>More</title>")); !errors.Is(err, board.ErrArchived) {
 		t.Fatalf("AddLink on an archived proposition: %v", err)
 	}
-	if _, err := f.EditLink(ctx, f.who["editor"], link.EntityID, Edit{Title: "Tides"}); !errors.Is(err, board.ErrArchived) {
-		t.Fatalf("EditLink on an archived proposition: %v", err)
+	if _, err := f.PatchLink(ctx, f.who["editor"], link.EntityID, LinkPatch{Title: new("Tides")}); !errors.Is(err, board.ErrArchived) {
+		t.Fatalf("PatchLink on an archived proposition: %v", err)
 	}
 	if _, err := f.Create(ctx, f.who["editor"], f.prop, "notes.md", "Documents", 10, 0); !errors.Is(err, board.ErrArchived) {
 		t.Fatalf("Create on an archived proposition: %v", err)

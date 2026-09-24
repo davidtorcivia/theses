@@ -76,7 +76,7 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		errors.Is(err, docs.ErrReason), errors.Is(err, docs.ErrSourceSpread),
 		errors.Is(err, docs.ErrTooManyDocuments),
 		errors.Is(err, files.ErrKind), errors.Is(err, files.ErrQuestion),
-		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrState),
+		errors.Is(err, files.ErrURL), errors.Is(err, files.ErrUnreachable), errors.Is(err, files.ErrState),
 		errors.Is(err, files.ErrTimestamp), errors.Is(err, files.ErrTags), errors.Is(err, files.ErrSize), errors.Is(err, files.ErrBadSize),
 		errors.Is(err, files.ErrSwept), errors.Is(err, files.ErrCrossBucket),
 		errors.Is(err, files.ErrPart):

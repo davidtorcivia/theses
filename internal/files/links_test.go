@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/board"
@@ -88,6 +89,42 @@ func TestAddLinkKeepsAPageThatSaysNothing(t *testing.T) {
 	if link.FetchedAt != nil {
 		t.Error("fetched_at is set although nothing was read")
 	}
+	// The kind still comes from the address, so the drawer's list has it.
+	if link.Kind != "article" {
+		t.Errorf("kind %q, want the fallback article", link.Kind)
+	}
+}
+
+// A refetch the page refuses keeps what the link had, rather than writing the
+// empty answer over a title and author a person may have corrected.
+func TestRefetchThatFailsKeepsTheLink(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	var down atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if down.Load() {
+			http.Error(w, "no", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<title>Tides</title>"))
+	}))
+	t.Cleanup(srv.Close)
+	e, err := f.AddLink(ctx, f.who["editor"], f.prop, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	down.Store(true)
+	if _, err := f.RefetchLink(ctx, f.who["editor"], e.EntityID); !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("RefetchLink: %v, want ErrUnreachable", err)
+	}
+	link, err := GetLink(ctx, f.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link.Title != "Tides" || link.Kind != "article" || link.FetchedAt == nil {
+		t.Fatalf("after a failed refetch: %+v", link)
+	}
 }
 
 // A URL is the one thing a person pastes that the server then fetches, so it
@@ -146,7 +183,7 @@ func TestRefetchNeedsTheSameStanding(t *testing.T) {
 	}
 }
 
-func TestEditLinkValidatesItsFields(t *testing.T) {
+func TestPatchLinkValidatesItsFields(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 	e, err := f.AddLink(ctx, f.who["editor"], f.prop, page(t, "<title>Tides</title>"))
@@ -156,18 +193,19 @@ func TestEditLinkValidatesItsFields(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		in   Edit
+		in   LinkPatch
 		want error
 	}{
-		{"a kind the list does not have", Edit{Kind: "manuscript"}, ErrKind},
-		{"a question that is not one of the four", Edit{Question: "V"}, ErrQuestion},
-		{"a note longer than the field", Edit{Note: strings.Repeat("x", board.MaxBody+1)}, board.ErrTooLong},
-		{"a correction", Edit{Title: "Tide tables", Kind: "book", Question: "II", Note: "Chapter 3."}, nil},
+		{"a kind the list does not have", LinkPatch{Kind: new("manuscript")}, ErrKind},
+		{"no kind at all", LinkPatch{Kind: new("")}, ErrKind},
+		{"a question that is not one of the four", LinkPatch{Question: new("V")}, ErrQuestion},
+		{"a note longer than the field", LinkPatch{Note: new(strings.Repeat("x", board.MaxBody+1))}, board.ErrTooLong},
+		{"a correction", LinkPatch{Title: new("Tide tables"), Kind: new("book"), Question: new("II"), Note: new("Chapter 3.")}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := f.EditLink(ctx, f.who["editor"], e.EntityID, tc.in)
+			_, err := f.PatchLink(ctx, f.who["editor"], e.EntityID, tc.in)
 			if !errors.Is(err, tc.want) {
-				t.Fatalf("EditLink: %v, want %v", err, tc.want)
+				t.Fatalf("PatchLink: %v, want %v", err, tc.want)
 			}
 		})
 	}
@@ -193,7 +231,7 @@ func TestUndoPutsALinkBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edit, err := f.EditLink(ctx, f.who["editor"], e.EntityID, Edit{Title: "Wrong", Kind: "video"})
+	edit, err := f.PatchLink(ctx, f.who["editor"], e.EntityID, LinkPatch{Title: new("Wrong"), Kind: new("video")})
 	if err != nil {
 		t.Fatal(err)
 	}
