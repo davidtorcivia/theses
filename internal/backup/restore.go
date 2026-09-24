@@ -30,21 +30,14 @@ import (
 // attacker, and it is far above any database this app will hold.
 const maxEntry = 64 << 30
 
-// Restore puts the database and the markdown mirror back from one archive.
+// restore puts the database and the markdown mirror back from one archive.
+// RestoreNow runs it.
 //
 // Everything that can fail happens before anything changes: the archive is
 // downloaded, decrypted, checked against the hash in its manifest, unpacked
 // beside the live files and opened as a database. Only then do writes stop and
 // the files change places, and the ones being replaced are moved aside under a
 // timestamp rather than removed.
-func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
-	if !b.busy.CompareAndSwap(false, true) {
-		return ErrBusy
-	}
-	defer b.busy.Store(false)
-	return b.restore(ctx, key, actorID)
-}
-
 func (b *Backup) restore(ctx context.Context, key string, actorID int64) error {
 	stage, err := os.MkdirTemp(b.cfg.DataDir, "restore-stage-")
 	if err != nil {

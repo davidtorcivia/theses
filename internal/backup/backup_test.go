@@ -228,12 +228,12 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 			t.Error("timed out stopping the document mirror")
 		}
 	}()
-	// Wait for Run to own the current tree before Restore asks it to release it.
+	// Wait for Run to own the current tree before the restore asks it to release it.
 	waitBackup(t, "the document mirror to start", func() bool {
 		return mirror.WithMirrorPaused(ctx, func() error { return nil }) == nil
 	})
 
-	if err := f.b.Restore(ctx, m.Name, 0); err != nil {
+	if err := f.b.restore(ctx, m.Name, 0); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 
@@ -555,7 +555,7 @@ func TestRestoreRefusesATamperedArchiveBeforeAnythingChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := f.b.Restore(ctx, m.Name, 0); err == nil {
+	if err := f.b.restore(ctx, m.Name, 0); err == nil {
 		t.Fatal("a tampered archive was restored")
 	}
 	if got := f.workspaceName(); got != `"after"` {
@@ -590,7 +590,7 @@ func TestRestoreValidatesTheDatabaseBeforeReplacingLiveData(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.save("workspace.name", "after")
-			if err := f.b.Restore(ctx, m.Name, 0); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if err := f.b.restore(ctx, m.Name, 0); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("restore invalid database: %v", err)
 			}
 			if got := f.workspaceName(); got != `"after"` || f.b.Frozen() {
@@ -616,7 +616,7 @@ func TestRestoreRefusesAnArchiveThatDoesNotMatchItsManifest(t *testing.T) {
 	if err := f.bucket.Put(ctx, manifestKey(m.Name), strings.NewReader(wrong), int64(len(wrong)), "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	err = f.b.Restore(ctx, m.Name, 0)
+	err = f.b.restore(ctx, m.Name, 0)
 	if err == nil || !strings.Contains(err.Error(), "hash") {
 		t.Fatalf("the hash was not checked: %v", err)
 	}
@@ -777,7 +777,7 @@ func TestVerificationLeavesTheLiveWorkspaceUntouched(t *testing.T) {
 	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM propositions`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.b.Verify(ctx, m.Name)
+	result, err := f.b.verify(ctx, m.Name)
 	if err != nil {
 		t.Fatal(err)
 	}

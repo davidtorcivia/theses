@@ -297,7 +297,7 @@ func (b *Backup) configured() bool {
 // the database.
 func (b *Backup) Frozen() bool { return b.frozen.Load() }
 
-// Freeze stops and restarts writes. Restore holds it over the swap; the only
+// Freeze stops and restarts writes. A restore holds it over the swap; the only
 // other caller is the test that checks the middleware refuses a write.
 func (b *Backup) Freeze(on bool) { b.frozen.Store(on) }
 

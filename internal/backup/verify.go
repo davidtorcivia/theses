@@ -19,15 +19,8 @@ type Verification struct {
 	Duration  time.Duration `json:"duration"`
 }
 
-// Verify runs restore preparation and mirror reconciliation in an isolated directory.
-func (b *Backup) Verify(ctx context.Context, key string) (Verification, error) {
-	if !b.busy.CompareAndSwap(false, true) {
-		return Verification{}, ErrBusy
-	}
-	defer b.busy.Store(false)
-	return b.verify(ctx, key)
-}
-
+// verify runs restore preparation and mirror reconciliation in an isolated
+// directory. VerifyNow runs it.
 func (b *Backup) verify(ctx context.Context, key string) (Verification, error) {
 	start := time.Now()
 	dir, err := os.MkdirTemp(b.cfg.DataDir, "verify-")
