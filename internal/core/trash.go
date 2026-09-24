@@ -145,7 +145,7 @@ func (s *Service) KeepDeleted(ctx context.Context, tx *sql.Tx, prop int64, entit
 }
 
 func (s *Service) Trash(ctx context.Context, a Actor, prop int64) ([]TrashItem, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (s *Service) Trash(ctx context.Context, a Actor, prop int64) ([]TrashItem, 
 }
 
 func (s *Service) DeletedItem(ctx context.Context, a Actor, id int64) (TrashItem, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return TrashItem{}, err
 	}
@@ -207,8 +207,8 @@ func (s *Service) RestoreDeleted(ctx context.Context, a Actor, id int64) (Event,
 	}
 	return s.Do(ctx, a, prop, auth.CanDelete, func(ctx context.Context, tx *sql.Tx) (Change, error) {
 		var entity, raw string
-		var entityID int64
-		if err := tx.QueryRowContext(ctx, `SELECT entity,entity_id,payload FROM trash WHERE id=? AND proposition_id=? AND restored_at IS NULL AND expires_at>?`, id, prop, s.Now().Unix()).Scan(&entity, &entityID, &raw); err != nil {
+		var entityID, deletedAt int64
+		if err := tx.QueryRowContext(ctx, `SELECT entity,entity_id,payload,deleted_at FROM trash WHERE id=? AND proposition_id=? AND restored_at IS NULL AND expires_at>?`, id, prop, s.Now().Unix()).Scan(&entity, &entityID, &raw, &deletedAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				err = ErrNotFound
 			}
@@ -289,6 +289,17 @@ func (s *Service) RestoreDeleted(ctx context.Context, a Actor, id int64) (Event,
 					if count > 0 {
 						return Change{}, ErrRestoreConflict
 					}
+					// Column ids are reused, so the one a card names may now be
+					// another proposition's.
+					if table == "cards" {
+						var ours bool
+						if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM columns WHERE id=? AND proposition_id=?)", row[scopeIndex], prop).Scan(&ours); err != nil {
+							return Change{}, err
+						}
+						if !ours {
+							return Change{}, ErrRestoreConflict
+						}
+					}
 				}
 
 				if len(row) != len(data.Columns) {
@@ -308,10 +319,12 @@ func (s *Service) RestoreDeleted(ctx context.Context, a Actor, id int64) (Event,
 					}
 				}
 				// Account deletion keeps its normal SET NULL and CASCADE semantics in trash.
+				// User ids are reused, so an account made after the delete is not the
+				// one the row named and counts as deleted.
 				for j, col := range data.Columns {
 					if action, ok := userKeys[col]; ok && row[j] != nil {
 						var exists bool
-						if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id=?)", row[j]).Scan(&exists); err != nil {
+						if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id=? AND created_at<=?)", row[j], deletedAt).Scan(&exists); err != nil {
 							return Change{}, err
 						}
 						if !exists {
