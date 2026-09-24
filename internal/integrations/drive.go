@@ -83,6 +83,17 @@ func (d *Drive) Configure(s Settings) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.clientID, d.clientSecret = s["client_id"], s["client_secret"]
+	// The endpoints are set before the token is read, because the answer to a
+	// token that will not parse is to connect again, which needs them.
+	if d.HTTP == nil {
+		d.HTTP = Client()
+	}
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Auth == "" {
+		d.Auth, d.TokenURL, d.API = googleAuth, googleToken, googleAPI
+	}
 	d.token = Token{}
 	if raw := s["token"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &d.token); err != nil {
@@ -93,15 +104,6 @@ func (d *Drive) Configure(s Settings) error {
 			slog.Warn("the stored Drive token cannot be read", "err", err)
 			return ErrReconnect
 		}
-	}
-	if d.HTTP == nil {
-		d.HTTP = Client()
-	}
-	if d.Now == nil {
-		d.Now = time.Now
-	}
-	if d.Auth == "" {
-		d.Auth, d.TokenURL, d.API = googleAuth, googleToken, googleAPI
 	}
 	return nil
 }

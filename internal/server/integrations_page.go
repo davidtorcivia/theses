@@ -97,10 +97,9 @@ func (s *Server) loadDrive(ctx context.Context) (*integrations.Drive, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.drive.Configure(set); err != nil {
-		return nil, err
-	}
-	return s.drive, nil
+	// The instance comes back with ErrReconnect too: its client is set, and
+	// connecting again is what that error asks for.
+	return s.drive, s.drive.Configure(set)
 }
 
 func (s *Server) loadTransistor(ctx context.Context) (*integrations.Transistor, error) {
@@ -132,7 +131,9 @@ const driveCallback = "/settings/integrations/drive/callback"
 // cookie of its own; the callback is only believed when the two match.
 func (s *Server) postDriveConnect(w http.ResponseWriter, r *http.Request) {
 	drive, err := s.loadDrive(r.Context())
-	if err != nil {
+	// A token that has to be replaced is what connecting replaces, so it is
+	// no reason to refuse to connect.
+	if err != nil && !errors.Is(err, integrations.ErrReconnect) {
 		s.integrationRefused(w, r, err)
 		return
 	}
@@ -179,7 +180,7 @@ func (s *Server) getDriveCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	drive, err := s.loadDrive(r.Context())
-	if err != nil {
+	if err != nil && !errors.Is(err, integrations.ErrReconnect) {
 		s.integrationRefused(w, r, err)
 		return
 	}
