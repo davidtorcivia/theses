@@ -189,6 +189,7 @@ async function loadMaterial(generation) {
     // so it is the only thing that writes them.
     offline.keepMaterial({
       proposition,
+      me: state.me,
       at: Date.now(),
       v: VERSION,
       links: state.links,
@@ -920,6 +921,7 @@ function write() {
   if (!state.open || (state.fromCache && !booted)) return;
   offline.keep({
     proposition: state.open,
+    me: state.me,
     at: Date.now(),
     v: VERSION,
     payload: snapshot(),
@@ -959,7 +961,8 @@ export async function restore(open, show = false) {
   // reads them. A proposition whose panes were never opened has none, and the
   // panes say so rather than the board refusing to draw.
   const kept = await askTwice(() => offline.cachedMaterial(open));
-  const material = kept && kept.v === VERSION ? kept : {};
+  // Another person's links and files are not drawn under this one's board.
+  const material = kept && kept.v === VERSION && kept.me === row.me ? kept : {};
   state.links = material.links || [];
   state.files = material.files || [];
   state.folders = material.folders || [];

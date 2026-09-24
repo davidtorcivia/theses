@@ -5,6 +5,7 @@
 import { $, el, clear, initials, offlineLine, saying } from './dom.js';
 import { state, boot, restore, subscribe, user, emit, drawQueued } from './state.js';
 import { connect, count } from './net.js';
+import { forgetOthers } from './offline.js';
 import { renderRail } from './rail.js';
 import { openPalette, closePalette } from './palette.js';
 import { closePicker } from './picker.js';
@@ -17,6 +18,7 @@ export function start(renderRest) {
   const payload = JSON.parse($('#payload').textContent);
   if (payload) {
     boot(payload);
+    forgetOthers(payload.me);
     // What this device has promised and not sent is not in the payload, so the
     // blocks those commands make are drawn from the commands themselves.
     drawQueued();
