@@ -93,25 +93,6 @@ type Config struct {
 	PublicBaseURL string
 }
 
-// Defaults fills endpoint and region from the provider and a hint: the B2
-// region such as us-west-004, or the R2 account id. The owner still supplies
-// bucket and keys. For provider s3 the endpoint is left empty so the SDK
-// resolves the AWS endpoint for the hint region.
-func Defaults(provider, hint string) Config {
-	c := Config{Provider: provider}
-	switch provider {
-	case "b2":
-		c.Region = hint
-		c.Endpoint = "https://s3." + hint + ".backblazeb2.com"
-	case "r2":
-		c.Region = "auto"
-		c.Endpoint = "https://" + hint + ".r2.cloudflarestorage.com"
-	case "s3":
-		c.Region = hint
-	}
-	return c
-}
-
 // AWSOrigin uses the presigner's path-style endpoint rules across AWS partitions.
 func AWSOrigin(region, bucket string) (string, error) {
 	pathStyle := true
@@ -231,10 +212,6 @@ func New(cfg Config) (*Client, error) {
 	api := s3.New(opts)
 	return &Client{s3: api, presign: s3.NewPresignClient(api), bucket: cfg.Bucket}, nil
 }
-
-// Bucket is the bucket this client writes to, for a caller deciding whether two
-// of its folders land in the same one.
-func (c *Client) Bucket() string { return c.bucket }
 
 // SameBucket includes the endpoint because different providers can reuse a name.
 func (c *Client) SameBucket(other *Client) bool {
@@ -416,11 +393,13 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// Copy duplicates an object inside the bucket, for a new version or a rename.
+// Copy duplicates an object inside the bucket. An upload that arrived through
+// one presigned PUT is copied to a key of its own on completion, so that URL
+// cannot write over the ready object while it is still valid.
 //
-// ponytail: same bucket and 5 GiB only, which is what versions need; moving a
-// folder to another bucket adds a source bucket parameter, and objects over
-// 5 GiB need UploadPartCopy instead.
+// ponytail: same bucket and 5 GiB only, which is what that needs; a copy
+// between buckets adds a source bucket parameter, and objects over 5 GiB need
+// UploadPartCopy instead.
 func (c *Client) Copy(ctx context.Context, from, to string) error {
 	if err := validKey(from); err != nil {
 		return err
@@ -428,7 +407,9 @@ func (c *Client) Copy(ctx context.Context, from, to string) error {
 	if err := validKey(to); err != nil {
 		return err
 	}
-	src := (&url.URL{Path: c.bucket + "/" + from}).EscapedPath()
+	// The header is URL-decoded on the far side, where a bare "+" reads as a
+	// space, and EscapedPath leaves "+" alone because a path may hold one.
+	src := strings.ReplaceAll((&url.URL{Path: c.bucket + "/" + from}).EscapedPath(), "+", "%2B")
 	if _, err := c.s3.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     aws.String(c.bucket),
 		Key:        aws.String(to),

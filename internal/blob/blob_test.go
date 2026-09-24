@@ -76,21 +76,6 @@ func putSigned(t *testing.T, rawurl string, headers map[string]string, body []by
 	return resp
 }
 
-func TestDefaults(t *testing.T) {
-	for _, tc := range []struct {
-		provider, hint, endpoint, region string
-	}{
-		{"b2", "us-west-004", "https://s3.us-west-004.backblazeb2.com", "us-west-004"},
-		{"r2", "abc123", "https://abc123.r2.cloudflarestorage.com", "auto"},
-		{"s3", "eu-central-1", "", "eu-central-1"},
-	} {
-		got := Defaults(tc.provider, tc.hint)
-		if got.Provider != tc.provider || got.Endpoint != tc.endpoint || got.Region != tc.region {
-			t.Errorf("Defaults(%q, %q) = %+v, want endpoint %q region %q", tc.provider, tc.hint, got, tc.endpoint, tc.region)
-		}
-	}
-}
-
 func TestNormalizeEndpoint(t *testing.T) {
 	for _, tc := range []struct {
 		in, want string
@@ -697,6 +682,36 @@ func TestCopyReadsATricklingResponse(t *testing.T) {
 	}
 	if err := c.Copy(context.Background(), "7-v/f7/big.wav", "7-v/f7/v1/big.wav"); err != nil {
 		t.Errorf("Copy of a response that trickled for two seconds: %v", err)
+	}
+}
+
+// The copy source is a URL-encoded header, and S3 decodes "+" in it as a
+// space, so a name with a plus in it has to arrive as %2B.
+func TestCopyEscapesTheSource(t *testing.T) {
+	for _, tc := range []struct{ from, want string }{
+		{"7-v/f7/plain.wav", "theses/7-v/f7/plain.wav"},
+		{"7-v/f7/a+b c.wav", "theses/7-v/f7/a%2Bb%20c.wav"},
+		{"7-v/f7/caf\u00e9?.wav", "theses/7-v/f7/caf%C3%A9%3F.wav"},
+	} {
+		t.Run(tc.from, func(t *testing.T) {
+			var got string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("X-Amz-Copy-Source")
+				w.Header().Set("Content-Type", "application/xml")
+				io.WriteString(w, `<CopyObjectResult><ETag>"abc"</ETag></CopyObjectResult>`)
+			}))
+			t.Cleanup(srv.Close)
+			c, err := New(Config{Provider: "s3", Endpoint: srv.URL, Region: "us-east-1", Bucket: "theses", AccessKey: "k", SecretKey: "s"})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if err := c.Copy(context.Background(), tc.from, "7-v/f7/v1/x.wav"); err != nil {
+				t.Fatalf("Copy: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("x-amz-copy-source %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
