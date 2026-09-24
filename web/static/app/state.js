@@ -902,7 +902,7 @@ const VERSION = import.meta.url.match(/\/static\/([^/]+)\//)?.[1] || 'dev';
 // time.
 let keeping = 0;
 
-export function remember() {
+function remember() {
   if (!state.open || keeping || (state.fromCache && !booted)) return;
   keeping = setTimeout(write, 2000);
 }

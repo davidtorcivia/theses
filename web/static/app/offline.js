@@ -424,7 +424,7 @@ export async function signedOut() {
 }
 
 // wipe drops everything this device holds of the workspace.
-export function wipe() {
+function wipe() {
   return new Promise((resolve) => {
     let req;
     try {

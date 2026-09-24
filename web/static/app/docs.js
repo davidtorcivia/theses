@@ -308,7 +308,7 @@ const drawn = new Map();
 const idle = 400;
 const ceiling = 2000;
 
-export function documents() {
+function documents() {
   return state.documents || [];
 }
 

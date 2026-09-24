@@ -244,7 +244,7 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
       if (ev.pointerId !== e.pointerId) return;
       // A drop that throws still puts the row down, or the document would stay
       // unselectable and the page unable to scroll.
-      try { if (on && zone) drop(zone); } finally { end(ev); }
+      try { if (on && zone) drop(zone); } finally { end(); }
     }
 
     // Escape puts the row down. Nothing is sent, and the render held through
@@ -254,13 +254,10 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
       if (ev.key !== 'Escape' || !on) return;
       ev.preventDefault();
       ev.stopPropagation();
-      end(ev);
+      end();
     }
 
-    // ev is the event that ended the drag, which pointercancel and blur pass
-    // themselves and the rest hand over, because which one it was is the only
-    // thing a phone can be asked about a drag that let go by itself.
-    function end(ev) {
+    function end() {
       if (active === token) active = null;
       touchDrag = false;
       document.documentElement.classList.remove('pressing');
