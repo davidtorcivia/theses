@@ -358,16 +358,6 @@ type APIToken struct {
 	ExpiresAt  sql.NullInt64
 }
 
-func CreateAPIToken(ctx context.Context, q Querier, userID int64, name string, hash []byte, scopes string) (int64, error) {
-	res, err := q.ExecContext(ctx, `INSERT INTO api_tokens
-		(user_id, name, hash, scopes, created_at) VALUES (?, ?, ?, ?, unixepoch())`,
-		userID, name, hash, scopes)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
 func APITokenByHash(ctx context.Context, q Querier, hash []byte) (*APIToken, error) {
 	var t APIToken
 	err := q.QueryRowContext(ctx,

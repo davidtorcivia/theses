@@ -931,12 +931,6 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-// activity records a mutation that could not share a transaction with its
-// change, because the change went through a package holding its own handle.
-func (s *Server) activity(ctx context.Context, actorID int64, entity, entityID, action, before, after string) error {
-	return store.InsertActivity(ctx, s.db, "user", itoa(actorID), "", entity, entityID, action, before, after)
-}
-
 // errRefused is what a write closure returns when the statement it guards
 // changed nothing. It travels back through s.write so the activity row rolls
 // back with the write that did not happen.

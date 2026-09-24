@@ -449,7 +449,6 @@ func (a *API) editCard(w http.ResponseWriter, r *http.Request, p Principal) {
 			if e, err = a.Board.EditCardDescription(ctx, who, id, base, *body.Description); err != nil {
 				return core.Event{}, err
 			}
-			base = versionOf(e, base)
 		}
 		if body.Question != nil {
 			if e, err = a.Board.SetCardQuestion(ctx, who, id, *body.Question); err != nil {

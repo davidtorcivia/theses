@@ -1067,7 +1067,7 @@ func TestForbiddenPageLinksToOnePlace(t *testing.T) {
 		t.Errorf("links with a session = %v, want only /", got)
 	}
 	h.signOut()
-	res, body = h.get("/settings")
+	res, _ = h.get("/settings")
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("signed out, /settings gave %d", res.StatusCode)
 	}

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/sha256"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -200,7 +199,7 @@ func TestCalendarRevisionTriggers(t *testing.T) {
 			t.Fatal(err)
 		}
 		if revision != int64(step.revision) || updated <= 0 {
-			t.Fatal(fmt.Sprintf("revision %d expected %d, timestamp %d", revision, step.revision, updated))
+			t.Fatalf("revision %d expected %d, timestamp %d", revision, step.revision, updated)
 		}
 	}
 }
