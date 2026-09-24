@@ -622,6 +622,26 @@ func TestDeletingAPropositionKeepsTheRecordOfIt(t *testing.T) {
 	}
 }
 
+// An upload in flight holds the multipart id its parts are aborted by, and the
+// delete would cascade it away and leave the parts in the bucket.
+func TestDeletingAPropositionWaitsForItsUploads(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO files(id,proposition_id,name,object_key,state,created_at)
+		VALUES(1,?,'tape.wav','files/1','uploading',0)`, f.prop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteProposition(ctx, f.who["owner"], f.prop); !errors.Is(err, ErrUploading) {
+		t.Fatalf("deleting with an upload in flight gave %v", err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE files SET state='ready' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteProposition(ctx, f.who["owner"], f.prop); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestArchiveAndRestoreAndVia(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)

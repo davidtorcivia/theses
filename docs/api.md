@@ -1023,7 +1023,8 @@ proposition that is not there. The board, the documents, the links and the
 files go with it, and the record of the deletion is filed with no proposition
 so that it survives the cascade. An archived proposition can be deleted without
 being restored first: deleting and restoring are the two writes an archived one
-still takes.
+still takes. A proposition with recording releases, or with a file still
+uploading, is refused with `409`; finish or cancel the uploads first.
 
 ## `POST /api/v1/propositions/{id}/members/{user}`
 

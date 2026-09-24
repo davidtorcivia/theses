@@ -24,6 +24,8 @@ var (
 	// ErrEmpty is a title or a note with nothing in it.
 	ErrEmpty         = errors.New("that needs some text")
 	ErrLegalReleases = errors.New("this proposition has recording releases; archive it to retain signed records")
+	// ErrUploading is deleting a proposition with a file still uploading.
+	ErrUploading = errors.New("this proposition has uploads in progress; finish or cancel uploads first")
 	// ErrArchived is an edit to a proposition that has been put away.
 	ErrArchived = errors.New("that proposition is archived; restore it first")
 	// ErrShow is a mutation of the permanent shared workspace or its membership.
@@ -382,6 +384,15 @@ func (s *Service) DeleteProposition(ctx context.Context, a core.Actor, id int64)
 		}
 		if releases > 0 {
 			return ErrLegalReleases
+		}
+		// The cascade would take the uploads rows and their multipart ids,
+		// which are all the sweep has to abort the parts in the bucket with.
+		var uploading bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM files WHERE proposition_id=? AND state='uploading')`, id).Scan(&uploading); err != nil {
+			return err
+		}
+		if uploading {
+			return ErrUploading
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM propositions WHERE id = ?`, id)
 		return err
