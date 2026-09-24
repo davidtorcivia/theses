@@ -172,18 +172,23 @@ func TestMailThatIsNotConfiguredCostsNoAttempt(t *testing.T) {
 	grace := f.user(t, "grace")
 	c := f.channel(t, Channel{UserID: grace, Kind: KindEmail}, "moved")
 	id := f.queueOne(t, c)
+	// Queued just now, so the day it may wait for a mail server is ahead.
+	if _, err := f.db.ExecContext(context.Background(),
+		`UPDATE notification_outbox SET created_at = unixepoch() WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
 
 	// No fake sender: the real path runs and stops at the missing SMTP host,
 	// which is a workspace that has not been set up rather than a failure.
 	if err := f.s.once(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	attempts, _, _, done := f.state(t, id)
+	attempts, _, why, done := f.state(t, id)
 	if done {
 		t.Fatal("a message went out with no mail server configured")
 	}
-	if attempts != 0 {
-		t.Errorf("attempts = %d, want 0: the day of retries has not started", attempts)
+	if attempts != 0 || why != "" {
+		t.Errorf("attempts = %d, last_error %q, want 0 and none: the day of retries has not started", attempts, why)
 	}
 }
 
@@ -231,6 +236,43 @@ func TestUnsendableMailDoesNotBlockTheQueue(t *testing.T) {
 	}
 	if len(*calls) != 1 || (*calls)[0].channel != hook.ID {
 		t.Fatalf("delivered %+v, want the one webhook message", *calls)
+	}
+}
+
+// A row waiting on a mail server nobody has set up waits a day from its
+// enqueue and is then given up, rather than piling up until one is set.
+func TestUnconfiguredMailGivesUpAfterADay(t *testing.T) {
+	f := newFixture(t)
+	grace := f.user(t, "grace")
+	post := f.channel(t, Channel{UserID: grace, Kind: KindEmail}, "moved")
+	fakeSender(t, func(int) error { return mail.ErrNotConfigured })
+	queued := map[string]int64{}
+	for name, created := range map[string]time.Time{
+		"fresh": time.Now(),
+		"stale": time.Now().Add(-giveUpAfter - time.Minute),
+	} {
+		res, err := f.db.ExecContext(context.Background(), `INSERT INTO notification_outbox
+			(channel_id, payload_json, created_at, next_at, event)
+			VALUES (?, '{"event":"moved","title":"t","items":[{"text":"x"}]}', ?, ?, 'moved')`,
+			post.ID, created.Unix(), created.Unix())
+		if err != nil {
+			t.Fatal(err)
+		}
+		queued[name], _ = res.LastInsertId()
+	}
+	if err := f.s.once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for name, given := range map[string]bool{"fresh": false, "stale": true} {
+		var tried *int64
+		var why string
+		if err := f.db.QueryRowContext(context.Background(),
+			`SELECT tried_at, last_error FROM notification_outbox WHERE id = ?`, queued[name]).Scan(&tried, &why); err != nil {
+			t.Fatal(err)
+		}
+		if (tried != nil) != given || given && why == "" {
+			t.Errorf("%s row: tried_at %v, last_error %q, want given up %v", name, tried, why, given)
+		}
 	}
 }
 
