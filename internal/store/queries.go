@@ -131,8 +131,10 @@ func SetPasswordHash(ctx context.Context, q Querier, id int64, hash string) erro
 	return err
 }
 
-func SetTOTPSecret(ctx context.Context, q Querier, id int64, secret string) error {
-	_, err := q.ExecContext(ctx, `UPDATE users SET totp_secret = ?, totp_last_step = 0 WHERE id = ?`, secret, id)
+// SetTOTPSecret replaces the secret and records step, the one the enrolling
+// code proved, as used, so that code cannot sign in a second time.
+func SetTOTPSecret(ctx context.Context, q Querier, id int64, secret string, step int64) error {
+	_, err := q.ExecContext(ctx, `UPDATE users SET totp_secret = ?, totp_last_step = ? WHERE id = ?`, secret, step, id)
 	return err
 }
 

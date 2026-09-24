@@ -96,6 +96,8 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 		if err := s.reauthenticate(r, u); err != nil {
 			if errors.Is(err, auth.ErrBadCredentials) {
 				s.back(w, r, "/profile#you", map[string]any{"Error": "The current password or authenticator code did not match."})
+			} else if errors.Is(err, auth.ErrRateLimited) {
+				s.back(w, r, "/profile#you", map[string]any{"Error": err.Error()})
 			} else {
 				s.fail(w, r, err)
 			}
@@ -125,7 +127,12 @@ func (s *Server) postProfile(w http.ResponseWriter, r *http.Request) {
 
 // reauthenticate checks the credentials needed immediately before a signed-in
 // person changes an account-recovery credential.
+// Its attempts count against the sign-in limit, or a stolen session could
+// guess the password and then the code without one.
 func (s *Server) reauthenticate(r *http.Request, u *store.User) error {
+	if !s.auth.Allow(auth.BucketLogin, s.auth.ClientIP(r), u.Handle) {
+		return auth.ErrRateLimited
+	}
 	if !auth.CheckPassword(u.PasswordHash, r.PostFormValue("current")) {
 		return auth.ErrBadCredentials
 	}
@@ -137,6 +144,10 @@ func (s *Server) reauthenticate(r *http.Request, u *store.User) error {
 
 func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 	u := userOf(r)
+	if !s.auth.Allow(auth.BucketLogin, s.auth.ClientIP(r), u.Handle) {
+		s.back(w, r, "/profile#security", map[string]any{"Error": auth.ErrRateLimited.Error()})
+		return
+	}
 	if !auth.CheckPassword(u.PasswordHash, r.PostFormValue("current")) {
 		s.back(w, r, "/profile#security", map[string]any{"Error": "That is not your current password."})
 		return
@@ -153,9 +164,20 @@ func (s *Server) postPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A new password signs out every other session, which is what somebody
+	// changing it because the old one leaked needs; this browser starts afresh.
 	if err := s.write(r, "user", itoa(u.ID), "password", "", "", func(q store.Querier) error {
-		return store.SetPasswordHash(r.Context(), q, u.ID, hash)
+		if err := store.SetPasswordHash(r.Context(), q, u.ID, hash); err != nil {
+			return err
+		}
+		return store.BumpSessionEpoch(r.Context(), q, u.ID)
 	}); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	fresh := *u
+	fresh.SessionEpoch++
+	if err := s.auth.StartSession(r.Context(), w, r, &fresh, s.sessionDays()); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -169,6 +191,8 @@ func (s *Server) postReenrol(w http.ResponseWriter, r *http.Request) {
 	if err := s.reauthenticate(r, u); err != nil {
 		if errors.Is(err, auth.ErrBadCredentials) {
 			s.back(w, r, "/profile#security", map[string]any{"Error": "The current password or authenticator code did not match."})
+		} else if errors.Is(err, auth.ErrRateLimited) {
+			s.back(w, r, "/profile#security", map[string]any{"Error": err.Error()})
 		} else {
 			s.fail(w, r, err)
 		}

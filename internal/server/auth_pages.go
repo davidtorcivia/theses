@@ -347,7 +347,8 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.enrolRestart(r), http.StatusSeeOther)
 		return
 	}
-	if _, ok := auth.CheckCode(p.Secret, r.PostFormValue("code"), s.auth.Now()); !ok {
+	step, ok := auth.CheckCode(p.Secret, r.PostFormValue("code"), s.auth.Now())
+	if !ok {
 		qr, err := auth.QR(p.OTPURL)
 		if err != nil {
 			s.fail(w, r, err)
@@ -361,7 +362,7 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if p.Kind == "signin" {
-		s.finishEnrolment(w, r, p)
+		s.finishEnrolment(w, r, p, step)
 		return
 	}
 
@@ -374,7 +375,7 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.write(r, "user", itoa(p.UserID), "totp", "", "", func(q store.Querier) error {
-			return store.SetTOTPSecret(r.Context(), q, p.UserID, p.Secret)
+			return store.SetTOTPSecret(r.Context(), q, p.UserID, p.Secret, step)
 		}); err != nil {
 			s.fail(w, r, err)
 			return
@@ -384,6 +385,13 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Anything but the two account-creating kinds is refused rather than
+	// read as one, so a cookie that is not a whole enrollment creates nothing.
+	if p.Kind != "setup" && (p.Kind != "invite" || p.InvitationID == 0) {
+		s.pending.clear(w, s.cfg.CookieSecure)
+		s.errorPage(w, r, http.StatusForbidden)
+		return
+	}
 	u := &store.User{
 		Handle: p.Handle, Email: p.Email, Name: p.Name, Initials: p.Initials,
 		Colour: p.Colour, Role: p.Role, PasswordHash: p.PasswordHash, TOTPSecret: p.Secret,
@@ -447,6 +455,10 @@ func (s *Server) postEnrol(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := store.CreateUser(r.Context(), tx, u)
 	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if _, err := store.ClaimTOTPStep(r.Context(), tx, id, step); err != nil {
 		s.fail(w, r, err)
 		return
 	}

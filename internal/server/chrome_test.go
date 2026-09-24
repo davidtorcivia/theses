@@ -489,11 +489,11 @@ func (h *harness) bendFlash(t *testing.T, bend func(*flash)) {
 			continue
 		}
 		var f flash
-		if !h.srv.pending.unseal(c.Value, &f) {
+		if !h.srv.pending.unseal(flashCookie, c.Value, &f) {
 			t.Fatal("the flash cookie does not open")
 		}
 		bend(&f)
-		value, err := h.srv.pending.seal(&f)
+		value, err := h.srv.pending.seal(flashCookie, &f)
 		if err != nil {
 			t.Fatal(err)
 		}
