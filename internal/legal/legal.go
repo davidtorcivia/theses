@@ -25,10 +25,9 @@ import (
 var ErrInvalid = errors.New("check the release fields and each person's name, date, age and consent")
 var ErrChanged = errors.New("this release changed; reload and read the current agreement before signing or saving")
 var ErrClosed = errors.New("this release is closed")
+var ErrRecipientsChanged = errors.New("the recipients or messages changed since the preview; preview again")
 
 const Consent = "I am at least 18 years old. I have read and agree to this release, and intend my typed name to be my electronic signature."
-const EmailSubject = "{title} is now available"
-const EmailBody = "Hello {name},\n\nThank you for taking part in {brand}. The episode is now available:\n\n{url}\n\nThank you,\n{brand}"
 
 func Draft(kind string) string {
 	intro := "I voluntarily agree to take part in a street recording for the production described above."
@@ -99,10 +98,13 @@ type Submission struct {
 	People    []Person  `json:"people"`
 	SignedAt  int64     `json:"signed_at"`
 }
-type Service struct{ *core.Service }
+type Service struct {
+	*core.Service
+	mail *outbox.Outbox
+}
 
-func New(c *core.Service) *Service { return &Service{c} }
-func Token() string                { b := make([]byte, 16); rand.Read(b); return hex.EncodeToString(b) }
+func New(c *core.Service, mail *outbox.Outbox) *Service { return &Service{c, mail} }
+func Token() string                                     { b := make([]byte, 16); rand.Read(b); return hex.EncodeToString(b) }
 
 const columns = `id,proposition_id,token,version,state,title,kind,brand,rights_holder,details,body,closed,email_subject,email_body,created_at`
 
@@ -116,8 +118,18 @@ func scan(row interface{ Scan(...any) error }) (r Release, err error) {
 func get(ctx context.Context, q store.Querier, id int64) (Release, error) {
 	return scan(q.QueryRowContext(ctx, "SELECT "+columns+" FROM legal_releases WHERE id=?", id))
 }
+
+// Public reads a release for its participants. An archived episode takes no
+// signatures, so its release reads as closed.
 func (s *Service) Public(ctx context.Context, token string) (Release, error) {
-	return scan(s.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM legal_releases WHERE token=?", token))
+	r, err := scan(s.DB.QueryRowContext(ctx, "SELECT "+columns+" FROM legal_releases WHERE token=?", token))
+	if err != nil {
+		return r, err
+	}
+	var archived bool
+	err = s.DB.QueryRowContext(ctx, "SELECT archived_at IS NOT NULL FROM propositions WHERE id=?", r.Proposition).Scan(&archived)
+	r.Closed = r.Closed || archived
+	return r, err
 }
 func access(ctx context.Context, q store.Querier, a core.Actor, prop int64) error {
 	if a.Kind != core.KindUser {
@@ -234,7 +246,7 @@ func (s *Service) Save(ctx context.Context, a core.Actor, r Release) (core.Event
 					return core.Change{}, fmt.Errorf("%w: signed releases cannot change assignment", ErrInvalid)
 				}
 			}
-			before = map[string]any{"id": old.ID, "version": old.Version, "closed": old.Closed}
+			before = summary(old)
 			action = "edit"
 			r.Token = old.Token
 			r.Created = old.Created
@@ -244,8 +256,14 @@ func (s *Service) Save(ctx context.Context, a core.Actor, r Release) (core.Event
 				return core.Change{}, err
 			}
 		}
-		return core.Change{Entity: "legal_release", EntityID: r.ID, Action: action, Before: before, After: map[string]any{"id": r.ID, "version": r.Version, "closed": r.Closed}}, nil
+		return core.Change{Entity: "legal_release", EntityID: r.ID, Action: action, Before: before, After: summary(r)}, nil
 	})
+}
+
+// summary is what the shared activity feed may say about a release: its
+// assignment and terms by digest, never the participants who signed it.
+func summary(r Release) map[string]any {
+	return map[string]any{"id": r.ID, "proposition_id": r.Proposition, "version": r.Version, "state": r.State, "kind": r.Kind, "title": r.Title, "rights_holder": r.RightsHolder, "closed": r.Closed, "agreement_digest": r.Agreement().Digest()}
 }
 func (s *Service) Sign(ctx context.Context, token, receipt string, version int64, people []Person, agreementDigest string) (Submission, error) {
 	if len(agreementDigest) != 64 || len(receipt) != 32 || len(people) == 0 || len(people) > 20 {
@@ -315,6 +333,9 @@ func (s *Service) Sign(ctx context.Context, token, receipt string, version int64
 			return core.Change{}, ErrChanged
 		}
 		if err = s.Allow(ctx, tx, r.Proposition, "legal_submission", "sign"); err != nil {
+			if errors.Is(err, board.ErrArchived) {
+				err = ErrClosed
+			}
 			return core.Change{}, err
 		}
 		out = Submission{Release: r.ID, Receipt: receipt, Agreement: current.Agreement(), People: people, SignedAt: s.Now().Unix()}
@@ -357,7 +378,7 @@ func (s *Service) Receipt(ctx context.Context, token, receipt string) (Submissio
 	return scanSubmission(s.DB.QueryRowContext(ctx, "SELECT "+submissionColumns+" FROM legal_submissions WHERE receipt=? AND release_id=(SELECT id FROM legal_releases WHERE token=?)", receipt, token))
 }
 func (s *Service) Submissions(ctx context.Context, a core.Actor, id int64) ([]Submission, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
@@ -444,13 +465,18 @@ func (s *Service) Notify(ctx context.Context, a core.Actor, id, version int64, e
 	if err != nil {
 		return core.Event{}, err
 	}
+	// Every route refuses rather than queue mail that no configured sender
+	// would deliver while the address is already marked notified.
+	if _, err = s.mail.Sender(ctx); err != nil {
+		return core.Event{}, err
+	}
 	messages, err := s.Preview(ctx, a, id, episodeURL, subject, body)
 	if err != nil {
 		return core.Event{}, err
 	}
-	return s.Do(ctx, a, r.Proposition, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
+	e, err := s.Do(ctx, a, r.Proposition, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (core.Change, error) {
 		if len(expected) > 0 && expected[0] != MessageDigest(messages) {
-			return core.Change{}, ErrChanged
+			return core.Change{}, ErrRecipientsChanged
 		}
 		current, err := get(ctx, tx, id)
 		if err != nil {
@@ -479,6 +505,10 @@ func (s *Service) Notify(ctx context.Context, a core.Actor, id, version int64, e
 		}
 		return core.Change{Entity: "legal_release", EntityID: id, Action: "notify", After: map[string]any{"id": id, "queued": count}}, nil
 	})
+	if err == nil {
+		s.mail.Nudge()
+	}
+	return e, err
 }
 
 func GoverningLaw(state string) string {

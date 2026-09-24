@@ -7,6 +7,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/legal"
+	"github.com/davidtorcivia/theses/internal/mail"
 )
 
 func (a *API) legalAnswer(w http.ResponseWriter, r *http.Request, value any, err error) {
@@ -14,8 +15,12 @@ func (a *API) legalAnswer(w http.ResponseWriter, r *http.Request, value any, err
 		a.fail(w, 422, err.Error())
 		return
 	}
-	if errors.Is(err, legal.ErrChanged) || errors.Is(err, legal.ErrClosed) {
+	if errors.Is(err, legal.ErrChanged) || errors.Is(err, legal.ErrClosed) || errors.Is(err, legal.ErrRecipientsChanged) {
 		a.fail(w, 409, err.Error())
+		return
+	}
+	if errors.Is(err, mail.ErrNotConfigured) {
+		a.fail(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 	a.workflowAnswer(w, r, value, err)

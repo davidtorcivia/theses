@@ -135,7 +135,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
 	s.api.Workflow = workflow.New(s.board.Service)
-	s.api.Legal = legal.New(s.board.Service)
+	s.api.Legal = legal.New(s.board.Service, s.mail)
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
 		return settings.Get[string](set, "defaults.document_template")
