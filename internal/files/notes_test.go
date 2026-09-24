@@ -40,7 +40,7 @@ func TestFileMetadataConflictsAndRecordingComments(t *testing.T) {
 		t.Fatal("stale note accepted")
 	}
 	name := "renamed.wav"
-	rename, err := f.PatchFile(ctx, actor, row.ID, &name, nil)
+	rename, err := f.PatchFileDetails(ctx, actor, row.ID, FilePatch{Name: &name})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -542,19 +542,10 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 	return event, err
 }
 
-// EditFile renames a file or moves it to another folder. The object keeps the
-// key it was written under: a rename that copied and deleted would break every
-// download URL already handed out, and the name a person downloads under comes
-// from the row, not the key.
-func (s *Service) EditFile(ctx context.Context, a core.Actor, id int64, name, folder string) (core.Event, error) {
-	return s.PatchFile(ctx, a, id, &name, &folder)
-}
-
-// PatchFile keeps omitted fields unchanged, including during concurrent edits.
-func (s *Service) PatchFile(ctx context.Context, a core.Actor, id int64, name, folder *string) (core.Event, error) {
-	return s.PatchFileDetails(ctx, a, id, FilePatch{Name: name, Folder: folder})
-}
-
+// FilePatch names the fields to change and leaves the rest, including during
+// concurrent edits. A rename or a move keeps the object's key: a rename that
+// copied and deleted would break every download URL already handed out, and
+// the name a person downloads under comes from the row, not the key.
 type FilePatch struct {
 	Name    *string `json:"name"`
 	Folder  *string `json:"folder"`
@@ -580,12 +571,14 @@ func (s *Service) PatchFileDetails(ctx context.Context, a core.Actor, id int64, 
 		in.Tags = &clean
 	}
 
+	// The kind column is the name's extension, so a rename carries it along.
+	var kind *string
 	if name != nil {
 		clean, err := filename(*name)
 		if err != nil {
 			return core.Event{}, err
 		}
-		name = &clean
+		name, kind = &clean, new(extension(clean))
 	}
 	if folder != nil && !known(*folder, Folders) {
 		return core.Event{}, ErrKind
@@ -627,7 +620,7 @@ func (s *Service) PatchFileDetails(ctx context.Context, a core.Actor, id int64, 
 		if metadata {
 			increment = 1
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE files SET name=coalesce(?,name),folder=coalesce(?,folder),note_md=coalesce(?,note_md),tags=coalesce(?,tags),metadata_version=metadata_version+? WHERE id=?`, name, folder, in.Note, in.Tags, increment, id)
+		_, err = tx.ExecContext(ctx, `UPDATE files SET name=coalesce(?,name),kind=coalesce(?,kind),folder=coalesce(?,folder),note_md=coalesce(?,note_md),tags=coalesce(?,tags),metadata_version=metadata_version+? WHERE id=?`, name, kind, folder, in.Note, in.Tags, increment, id)
 		return err
 	})
 }

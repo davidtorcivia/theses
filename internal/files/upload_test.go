@@ -770,12 +770,12 @@ func TestMoveBetweenBucketsIsRefused(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 	row := f.upload(t, "session.wav", "Documents", []byte("audio"))
-	if _, err := f.EditFile(ctx, f.who["editor"], row.ID, "session.wav", Recordings); !errors.Is(err, ErrCrossBucket) {
+	if _, err := f.PatchFileDetails(ctx, f.who["editor"], row.ID, FilePatch{Name: new("session.wav"), Folder: new(Recordings)}); !errors.Is(err, ErrCrossBucket) {
 		t.Fatalf("moving to the recordings bucket: %v, want a refusal", err)
 	}
 	// With one bucket for everything the same move is fine.
 	f.second = f.bucket
-	if _, err := f.EditFile(ctx, f.who["editor"], row.ID, "tide session.wav", Recordings); err != nil {
+	if _, err := f.PatchFileDetails(ctx, f.who["editor"], row.ID, FilePatch{Name: new("tide session.wav"), Folder: new(Recordings)}); err != nil {
 		t.Fatalf("moving inside one bucket: %v", err)
 	}
 	moved, err := GetFile(ctx, f.db, row.ID)
@@ -906,9 +906,13 @@ func TestUndoPutsAFileNameBack(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 	row := f.upload(t, "tides.pdf", "Documents", []byte("one page"))
-	edit, err := f.EditFile(ctx, f.who["editor"], row.ID, "wrong.pdf", "Reading")
+	edit, err := f.PatchFileDetails(ctx, f.who["editor"], row.ID, FilePatch{Name: new("wrong.txt"), Folder: new("Reading")})
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The kind is the extension, so it follows the name there and back.
+	if renamed, err := GetFile(ctx, f.db, row.ID); err != nil || renamed.Kind != "txt" {
+		t.Fatalf("after the rename: %+v %v", renamed, err)
 	}
 	if _, err := f.Undo(ctx, f.who["editor"], edit.Seq); err != nil {
 		t.Fatalf("Undo: %v", err)
@@ -917,7 +921,7 @@ func TestUndoPutsAFileNameBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if back.Name != "tides.pdf" || back.Folder != "Documents" {
+	if back.Name != "tides.pdf" || back.Kind != "pdf" || back.Folder != "Documents" {
 		t.Fatalf("after undo: %+v", back)
 	}
 }
@@ -1158,11 +1162,11 @@ func TestFolderMoveDistinguishesStorageEndpoints(t *testing.T) {
 	row := f.upload(t, "notes.txt", "Documents", []byte("abc"))
 	// A different S3 service can have a bucket with the same name.
 	f.second, _ = buckets(t)
-	if _, err := f.EditFile(ctx, f.who["editor"], row.ID, row.Name, Recordings); !errors.Is(err, ErrCrossBucket) {
+	if _, err := f.PatchFileDetails(ctx, f.who["editor"], row.ID, FilePatch{Name: new(row.Name), Folder: new(Recordings)}); !errors.Is(err, ErrCrossBucket) {
 		t.Fatalf("move to the same bucket name on another endpoint: %v", err)
 	}
 	f.second = f.bucket
-	if _, err := f.EditFile(ctx, f.who["editor"], row.ID, row.Name, Recordings); err != nil {
+	if _, err := f.PatchFileDetails(ctx, f.who["editor"], row.ID, FilePatch{Name: new(row.Name), Folder: new(Recordings)}); err != nil {
 		t.Fatalf("move between folders sharing a bucket: %v", err)
 	}
 }
@@ -1183,10 +1187,10 @@ func TestSmallUploadCanResumeAndPatchOnlyNamedFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	name, folder := "renamed.txt", "Reading"
-	if _, err := f.PatchFile(ctx, f.who["editor"], up.File.ID, &name, nil); err != nil {
+	if _, err := f.PatchFileDetails(ctx, f.who["editor"], up.File.ID, FilePatch{Name: &name}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.PatchFile(ctx, f.who["editor"], up.File.ID, nil, &folder); err != nil {
+	if _, err := f.PatchFileDetails(ctx, f.who["editor"], up.File.ID, FilePatch{Folder: &folder}); err != nil {
 		t.Fatal(err)
 	}
 	row, err := GetFile(ctx, f.db, up.File.ID)

@@ -55,7 +55,7 @@ var undoable = map[string]undoSpec{
 	// bucket that is not true, and naming none of the columns a completion
 	// writes is what makes a finished upload not undoable.
 	"link": {table: "links", cols: []string{"title", "author", "year", "kind", "note_md", "question"}},
-	"file": {table: "files", cols: []string{"name", "folder", "note_md", "tags"}},
+	"file": {table: "files", cols: []string{"name", "kind", "folder", "note_md", "tags"}},
 }
 
 // Undo puts back the before of one activity row and marks the row undone. The
