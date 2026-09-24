@@ -73,8 +73,6 @@ type Drive struct {
 	token                  Token
 }
 
-func (d *Drive) Name() string { return "Google Drive" }
-
 // Configure reads what the settings table holds. A token that will not parse is
 // the one error: it means the row was written under a different secret key or
 // by hand, and saying so is better than behaving as though nothing were
@@ -83,6 +81,17 @@ func (d *Drive) Configure(s Settings) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.clientID, d.clientSecret = s["client_id"], s["client_secret"]
+	// The endpoints are set before the token is read, because the answer to a
+	// token that will not parse is to connect again, which needs them.
+	if d.HTTP == nil {
+		d.HTTP = Client()
+	}
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Auth == "" {
+		d.Auth, d.TokenURL, d.API = googleAuth, googleToken, googleAPI
+	}
 	d.token = Token{}
 	if raw := s["token"]; raw != "" {
 		if err := json.Unmarshal([]byte(raw), &d.token); err != nil {
@@ -94,30 +103,15 @@ func (d *Drive) Configure(s Settings) error {
 			return ErrReconnect
 		}
 	}
-	if d.HTTP == nil {
-		d.HTTP = Client()
-	}
-	if d.Now == nil {
-		d.Now = time.Now
-	}
-	if d.Auth == "" {
-		d.Auth, d.TokenURL, d.API = googleAuth, googleToken, googleAPI
-	}
 	return nil
 }
 
 // Configured reports whether the client id and secret are in place, which is
-// what the Connect button needs; Connected is whether the flow was finished.
+// what the Connect button needs.
 func (d *Drive) Configured() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.clientID != "" && d.clientSecret != ""
-}
-
-func (d *Drive) Connected() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.clientID != "" && d.clientSecret != "" && d.token.Refresh != ""
 }
 
 // AuthURL is where the owner is sent to consent. access_type=offline and

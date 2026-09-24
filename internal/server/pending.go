@@ -61,7 +61,9 @@ func newPendingStore(secretKey []byte) (*pendingStore, error) {
 
 var errNoPending = errors.New("no enrollment in progress")
 
-func (p *pendingStore) seal(v any) (string, error) {
+// seal and unseal bind the cookie name as associated data, so a value written
+// for one cookie is refused when presented as the other.
+func (p *pendingStore) seal(name string, v any) (string, error) {
 	plain, err := json.Marshal(v)
 	if err != nil {
 		return "", err
@@ -70,16 +72,16 @@ func (p *pendingStore) seal(v any) (string, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(p.aead.Seal(nonce, nonce, plain, nil)), nil
+	return base64.RawURLEncoding.EncodeToString(p.aead.Seal(nonce, nonce, plain, []byte(name))), nil
 }
 
 // unseal says whether the cookie is one this process wrote and still parses.
-func (p *pendingStore) unseal(value string, into any) bool {
+func (p *pendingStore) unseal(name, value string, into any) bool {
 	blob, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || len(blob) < p.aead.NonceSize() {
 		return false
 	}
-	plain, err := p.aead.Open(nil, blob[:p.aead.NonceSize()], blob[p.aead.NonceSize():], nil)
+	plain, err := p.aead.Open(nil, blob[:p.aead.NonceSize()], blob[p.aead.NonceSize():], []byte(name))
 	if err != nil {
 		return false
 	}
@@ -88,7 +90,7 @@ func (p *pendingStore) unseal(value string, into any) bool {
 
 func (p *pendingStore) put(w http.ResponseWriter, secure bool, v *pending) error {
 	v.Expires = time.Now().Add(pendingValidity).Unix()
-	value, err := p.seal(v)
+	value, err := p.seal(pendingCookie, v)
 	if err != nil {
 		return err
 	}
@@ -110,7 +112,7 @@ func (p *pendingStore) get(r *http.Request) (*pending, error) {
 		return nil, errNoPending
 	}
 	var v pending
-	if !p.unseal(c.Value, &v) {
+	if !p.unseal(pendingCookie, c.Value, &v) {
 		return nil, errNoPending
 	}
 	if v.Expires <= time.Now().Unix() {
@@ -149,7 +151,7 @@ const flashValidity = time.Minute
 
 func (p *pendingStore) putFlash(w http.ResponseWriter, secure bool, f *flash) error {
 	f.Expires = time.Now().Add(flashValidity).Unix()
-	value, err := p.seal(f)
+	value, err := p.seal(flashCookie, f)
 	if err != nil {
 		return err
 	}
@@ -175,7 +177,7 @@ func (p *pendingStore) takeFlash(w http.ResponseWriter, r *http.Request, secure 
 		return nil
 	}
 	var f flash
-	live := p.unseal(c.Value, &f) && f.UserID == userID && f.Expires > time.Now().Unix()
+	live := p.unseal(flashCookie, c.Value, &f) && f.UserID == userID && f.Expires > time.Now().Unix()
 	if live && f.Path != r.URL.Path {
 		return nil
 	}

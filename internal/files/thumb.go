@@ -32,6 +32,11 @@ const (
 	thumbQuality   = 80
 )
 
+// thumbSlots bounds the thumbnails rendered at once. The caps above are per
+// image, and twenty completions of large images at the same moment would
+// otherwise hold twenty decodes at the ceiling side by side.
+var thumbSlots = make(chan struct{}, 2)
+
 // thumbnail renders a small JPEG beside the original and returns the image's
 // own dimensions, or zeroes when the file is not an image this binary reads.
 // Nothing here is worth failing an upload over: a file with no thumbnail still
@@ -47,6 +52,12 @@ func (s *Service) thumbnail(ctx context.Context, bucket *blob.Client, row File) 
 	}
 	key := thumbKey(row.ObjectKey)
 	if key == "" {
+		return 0, 0
+	}
+	select {
+	case thumbSlots <- struct{}{}:
+		defer func() { <-thumbSlots }()
+	case <-ctx.Done():
 		return 0, 0
 	}
 

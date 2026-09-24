@@ -150,7 +150,6 @@ html.pressing,html.pressing *{-webkit-user-select:none;user-select:none;-webkit-
 .danger{display:flex;gap:1.5rem;flex-wrap:wrap}
 .swatches{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
 .swatches button{width:22px;height:22px}
-.swatches .preview-u{margin-left:.8rem;display:inline-flex;align-items:center;gap:.5rem}
 .invite{display:flex;gap:1rem;align-items:center;flex-wrap:wrap}
 .invite input{flex:1 1 200px}
 .invite select{width:auto}
@@ -191,7 +190,6 @@ html.pressing,html.pressing *{-webkit-user-select:none;user-select:none;-webkit-
 #picker button.on .st::before{content:"\\2713"}
 .preview .imgbox{aspect-ratio:1;width:100%;background:var(--img) center/cover}
 .preview.audio{display:flex;align-items:center;gap:1rem}
-.preview .wave{flex:1;height:1px;background:currentColor;opacity:.4}
 #admin{grid-area:work;min-width:0}
 #admin nav{display:flex;flex-wrap:wrap;align-items:baseline}
 #admin nav .back{margin-left:auto}
@@ -210,7 +208,6 @@ html.pressing,html.pressing *{-webkit-user-select:none;user-select:none;-webkit-
 #palette .pal{width:min(640px,92vw)}
 #palette ul{list-style:none;margin:0;padding:0;max-height:50vh;overflow:auto}
 #palette li a{display:grid;grid-template-columns:5.5em minmax(0,1fr);gap:1rem;align-items:baseline}
-.dim{opacity:.5}
 @media (max-width:1100px){.row3{grid-template-columns:1fr 1fr}.fs{grid-template-columns:1fr;gap:.6rem 0}}
 @media (max-width:900px){
   body{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "work"}
@@ -265,7 +262,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 #railtoggle{color:var(--y);font-size:22px;line-height:1}
 #rail{background:var(--y);color:var(--k)}
 .railtop{padding:.8rem 14px .6rem;border-bottom:1px solid var(--k)}
-#tagfilter button{color:rgba(0,0,0,.55)}
+#tagfilter button{color:rgba(0,0,0,.62)}
 #tagfilter button:hover{color:var(--k)}
 #tagfilter button.on{color:var(--k);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:.25em}
 #rail .group{padding:.9rem 0 .3rem}
@@ -276,7 +273,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 #archtoggle.open::after{content:"\\2212"}
 .ws{padding:.4rem 24px .4rem 14px;border-top:1px solid rgba(0,0,0,.25);font-weight:600;font-size:15px;letter-spacing:-.005em}
 .ws:hover{background:rgba(0,0,0,.06)}
-.ws .no{font-family:var(--monof);font-size:11px;color:rgba(0,0,0,.55)}
+.ws .no{font-family:var(--monof);font-size:11px;color:rgba(0,0,0,.62)}
 .ws .st{font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:500;color:rgba(0,0,0,.6);font-stretch:80%}
 .ws.on{background:var(--k);color:var(--y)}
 .ws.on .no,.ws.on .st{color:rgba(255,212,0,.7)}
@@ -322,7 +319,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .card .cm{margin-top:.3rem;font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:500;color:var(--dim);font-stretch:85%}
 .card .cm .due.late{color:#ff5a3c}
 .card .cm .q{color:var(--y)}
-.card .cm .tick{margin-left:auto;color:var(--dim);opacity:0}
+.card .cm .tick{margin-left:auto;color:var(--dim);opacity:0;padding:5px 0;margin-block:-5px}
 .card:hover .cm .tick,.card:focus-within .cm .tick{opacity:1}
 .card:hover{background:rgba(244,241,234,.04)}
 .card.mine{box-shadow:inset 3px 0 0 var(--y);padding-left:.6rem}
@@ -330,7 +327,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 .card.done .cw .u{opacity:.4}
 .newcard{padding:.6rem 0;border-bottom:1px solid var(--y)}
 .newcard textarea{font-weight:600;resize:none}
-.col .add{margin-top:.5rem;color:var(--dim)}
+.col .add{margin-top:.5rem;color:var(--dim);min-height:24px}
 .col .add:hover{color:var(--y)}
 .board-add{display:flex;align-items:baseline;flex-wrap:wrap;gap:.2rem 1rem}
 .proposition-ref{text-decoration:underline;text-underline-offset:.15em;font-family:var(--monof);font-size:.9em}
@@ -338,7 +335,7 @@ body{background:var(--k);color:var(--p);font-family:"Archivo","Helvetica Neue",H
 #addcol{border-bottom:2px solid var(--hair);padding:.3rem 0 .35rem;align-self:start;text-align:left;color:var(--dim)}
 #addcol:hover{color:var(--y);border-color:var(--y)}
 .doc-ph{margin:2.2rem -1.6rem 0;padding:1rem 1.6rem 0;background:var(--p);color:var(--k);align-items:end;border-bottom:1px solid var(--k)}
-.dtab{font-weight:600;font-size:14px;letter-spacing:.08em;text-transform:uppercase;font-stretch:80%;padding:.6rem 1rem;margin-bottom:-1px;border-bottom:3px solid transparent;color:rgba(0,0,0,.5)}
+.dtab{font-weight:600;font-size:14px;letter-spacing:.08em;text-transform:uppercase;font-stretch:80%;padding:.6rem 1rem;margin-bottom:-1px;border-bottom:3px solid transparent;color:rgba(0,0,0,.62)}
 .dtab:first-child{padding-left:0}
 .dtab.on{color:var(--k);border-bottom-color:var(--k)}
 .dtab:hover:not(.on){color:var(--k)}
@@ -430,7 +427,7 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 .tools{padding:1.1rem 0 .6rem;border-bottom:1px solid var(--p)}
 .tools .q{flex:1 1 260px;border-bottom:1px solid var(--hair);padding:.2rem 0;font-weight:500}
 .tools .q:focus{border-color:var(--y)}
-.facets button{color:var(--dim)}
+.facets button{color:var(--dim);min-width:24px;min-height:24px}
 .facets button i{font-style:normal;color:var(--y)}
 .facets button.on{color:var(--k);background:var(--y);padding:0 .35rem}
 .facets.qs{padding-left:1rem;border-left:1px solid var(--hair)}
@@ -470,7 +467,7 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 .cols .grip{color:var(--dim);cursor:grab}
 .cols .cnt{color:var(--dim)}
 .cols input{border:0;padding:.1rem 0}
-.cols li .lnk{font-size:13px}
+.cols li .lnk{font-size:13px;min-width:24px;min-height:24px}
 .invite{margin-top:1rem}
 .invite input{flex:1 1 200px}
 .swatches button{outline:0;border:2px solid var(--k)}
@@ -517,7 +514,6 @@ mark.note{background:var(--y);color:var(--k);padding:0 .2em;font-size:.9em}
 #picker button.on{color:var(--y)}
 #picker .role{color:var(--dim)}
 .preview{border:1px solid var(--hair);padding:.8rem;margin:.6rem 0 1rem}
-.preview .play{color:var(--y);font-weight:700}
 /* admin */
 #admin nav{border-bottom:1px solid var(--p);gap:0}
 #admin nav a{padding:.55rem 1rem;font-weight:600;font-size:14px;letter-spacing:.08em;text-transform:uppercase;font-stretch:80%;border-right:1px solid var(--hair)}
@@ -756,7 +752,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px soli
 .reference-preview { position: relative; }
 .reference-context { display: none; position: absolute; left: 0; top: 100%; z-index: 5; min-width: 12rem; max-width: min(24rem, 70vw); padding: .65rem; background: var(--k); color: var(--p); border: 1px solid currentColor; white-space: normal; font-size: .85rem; }
 .reference-preview:hover .reference-context, .reference-preview:focus-within .reference-context { display: block; }
-.blk > .lnk { font-size: .7rem; margin-top: .3rem; }
+.blk > .lnk { font-size: .7rem; margin-top: .3rem; color: var(--k); }
 .board-controls { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
 .board-controls label { flex: 1 1 8rem; min-width: 0; }
 .board-controls label > span { display: block; font-size: .7rem; color: var(--dim); margin-bottom: .3rem; }
@@ -864,7 +860,7 @@ button:disabled{opacity:.5;cursor:wait}
   .calendar-agenda{margin-top:1rem}.research>summary{padding:.85rem}.research-body{padding:0 .85rem .85rem}.research-toolbar{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))}.research-toolbar>.act{grid-column:1 / -1}.research .acts>*{max-width:100%;overflow-wrap:anywhere}
 }
 
-.calendar-month-title{display:flex;align-items:baseline;gap:.3em;flex-wrap:wrap}.calendar-year{font-weight:450;font-size:.75em;color:var(--dim);letter-spacing:-.025em}.calendar-heading .dim{opacity:1;color:var(--dim)}
+.calendar-month-title{display:flex;align-items:baseline;gap:.3em;flex-wrap:wrap}.calendar-year{font-weight:450;font-size:.75em;color:var(--dim);letter-spacing:-.025em}
 
 .calendar-instructions{padding-left:1.3rem;line-height:1.7}.calendar-instructions li+li{margin-top:.6rem}.calendar-subscription-actions{display:flex;align-items:center;flex-wrap:wrap;gap:1rem;margin-top:1.2rem}.calendar-subscription-actions button,#calendar [data-copy],.calendar-options>.lnk,.calendar-holidays-toggle{display:inline-flex;align-items:center;justify-content:center;min-height:40px}
 

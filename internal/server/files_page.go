@@ -121,24 +121,21 @@ func contains(list []string, want string) bool {
 
 // sweepEvery is how often abandoned uploads are looked for. The window is 48
 // hours, so an hour's granularity is plenty and a restart never misses one.
-const sweepEvery = time.Hour
+// foldEvery is how often the activity log's runs of typed saves are folded:
+// a fold walks every block row in the log, and nothing it folds is younger
+// than core.CompactAfter, so once a day loses nothing.
+const (
+	sweepEvery = time.Hour
+	foldEvery  = 24 * time.Hour
+)
 
 // Sweep is the housekeeping pass: it abandons uploads nobody finished, forgets
 // the client keys nobody can still be replaying and folds the activity log's
-// runs of typed saves, now and every hour after. It stops with ctx and holds
-// nothing between ticks, so a cancellation costs whatever the current pass has
-// done and no more.
-//
-// Hourly is more often than the fold needs, which is once a day, but a fold
-// never touches a run younger than core.CompactAfter, so every pass but the
-// first has at most an hour of new runs to find.
-//
-// ponytail: it finds them by walking every block row in the log, chunk by
-// chunk, each chunk taking the write lock, and the rows a fold keeps accumulate
-// forever. The walk is tens of milliseconds today and grows with the log. The
-// upgrade is a settings row remembering the day of the last fold, the way
-// notify.last_tick does, so the walk happens once a day rather than hourly.
+// runs of typed saves, now and on its schedule after. It stops with ctx and
+// holds nothing between ticks, so a cancellation costs whatever the current
+// pass has done and no more.
 func (s *Server) Sweep(ctx context.Context) {
+	var folded time.Time
 	sweep := func() {
 		if err := s.files.Sweep(ctx); err != nil && !errors.Is(err, files.ErrNoBucket) {
 			s.log.Error("upload sweep", "err", err)
@@ -148,11 +145,15 @@ func (s *Server) Sweep(ctx context.Context) {
 		if err := s.board.PruneKeys(ctx); err != nil {
 			s.log.Error("client key prune", "err", err)
 		}
-		folded, err := s.board.Compact(ctx, core.CompactAfter)
+		if time.Since(folded) < foldEvery {
+			return
+		}
+		folded = time.Now()
+		rows, err := s.board.Compact(ctx, core.CompactAfter)
 		if err != nil {
 			s.log.Error("activity compaction", "err", err)
-		} else if folded > 0 {
-			s.log.Info("folded runs of typed saves in the activity log", "rows", folded)
+		} else if rows > 0 {
+			s.log.Info("folded runs of typed saves in the activity log", "rows", rows)
 		}
 	}
 	sweep()

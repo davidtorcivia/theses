@@ -40,9 +40,15 @@ with `tools/list`, and call `whoami` first. Use the actual schemas rather than
 inventing tool arguments. `get_show`, `list_propositions`, `list_cards`,
 `list_documents`, `read_document` and `search` are useful entry points.
 The server supports multiple MCP protocol revisions; let the client negotiate.
-Calendar, evidence, reviews, production plans, transcripts and deleted-item
-recovery have matching MCP tools returning a typed `result`. See the parity table in [api.md](api.md), and
-discover each tool's exact argument schema with `tools/list`.
+Calendar, evidence, reviews, production plans, transcripts, deleted-item
+recovery, and the board, document, link and file edits the browser makes have
+matching MCP tools returning a typed `result`; an owner's `admin` key also
+reaches workspace webhooks and backups. An upload is `request_upload`, a `PUT`
+of the bytes to the returned URL, then `complete_upload`. See the tables in
+[api.md](api.md), and discover each tool's exact argument schema with
+`tools/list`. `restore_backup` ends every key, including yours, and needs
+`confirm` set to the archive's key; never send it without the user's explicit
+instruction to restore that archive.
 
 ## Permissions and attribution
 

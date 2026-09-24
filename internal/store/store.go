@@ -142,6 +142,10 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
+	seqs, err := sequences(ctx, db.db)
+	if err != nil {
+		return err
+	}
 	if err := db.db.Close(); err != nil {
 		db.reopen()
 		return fmt.Errorf("close the pool: %w", err)
@@ -171,6 +175,9 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 	fresh, err := open(db.path)
 	if err == nil {
 		err = migrate(ctx, fresh)
+		if err == nil {
+			err = keepSequences(ctx, fresh, seqs)
+		}
 		if err != nil {
 			fresh.Close()
 		}
@@ -188,6 +195,50 @@ func (db *DB) Swap(ctx context.Context, from, aside string) error {
 	}
 	db.db = fresh
 	return nil
+}
+
+// sequences is every AUTOINCREMENT high-water mark the live file holds.
+func sequences(ctx context.Context, db *sql.DB) (map[string]int64, error) {
+	rows, err := db.QueryContext(ctx, `SELECT name, seq FROM sqlite_sequence`)
+	if err != nil {
+		return nil, fmt.Errorf("read the id sequences: %w", err)
+	}
+	defer rows.Close()
+	seqs := map[string]int64{}
+	for rows.Next() {
+		var name string
+		var seq int64
+		if err := rows.Scan(&name, &seq); err != nil {
+			return nil, err
+		}
+		seqs[name] = seq
+	}
+	return seqs, rows.Err()
+}
+
+// keepSequences carries the live high-water marks into a swapped-in file, so
+// no id is handed out twice across a restore: an open tab and an API cursor
+// read activity from the last id they saw, and a link names a card by its id.
+func keepSequences(ctx context.Context, db *sql.DB, seqs map[string]int64) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for name, seq := range seqs {
+		res, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = max(seq, ?) WHERE name = ?`, seq, name)
+		if err != nil {
+			return fmt.Errorf("keep the %s sequence: %w", name, err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)`, name, seq); err != nil {
+				return fmt.Errorf("keep the %s sequence: %w", name, err)
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 // moveSidecars takes the write-ahead log and the shared memory file wherever

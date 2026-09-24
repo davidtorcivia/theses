@@ -182,7 +182,7 @@ func (h *harness) setupOwner() (password, secret string) {
 		h.Fatal("the enrollment page did not render the QR code as a data URI")
 	}
 
-	code, err := totp.GenerateCode(secret, time.Now())
+	code, err := totp.GenerateCode(secret, enrolledAt())
 	if err != nil {
 		h.Fatal(err)
 	}
@@ -418,7 +418,7 @@ func TestInvitationAcceptCreatesAUser(t *testing.T) {
 
 	_, body = h.get("/invite/" + token + "/authenticator")
 	secret := secretRe.FindStringSubmatch(body)[1]
-	code, _ := totp.GenerateCode(secret, time.Now())
+	code, _ := totp.GenerateCode(secret, enrolledAt())
 	res, _ = h.post("/invite/"+token+"/authenticator", url.Values{
 		"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "code": {code},
 	})
@@ -995,11 +995,26 @@ func TestPasswordChangeAndResetLink(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, "twelve") {
 		t.Errorf("a short new password gave %d", res.StatusCode)
 	}
+	base, _ := url.Parse(h.http.URL)
+	var old *http.Cookie
+	for _, c := range h.client.Jar.Cookies(base) {
+		if c.Name == auth.SessionCookie {
+			old = c
+		}
+	}
 	if res, _ := h.post("/profile/password", url.Values{
 		"csrf": {h.csrf("/profile")}, "current": {password},
 		"password": {"a brand new password"}, "code": {code(t, secret)},
 	}); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("the password change gave %d", res.StatusCode)
+	}
+	if res, _ := h.get("/profile"); res.StatusCode != http.StatusOK {
+		t.Errorf("the browser that changed the password gave %d afterwards", res.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodGet, h.http.URL+"/profile", nil)
+	req.AddCookie(old)
+	if res, err := (&http.Client{CheckRedirect: h.client.CheckRedirect}).Do(req); err != nil || res.StatusCode != http.StatusSeeOther {
+		t.Errorf("the session from before the change still works: %v %v", res, err)
 	}
 	u, _ := store.UserByHandle(ctx, h.db, "ada")
 	if !auth.CheckPassword(u.PasswordHash, "a brand new password") {
@@ -1067,7 +1082,7 @@ func TestForbiddenPageLinksToOnePlace(t *testing.T) {
 		t.Errorf("links with a session = %v, want only /", got)
 	}
 	h.signOut()
-	res, body = h.get("/settings")
+	res, _ = h.get("/settings")
 	if res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("signed out, /settings gave %d", res.StatusCode)
 	}
@@ -1075,6 +1090,10 @@ func TestForbiddenPageLinksToOnePlace(t *testing.T) {
 		t.Errorf("links with no session = %v, want only /login", hrefsIn(body))
 	}
 }
+
+// enrolledAt is when a test's enrollment code is taken: one step back, because
+// enrollment claims its step and the code a test signs in with next is now's.
+func enrolledAt() time.Time { return time.Now().Add(-30 * time.Second) }
 
 func code(t *testing.T, secret string) string { return codeAt(t, secret, time.Now()) }
 
@@ -1632,5 +1651,61 @@ func TestRenderedPagesAreNotCached(t *testing.T) {
 	res, _ = h.get(h.srv.assets.URL("app.css"))
 	if got := res.Header.Get("Cache-Control"); !strings.Contains(got, "immutable") {
 		t.Errorf("app.css: Cache-Control = %q", got)
+	}
+}
+
+// The code that finished enrollment is spent: it cannot also sign in.
+func TestTheEnrollmentCodeCannotSignInAgain(t *testing.T) {
+	h := newHarness(t)
+	password, secret := h.setupOwner()
+	h.signOut()
+	res, _ := h.post("/login", url.Values{
+		"csrf": {h.csrf("/login")}, "handle": {"ada"}, "password": {password},
+		"code": {codeAt(t, secret, enrolledAt())},
+	})
+	if res.StatusCode == http.StatusSeeOther {
+		t.Fatalf("the enrollment code signed in again: %s", res.Header.Get("Location"))
+	}
+}
+
+// A flash cookie is sealed under the same key as an enrollment, and must not
+// be accepted as one.
+func TestAFlashCookieIsNotAnEnrollment(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	h.post("/profile/password", url.Values{"csrf": {h.csrf("/profile")}, "current": {"wrong"}})
+	base, _ := url.Parse(h.http.URL)
+	var flash string
+	for _, c := range h.client.Jar.Cookies(base) {
+		if c.Name == flashCookie {
+			flash = c.Value
+		}
+	}
+	if flash == "" {
+		t.Fatal("the refused form set no flash cookie")
+	}
+	h.client.Jar.SetCookies(base, []*http.Cookie{{Name: pendingCookie, Value: flash, Path: "/"}})
+	if res, _ := h.get("/login/authenticator"); res.StatusCode == http.StatusOK {
+		t.Fatal("a flash cookie was read as an enrollment")
+	}
+}
+
+// A header token does not lift the cap on a form body.
+func TestAHeaderTokenKeepsTheFormCap(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	h.signOut()
+	token := h.csrf("/login")
+	body := url.Values{"handle": {"ada"}, "password": {strings.Repeat("x", maxFormBytes)}}.Encode()
+	req, _ := http.NewRequest(http.MethodPost, h.http.URL+"/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(auth.CSRFHeader, token)
+	res, err := h.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusSeeOther {
+		t.Fatalf("an oversized form with a header token was read: %d", res.StatusCode)
 	}
 }

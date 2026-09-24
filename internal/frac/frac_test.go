@@ -43,19 +43,6 @@ func TestBetween(t *testing.T) {
 	}
 }
 
-func TestFirstAfterBefore(t *testing.T) {
-	first := First()
-	if first != Between("", "") {
-		t.Errorf("First() = %q, want %q", first, Between("", ""))
-	}
-	if after := After(first); after <= first {
-		t.Errorf("After(%q) = %q, not above it", first, after)
-	}
-	if before := Before(first); before >= first {
-		t.Errorf("Before(%q) = %q, not below it", first, before)
-	}
-}
-
 func TestValid(t *testing.T) {
 	tests := []struct {
 		key  string
@@ -120,9 +107,9 @@ func TestRepeatedInsertInSameGap(t *testing.T) {
 // Appending is the other common case: blocks added at the end of a document,
 // cards added to the bottom of a column.
 func TestRepeatedAppend(t *testing.T) {
-	key := First()
+	key := Between("", "")
 	for i := 0; i < 1000; i++ {
-		got := After(key)
+		got := Between(key, "")
 		if !Valid(got) {
 			t.Fatalf("append %d produced invalid key %q", i, got)
 		}
@@ -139,7 +126,7 @@ func TestRepeatedAppend(t *testing.T) {
 func TestRandomInsertions(t *testing.T) {
 	const n = 10000
 	r := rand.New(rand.NewPCG(1, 2))
-	keys := []string{First()}
+	keys := []string{Between("", "")}
 	for i := 0; i < n; i++ {
 		at := r.IntN(len(keys) + 1)
 		lo, hi := "", ""

@@ -184,8 +184,8 @@
         </li>{{else}}<li><span class="mono dim">Nothing under {{$.Backups.Prefix}} yet.</span></li>{{end}}
       </ul>
     </form>
-    {{range $i, $e := .Backups.Entries}}{{if $e.Complete}}<dialog id="restore-{{$i}}">
-      <h3>Restore {{$e.Name}}</h3>
+    {{range $i, $e := .Backups.Entries}}{{if $e.Complete}}<dialog id="restore-{{$i}}" aria-labelledby="restore-{{$i}}-title">
+      <h3 id="restore-{{$i}}-title">Restore {{$e.Name}}</h3>
       <p>The backup taken on {{$e.When}} replaces the database and the markdown mirror. Everything written since is moved aside under a timestamp rather than removed, and changes are refused until it is done.</p>
       <form method="post" action="/settings/backups/restore" class="acts">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -331,8 +331,8 @@
       </div>
     </section>
 
-    <dialog id="int-drive">
-      <h3>Google Drive</h3>
+    <dialog id="int-drive" aria-labelledby="int-drive-title">
+      <h3 id="int-drive-title">Google Drive</h3>
       <p>Make an OAuth client of type Web application in a Google Cloud project with the Drive API turned on, and list this address as an authorized redirect URI: <span class="mono">{{.Ints.Redirect}}</span>. Then paste the client id and secret here, save, and press Connect. The access is read only.</p>
       <form class="form" method="post" action="/settings">
         <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="integrations">
@@ -347,8 +347,8 @@
       </form>
     </dialog>
 
-    <dialog id="int-transistor">
-      <h3>Transistor</h3>
+    <dialog id="int-transistor" aria-labelledby="int-transistor-title">
+      <h3 id="int-transistor-title">Transistor</h3>
       <p>Paste an API key from the Transistor account. Test it with the show field empty and this page prints the shows the key reaches, with their ids; put the right one in and test again.</p>
       <form class="form" method="post" action="/settings">
         <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="section" value="integrations">
@@ -364,8 +364,8 @@
       </form>
     </dialog>
 
-    {{range .Hooks}}<dialog id="{{if .ID}}hook-{{.ID}}{{else}}hook-new{{end}}">
-      <h3>{{if .ID}}Webhook{{else}}Add a webhook{{end}}</h3>
+    {{range .Hooks}}<dialog id="{{if .ID}}hook-{{.ID}}{{else}}hook-new{{end}}" aria-labelledby="{{if .ID}}hook-{{.ID}}{{else}}hook-new{{end}}-title">
+      <h3 id="{{if .ID}}hook-{{.ID}}{{else}}hook-new{{end}}-title">{{if .ID}}Webhook{{else}}Add a webhook{{end}}</h3>
       <form class="form" method="post" action="/settings/integrations/webhook">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
         <input type="hidden" name="id" value="{{.ID}}">

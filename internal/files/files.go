@@ -68,6 +68,9 @@ var (
 	ErrQuestion = errors.New("that is not one of the four questions")
 	// ErrURL is something pasted into the link field that is not a web address.
 	ErrURL = errors.New("that is not an http or https address")
+	// ErrUnreachable is a refetch the page did not answer; the link keeps what
+	// it had rather than trading it for nothing.
+	ErrUnreachable = errors.New("that page could not be read just now; the link is unchanged")
 	// ErrState is an operation on a file that is not in the state for it: a
 	// download of something still uploading, a second completion.
 	ErrState = errors.New("that upload is not in a state for this")

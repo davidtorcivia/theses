@@ -79,7 +79,7 @@ export async function reviewTarget(kind,id) {
         if(row.snapshot_id)section.append(el('button',{type:'button',class:'lnk',text:'View requested script #'+row.snapshot_id,onclick:async()=>{
           try{const {snapshot:pinned}=await api.get('/snapshots/'+row.snapshot_id);const view=modal('Requested script #'+pinned.id,true);clear(view.body).append(el('pre',{class:'review-script',text:pinned.markdown}));}catch(err){say(err.message);}
         }}));
-        if(!row.stale&&row.reviewer_id===state.me&&canEdit()){
+        if(!row.stale&&(row.reviewer_id===state.me||row.reviewer_id==null)&&canEdit()){
           const note=el('textarea',{rows:3,'aria-label':'Review feedback',placeholder:'Feedback or decision notes'});note.value=drafts.get(row.id)??row.note??'';note.oninput=()=>{if(note.value===(row.note||''))drafts.delete(row.id);else drafts.set(row.id,note.value);dirty=drafts.size>0;};
           section.append(note,el('div',{class:'acts'},['changes_requested','approved'].map(value=>el('button',{type:'button',class:'act',text:value==='approved'?'Approve version':'Request changes',onclick:async(e)=>{
             if(saving)return;const button=e.currentTarget;button.disabled=true;note.disabled=true;saving=true;
@@ -149,6 +149,9 @@ async function editEvidence(p,e,refresh){
 }
 
 export async function openEvidence(id){
- const section=researchSection(proposition(state.open));section.open=true;await section.load();
+ const section=researchSection(proposition(state.open));
+ // Opening queues a toggle that starts its own draw and would supersede ours, leaving the list unloaded when we look.
+ if(!section.open){section.open=true;await new Promise(done=>section.addEventListener('toggle',done,{once:true}));}
+ await section.load();
  const node=document.getElementById('evidence-'+id);if(node){node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true});}else say('This reference is unavailable.');
 }

@@ -40,8 +40,6 @@ type Transistor struct {
 	show string
 }
 
-func (t *Transistor) Name() string { return "Transistor" }
-
 func (t *Transistor) Configure(s Settings) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()

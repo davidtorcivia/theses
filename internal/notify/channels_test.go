@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/notify/channel"
+	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -24,7 +25,10 @@ func TestChannelValidate(t *testing.T) {
 		{"ntfy with a topic", Channel{Kind: KindNtfy, Config: Config{Topic: "alerts"}}, true},
 		{"a webhook needs a URL", Channel{Kind: KindWebhook}, false},
 		{"a webhook URL is http", Channel{Kind: KindWebhook, Config: Config{URL: "ftp://example.com"}}, false},
-		{"a webhook URL", Channel{Kind: KindWebhook, Config: Config{URL: "https://example.com/h"}}, true},
+		{"a webhook URL", Channel{UserID: 1, Kind: KindWebhook, Config: Config{URL: "https://example.com/h"}}, true},
+		{"a workspace webhook needs an event", Channel{Kind: KindWebhook, Config: Config{URL: "https://example.com/h"}}, false},
+		{"an event that is not one", Channel{Kind: KindWebhook, Config: Config{URL: "https://example.com/h", Events: []string{"lunch"}}}, false},
+		{"a workspace webhook", Channel{Kind: KindWebhook, Config: Config{URL: "https://example.com/h", Events: []string{"moved"}}}, true},
 		{"an unknown kind", Channel{Kind: "carrier pigeon"}, false},
 		{"quiet hours that are not times", Channel{Kind: KindEmail, QuietFrom: "night", QuietTo: "07:00"}, false},
 	}
@@ -78,21 +82,86 @@ func TestConfigIsEncryptedAtRest(t *testing.T) {
 	}
 }
 
+// Saving and deleting a channel writes an activity row in the same
+// transaction, and the row keeps where it points without the credentials: a
+// key, a token, a topic, a secret and a webhook's path and query.
+func TestChannelActivityKeepsNoSecret(t *testing.T) {
+	tests := []struct {
+		name    string
+		c       Channel
+		secrets []string
+		shown   string
+	}{
+		{"pushover", Channel{Kind: KindPushover, Config: Config{UserKey: "uk_abcdefgh1234"}},
+			[]string{"uk_abcdefgh1234"}, "1234"},
+		{"ntfy", Channel{Kind: KindNtfy, Config: Config{Server: "https://ntfy.example.com", Topic: "private-alerts", Token: "tk_value"}},
+			[]string{"private-alerts", "tk_value"}, "ntfy.example.com"},
+		{"webhook", Channel{Kind: KindWebhook, Config: Config{URL: "https://hooks.example.com/T0/B1/xyz?token=abc", Secret: "shh_signing", Events: []string{"moved"}}},
+			[]string{"/T0/B1/xyz", "token=abc", "shh_signing"}, "https://hooks.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFixture(t)
+			if tt.c.Kind != KindWebhook {
+				tt.c.UserID = f.user(t, "grace")
+			}
+			by := settings.User(tt.c.UserID)
+			saved, err := SaveChannel(ctx, f.db, f.set, tt.c, by)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved.Digest = true
+			if _, err := SaveChannel(ctx, f.db, f.set, saved, by); err != nil {
+				t.Fatal(err)
+			}
+			if err := DeleteChannel(ctx, f.db, f.set, saved.ID, saved.UserID, by); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := f.db.QueryContext(ctx, `SELECT action, coalesce(before_json, ''), coalesce(after_json, '')
+				FROM activity WHERE entity = 'notification_channel' AND entity_id = ? ORDER BY id`, saved.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			var actions []string
+			for rows.Next() {
+				var action, before, after string
+				if err := rows.Scan(&action, &before, &after); err != nil {
+					t.Fatal(err)
+				}
+				actions = append(actions, action)
+				for _, secret := range tt.secrets {
+					if strings.Contains(before+after, secret) {
+						t.Errorf("%s row carries %q: %s %s", action, secret, before, after)
+					}
+				}
+				if !strings.Contains(before+after, tt.shown) {
+					t.Errorf("%s row does not say where it points: %s %s", action, before, after)
+				}
+			}
+			if got := strings.Join(actions, " "); got != "create update delete" {
+				t.Errorf("actions = %q", got)
+			}
+		})
+	}
+}
+
 func TestAChannelBelongsToOneAccount(t *testing.T) {
 	f := newFixture(t)
 	ada := f.user(t, "ada")
 	grace := f.user(t, "grace")
 	c := f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"}})
 
-	if err := DeleteChannel(context.Background(), f.db, c.ID, ada); !errors.Is(err, store.ErrNotFound) {
+	if err := DeleteChannel(context.Background(), f.db, f.set, c.ID, ada, settings.User(ada)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Ada deleted Grace's channel: %v", err)
 	}
 	stolen := c
 	stolen.UserID = ada
-	if _, err := SaveChannel(context.Background(), f.db, f.set, stolen); !errors.Is(err, store.ErrNotFound) {
+	if _, err := SaveChannel(context.Background(), f.db, f.set, stolen, settings.User(ada)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Ada wrote to Grace's channel: %v", err)
 	}
-	if err := DeleteChannel(context.Background(), f.db, c.ID, grace); err != nil {
+	if err := DeleteChannel(context.Background(), f.db, f.set, c.ID, grace, settings.User(grace)); err != nil {
 		t.Errorf("Grace could not delete her own: %v", err)
 	}
 }
@@ -103,7 +172,7 @@ func TestDeletingAChannelTakesItsRulesAndItsQueue(t *testing.T) {
 	c := f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"}}, "moved")
 	f.queueOne(t, c)
 
-	if err := DeleteChannel(context.Background(), f.db, c.ID, grace); err != nil {
+	if err := DeleteChannel(context.Background(), f.db, f.set, c.ID, grace, settings.User(grace)); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.outbox(t); len(got) != 0 {

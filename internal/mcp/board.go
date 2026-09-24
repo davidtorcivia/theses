@@ -86,7 +86,7 @@ func Board(s *Server, b *board.Service, svc *files.Service, backupNow func(conte
 
 	sdk.AddTool(s.srv, &sdk.Tool{
 		Name:        "annotate_link",
-		Description: "Changes what a saved link says about itself: its note, its kind and the question it belongs under.",
+		Description: "Changes what a saved link says about itself: its title, author, year, note, kind and the question it belongs under.",
 		Annotations: overwrites("Annotate a link"),
 	}, t.annotateLink)
 	sdk.AddTool(s.srv, &sdk.Tool{
@@ -105,6 +105,7 @@ func Board(s *Server, b *board.Service, svc *files.Service, backupNow func(conte
 		Description: "Starts one backup in the background and answers as soon as it has begun.",
 		Annotations: adds("Back up now"),
 	}, t.backup)
+	addEditTools(s, b, svc)
 
 	// The three resources the plan names. One handler reads all of them,
 	// because a template with a wildcard in the middle is matched by the
@@ -405,6 +406,9 @@ func (t *boardTools) comment(ctx context.Context, req *sdk.CallToolRequest, in c
 
 type annotateLinkArgs struct {
 	Link     int64   `json:"link" jsonschema:"the link's id, as list_links reports it"`
+	Title    *string `json:"title,omitempty" jsonschema:"what the source is called; leave it out to keep what is there"`
+	Author   *string `json:"author,omitempty" jsonschema:"who wrote it; leave it out to keep what is there and send an empty string to clear it"`
+	Year     *string `json:"year,omitempty" jsonschema:"the year it appeared; leave it out to keep what is there and send an empty string to clear it"`
 	Note     *string `json:"note,omitempty" jsonschema:"why this matters for the episode; leave it out to keep what is there and send an empty string to clear it"`
 	Kind     *string `json:"kind,omitempty" jsonschema:"one of the kinds list_links reports; leave it out to keep what is there"`
 	Question *string `json:"question,omitempty" jsonschema:"one of I, II, III or IV, an empty string for none, or leave it out to keep what is there"`
@@ -419,7 +423,8 @@ func (t *boardTools) annotateLink(ctx context.Context, req *sdk.CallToolRequest,
 	if err != nil {
 		return nil, files.Link{}, t.refusal("read the link", err)
 	}
-	if _, err := t.files.PatchLink(ctx, who, was.ID, files.LinkPatch{Note: in.Note, Kind: in.Kind, Question: in.Question}); err != nil {
+	if _, err := t.files.PatchLink(ctx, who, was.ID, files.LinkPatch{Title: in.Title, Author: in.Author, Year: in.Year,
+		Note: in.Note, Kind: in.Kind, Question: in.Question}); err != nil {
 		return nil, files.Link{}, t.refusal("annotate the link", err)
 	}
 
@@ -437,10 +442,15 @@ type requestUploadArgs struct {
 	Folder      string `json:"folder" jsonschema:"one of the folders list_files reports"`
 	Size        int64  `json:"size" jsonschema:"how many bytes the object will be, which the bucket is checked against on completion"`
 	Replace     int64  `json:"replace,omitempty" jsonschema:"the id of a file this is a new version of, or leave it out to keep both"`
+	Key         string `json:"key,omitempty" jsonschema:"an optional name for this change; calling again with the same key answers with the first call's file rather than making a second"`
 }
 
 func (t *boardTools) requestUpload(ctx context.Context, req *sdk.CallToolRequest, in requestUploadArgs) (*sdk.CallToolResult, files.Upload, error) {
 	p, who, err := t.writing(ctx, req, auth.ScopeFiles)
+	if err != nil {
+		return nil, files.Upload{}, err
+	}
+	ctx, err = keyed(ctx, in.Key)
 	if err != nil {
 		return nil, files.Upload{}, err
 	}

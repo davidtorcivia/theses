@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -381,6 +382,29 @@ func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 		!strings.Contains(refusal.Error, "four questions") {
 		t.Errorf("a question that is not one of the four got %+v", refusal)
 	}
+}
+
+// A restore refuses writes at the HTTP gate, which a socket's frames never
+// pass, so the hub asks for itself and answers in words the drain retries.
+func TestSocketRefusesCommandsWhileARestoreRuns(t *testing.T) {
+	r := newRig(t)
+	var frozen atomic.Bool
+	r.hub.Frozen = frozen.Load
+	ws := r.mustDial("ada")
+
+	frozen.Store(true)
+	send(t, ws, command{ID: 1, Cmd: "card.create", Args: args{Column: r.cols[0].ID, Title: "During"}})
+	if refusal := read(t, ws, "error"); refusal.ID != 1 || !strings.Contains(refusal.Error, "wait a moment") {
+		t.Fatalf("a command during a restore got %+v", refusal)
+	}
+	var n int
+	if err := r.db.QueryRowContext(context.Background(), `SELECT count(*) FROM cards WHERE title = 'During'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the refused command wrote %d cards, %v", n, err)
+	}
+
+	frozen.Store(false)
+	send(t, ws, command{ID: 2, Cmd: "card.create", Args: args{Column: r.cols[0].ID, Title: "After"}})
+	read(t, ws, "ack")
 }
 
 // A socket is only as open as the person behind it. Someone who is not a member
@@ -1233,4 +1257,50 @@ func (r *rig) cards(ctx context.Context) int {
 		r.Fatal(err)
 	}
 	return n
+}
+
+// Close ends an open socket, refuses a new one and answers a held poll, so a
+// shutdown is not held up by any of them.
+func TestCloseEndsSocketsAndPolls(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("ada")
+	read(t, ws, "presence")
+
+	polled := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequest("GET", r.http.URL+"/api/events?since=1000000&proposition="+strconv.FormatInt(r.prop, 10), nil)
+		req.Header.Set("Cookie", r.cookie["ada"])
+		res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			polled <- 0
+			return
+		}
+		res.Body.Close()
+		polled <- res.StatusCode
+	}()
+	time.Sleep(100 * time.Millisecond)
+	r.hub.Close()
+
+	select {
+	case status := <-polled:
+		if status != http.StatusOK {
+			t.Errorf("the held poll answered %d", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held poll outlived Close")
+	}
+	for {
+		if _, err := awaitFrame(t, ws, 5*time.Second); err != nil {
+			if timedOut(err) {
+				t.Fatal("the socket outlived Close")
+			}
+			break
+		}
+	}
+	late, err := r.dial("grace")
+	if err == nil {
+		if _, err := awaitFrame(t, late, 5*time.Second); err == nil || timedOut(err) {
+			t.Error("a socket opened after Close was kept")
+		}
+	}
 }

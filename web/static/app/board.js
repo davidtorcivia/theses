@@ -151,7 +151,7 @@ function assign(card, anchor) {
   });
 }
 
-export function toggleDone(card) {
+function toggleDone(card) {
   send('card.done', { card: card.id, done: !card.done_at }).catch((err) => say(err.message));
 }
 

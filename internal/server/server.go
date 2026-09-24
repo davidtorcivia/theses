@@ -135,7 +135,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 			Columns: settings.Get[[]string](set, "defaults.columns")}
 	})
 	s.api.Workflow = workflow.New(s.board.Service)
-	s.api.Legal = legal.New(s.board.Service)
+	s.api.Legal = legal.New(s.board.Service, s.mail)
 	s.hub = realtime.New(s.board, s.auth, log)
 	s.docs = docs.New(s.board.Service, filepath.Join(cfg.DataDir, "docs"), func() string {
 		return settings.Get[string](set, "defaults.document_template")
@@ -165,7 +165,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		}
 		return nil
 	}
-	s.api.Docs, s.hub.Docs = s.docs, s.docs
+	s.api.Docs, s.hub.Docs, s.hub.Frozen = s.docs, s.docs, s.backups.Frozen
 	// A new proposition arrives with the three documents every episode has, so
 	// that nobody meets an empty document area and has to guess what goes in it.
 	// The first takes the workspace template; the other two are their heading.
@@ -188,7 +188,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 	s.blobs = newBuckets()
 	s.files = files.New(s.board.Service, s.bucketFor, safehttp.Client())
 	s.files.ReserveMaintenance = s.backups.ReserveMaintenance
-	s.api.Board, s.api.Files = s.board, s.files
+	s.api.Board, s.api.Files, s.api.Backup = s.board, s.files, s.backups
 	s.api.Workflow.Files = s.files
 	s.api.Workflow.WhisperURL = cfg.WhisperURL
 	if err := s.api.Workflow.Recover(context.Background()); err != nil {
@@ -249,6 +249,9 @@ func (s *Server) Bus() *core.Bus { return s.board.Bus }
 func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
+
+// CloseSockets ends every websocket and held poll, for http.Server.RegisterOnShutdown.
+func (s *Server) CloseSockets() { s.hub.Close() }
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()

@@ -109,6 +109,8 @@ function dropZone() {
 async function take(chosen) {
   const folder = state.folder === 'all' ? DEFAULT_FOLDER : state.folder;
   for (const file of chosen) {
+    // The server refuses an empty file, and a dropped folder arrives as one.
+    if (!file.size) { say(file.name + ' is empty or a folder, so it was not uploaded.'); continue; }
     const existing = state.files.find((f) => f.name === file.name && f.folder === folder && f.state === 'ready');
     let replace = 0;
     if (existing) {
@@ -165,6 +167,14 @@ async function run(file, folder, replace, queued = null) {
     emit();
   } catch (err) {
     say(err.message);
+    // A create the server refused will be refused again, and its placeholder
+    // could be neither retried nor removed, so it goes once the reason is said.
+    if (!id && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429) {
+      await upload.forget(queued.file);
+      state.uploads.delete(queued.file);
+      emit();
+      return;
+    }
     if(state.open===destination)state.uploads.set(id || queued.file, {
       name: file.name, at: 0, error: err.message,
       queued: !id, row: !id ? queued : undefined,
@@ -219,6 +229,10 @@ async function carryOn() {
       continue;
     }
     if (row.proposition !== state.open) continue;
+    // A connection that came back without killing the upload leaves it running,
+    // and resuming it here would send the same file twice.
+    const busy = state.uploads.get(row.file);
+    if (busy && !busy.error && !busy.queued && !busy.reselect) continue;
     const since=state.seq;
     const name = row.name || (row.handle ? row.handle.name : 'file');
     // A file that waited for a connection has no server row yet, so it starts
@@ -266,7 +280,7 @@ function folderFacets() {
   for (const folder of ['all', ...state.folders]) {
     const n = state.files.filter((f) => f.folder === folder).length;
     facets.append(el('button', {
-      type: 'button', 'data-k': folder, class: state.folder === folder ? 'on' : '',
+      type: 'button', 'data-k': folder, class: state.folder === folder ? 'on' : '', 'aria-pressed': String(state.folder === folder),
       onclick: () => { state.folder = folder; emit(); },
     }, folder, folder === 'all' ? null : el('i', { text: ' ' + n })));
   }

@@ -291,27 +291,7 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher) []stri
 			s.log.Warn("document not mirrored", "document", id, "err", err)
 			continue
 		}
-		content, err := readMirror(path)
-		if err == nil {
-			// A file that is exactly what the version before this one wrote,
-			// which nobody has touched since: there is nothing in it to import,
-			// and importing it would read a line of text that quotes a block
-			// comment as a boundary, because that version did not escape one.
-			// Writing it again in this version's format is the whole of the
-			// upgrade, and Mirror records the hash of what it wrote.
-			was, err := s.wasLegacy(ctx, id, content)
-			if err != nil {
-				s.log.Warn("document file not read", "document", id, "err", err)
-			}
-			if was {
-				if err := s.Mirror(ctx, id, nil, true); err != nil {
-					s.log.Warn("document not mirrored", "document", id, "err", err)
-					continue
-				}
-				s.watch(watcher, filepath.Dir(path))
-				continue
-			}
-		}
+		_, err = readMirror(path)
 		if err == nil || !errors.Is(err, os.ErrNotExist) {
 			// The file is this document's, but nothing here wrote it, so what
 			// is in it is unknown: an empty hash matches nothing, which makes
@@ -428,22 +408,6 @@ func (s *Service) reconcile(ctx context.Context, watcher *fsnotify.Watcher) {
 	}
 }
 
-// wasLegacy reports a file that is what the version before this one would have
-// written for the document as it stands now. The markers are left out of the
-// comparison: a file carrying one is not what that version wrote for a document
-// with none, so it is read back the ordinary way, which is what it was before.
-func (s *Service) wasLegacy(ctx context.Context, document int64, content []byte) (bool, error) {
-	d, err := GetDocument(ctx, s.DB, document)
-	if err != nil {
-		return false, err
-	}
-	blocks, err := Blocks(ctx, s.DB, document)
-	if err != nil {
-		return false, err
-	}
-	return hashOf(content) == hashOf(legacyRender(d, blocks, nil)), nil
-}
-
 // applied writes the file behind one command. fsnotify watches directories, so
 // a proposition's directory is added the first time something is written into
 // it.
@@ -549,11 +513,11 @@ func (s *Service) Import(ctx context.Context, path string) error {
 
 	var conflicted map[int64]bool
 	err = s.Together(ctx, func(ctx context.Context) error {
-		blocks, err := Blocks(ctx, s.DB, was.document)
+		blocks, err := Blocks(ctx, s.Querier(ctx), was.document)
 		if err != nil {
 			return err
 		}
-		document, err := GetDocument(ctx, s.DB, file.Document)
+		document, err := GetDocument(ctx, s.Querier(ctx), file.Document)
 		if err != nil {
 			return err
 		}

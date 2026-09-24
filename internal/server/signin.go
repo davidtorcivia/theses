@@ -45,7 +45,7 @@ func (s *Server) startEnrolment(w http.ResponseWriter, r *http.Request, u *store
 
 // finishEnrolment is postEnrol's branch for a sign-in that was held back for
 // an authenticator. The code has already matched the secret in the cookie.
-func (s *Server) finishEnrolment(w http.ResponseWriter, r *http.Request, p *pending) {
+func (s *Server) finishEnrolment(w http.ResponseWriter, r *http.Request, p *pending, step int64) {
 	// The cookie stands in for a session that does not exist yet, so a session
 	// that does exist is somebody else's: this page is also reachable at
 	// /profile/authenticator, where a stale cookie from a shared browser would
@@ -71,7 +71,7 @@ func (s *Server) finishEnrolment(w http.ResponseWriter, r *http.Request, p *pend
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	if err := store.SetTOTPSecret(r.Context(), tx, u.ID, p.Secret); err != nil {
+	if err := store.SetTOTPSecret(r.Context(), tx, u.ID, p.Secret, step); err != nil {
 		s.fail(w, r, err)
 		return
 	}

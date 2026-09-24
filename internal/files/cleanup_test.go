@@ -2,8 +2,9 @@ package files
 
 import (
 	"context"
-
 	"errors"
+	"path"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,11 +27,15 @@ func TestCleanupProtectsLiveFilesAndUnknownObjects(t *testing.T) {
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO file_cleanup(file_id,folder,object_key,deleted_at) VALUES(?,?,?,?)`, up.File.ID, up.File.Folder, up.File.ObjectKey, old); err != nil {
 		t.Fatal(err)
 	}
+	orphans := func(a core.Actor) ([]Orphan, error) {
+		report, err := f.OrphanPage(ctx, a, 0)
+		return report.Objects, err
+	}
 	f.Now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
-	if _, err := f.Orphans(ctx, f.who["editor"]); !errors.Is(err, core.ErrForbidden) {
+	if _, err := orphans(f.who["editor"]); !errors.Is(err, core.ErrForbidden) {
 		t.Fatalf("owner guard: %v", err)
 	}
-	rows, err := f.Orphans(ctx, owner)
+	rows, err := orphans(owner)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("live upload exposed: %v %v", rows, err)
 	}
@@ -38,12 +43,12 @@ func TestCleanupProtectsLiveFilesAndUnknownObjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Now = time.Now
-	rows, err = f.Orphans(ctx, owner)
+	rows, err = orphans(owner)
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("recent object exposed: %v %v", rows, err)
 	}
 	f.Now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
-	rows, err = f.Orphans(ctx, owner)
+	rows, err = orphans(owner)
 	if err != nil || len(rows) < 1 {
 		t.Fatalf("orphan absent: %v %v key=%s", rows, err, up.File.ObjectKey)
 	}
@@ -60,6 +65,53 @@ func TestCleanupProtectsLiveFilesAndUnknownObjects(t *testing.T) {
 	}
 	if ownedObject.MatchString("backups/1/" + strings.Repeat("A", 26) + "/archive.enc") {
 		t.Fatal("backup key accepted")
+	}
+}
+
+// A thumbnail sits beside every key in its folder, so it is an orphan only
+// once no live file has a key under that folder.
+func TestCleanupKeepsAThumbnailALiveFileShares(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	owner := f.who["owner"]
+	up, err := f.Create(ctx, owner, f.prop, "live.txt", "Documents", 4, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, up.URL, up.Headers, []byte("live"))
+	dir := path.Dir(up.File.ObjectKey)
+	gone, thumb := dir+"/gone.txt", dir+"/.thumb.jpg"
+	for _, key := range []string{gone, thumb} {
+		if err := f.bucket.Put(ctx, key, strings.NewReader("x"), 1, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-8 * 24 * time.Hour).Unix()
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO file_cleanup(file_id,folder,object_key,deleted_at) VALUES(?,?,?,?)`, up.File.ID+1000, up.File.Folder, gone, old); err != nil {
+		t.Fatal(err)
+	}
+	f.Now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
+	keys := func() []string {
+		report, err := f.OrphanPage(ctx, owner, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, o := range report.Objects {
+			out = append(out, o.Key)
+		}
+		return out
+	}
+	if got := keys(); len(got) != 1 || got[0] != gone {
+		t.Fatalf("with a live file in the folder: %v, want only %s", got, gone)
+	}
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM files WHERE id=?`, up.File.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The delete's own trigger records live.txt too, so the thumbnail is
+	// looked for among the rest.
+	if got := keys(); !slices.Contains(got, thumb) || !slices.Contains(got, gone) {
+		t.Fatalf("with the folder empty: %v, want %s and %s among them", got, gone, thumb)
 	}
 }
 

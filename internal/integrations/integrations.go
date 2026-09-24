@@ -17,7 +17,6 @@
 package integrations
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,24 +25,6 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/safehttp"
-)
-
-// An Integration is one service the workspace is connected to. Name is the row
-// on the settings page, Configure hands it what the settings table holds for
-// it, Connected says whether that was enough, and Test is the button beside the
-// row. Whatever else an integration does is its own: Drive lists and opens
-// files, Transistor publishes an episode, and neither belongs on an interface
-// the other has to carry.
-type Integration interface {
-	Name() string
-	Configure(Settings) error
-	Connected() bool
-	Test(ctx context.Context) (string, error)
-}
-
-var (
-	_ Integration = (*Drive)(nil)
-	_ Integration = (*Transistor)(nil)
 )
 
 // Settings is what an integration was configured with: the keys under its own
@@ -110,10 +91,6 @@ func Client() *http.Client {
 // decode reads a JSON body, capped, and closes it.
 func decode(resp *http.Response, into any) error {
 	defer resp.Body.Close()
-	if into == nil {
-		_, err := io.Copy(io.Discard, io.LimitReader(resp.Body, maxJSON))
-		return err
-	}
 	return json.NewDecoder(io.LimitReader(resp.Body, maxJSON)).Decode(into)
 }
 

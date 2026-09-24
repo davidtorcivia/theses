@@ -28,7 +28,7 @@ type Evidence struct {
 	Locator        string `json:"locator"`
 	Interpretation string `json:"interpretation"`
 	Claim          string `json:"claim"`
-	Verified       bool   `json:"verified"`
+	Verified       bool   `json:"verified" jsonschema:"true only after checking the source; true on a save that changes content records the caller as verifier"`
 	VerifiedBy     *int64 `json:"verified_by"`
 	Version        int64  `json:"version"`
 }
@@ -109,14 +109,22 @@ func (s *Service) SaveEvidence(ctx context.Context, a core.Actor, in Evidence) (
 				return core.Change{}, core.ErrNotFound
 			}
 		}
+		// A check vouches for particular content, so an edit that changes any of it
+		// needs verified sent again and names whoever sent it; a save that changes
+		// nothing else keeps the original verifier.
 		in.VerifiedBy = nil
 		if in.Verified {
 			user := a.ID
 			in.VerifiedBy = &user
+			if before != nil && before.Verified && sameContent(*before, in) {
+				in.VerifiedBy = before.VerifiedBy
+			}
 		}
+		action := "edit"
 		in.Version++
 		if before == nil {
 			in.Version = 1
+			action = "create"
 		}
 		args := []any{in.Proposition, in.Link, in.File, in.Block, in.Title, in.Author, in.Year, in.URL, in.Quotation, in.Locator, in.Interpretation, in.Claim, in.Verified, in.VerifiedBy, in.Version}
 		if before == nil {
@@ -134,8 +142,11 @@ func (s *Service) SaveEvidence(ctx context.Context, a core.Actor, in Evidence) (
 				return core.Change{}, err
 			}
 		}
-		return core.Change{Entity: "evidence", EntityID: in.ID, Action: "edit", Before: before, After: in}, nil
+		return core.Change{Entity: "evidence", EntityID: in.ID, Action: action, Before: before, After: in}, nil
 	})
+}
+func sameContent(a, b Evidence) bool {
+	return a.Title == b.Title && a.Author == b.Author && a.Year == b.Year && a.URL == b.URL && a.Quotation == b.Quotation && a.Locator == b.Locator && a.Interpretation == b.Interpretation && a.Claim == b.Claim && value(a.Link) == value(b.Link) && value(a.File) == value(b.File) && value(a.Block) == value(b.Block)
 }
 func ExportEvidence(rows []Evidence, format string) (string, error) {
 	var b strings.Builder

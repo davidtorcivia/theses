@@ -24,9 +24,9 @@ func legalNumber(v string) int64 { n, _ := strconv.ParseInt(v, 10, 64); return n
 func (s *Server) legalError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, core.ErrNotFound):
-		s.errorPage(w, r, 404)
+		s.errorPage(w, r, http.StatusNotFound)
 	case errors.Is(err, core.ErrForbidden):
-		s.errorPage(w, r, 403)
+		s.errorPage(w, r, http.StatusForbidden)
 	default:
 		s.fail(w, r, err)
 	}
@@ -46,7 +46,7 @@ func (s *Server) legalRoutes(m *http.ServeMux) {
 }
 func (s *Server) legalManage(w http.ResponseWriter, r *http.Request) {
 	if !auth.Can(userOf(r).Role, auth.CanEdit) {
-		s.errorPage(w, r, 403)
+		s.errorPage(w, r, http.StatusForbidden)
 		return
 	}
 	var release legal.Release
@@ -66,7 +66,7 @@ func (s *Server) legalManage(w http.ResponseWriter, r *http.Request) {
 		s.legalError(w, r, err)
 		return
 	}
-	s.renderLegalManage(w, r, 200, release, nil)
+	s.renderLegalManage(w, r, http.StatusOK, release, nil)
 }
 func (s *Server) renderLegalManage(w http.ResponseWriter, r *http.Request, status int, release legal.Release, extra map[string]any) {
 	state, err := s.shellState(r, release.Proposition)
@@ -102,7 +102,7 @@ func (s *Server) legalSave(w http.ResponseWriter, r *http.Request) {
 	if key != "" {
 		ctx, err = core.WithKey(ctx, key)
 		if err != nil {
-			http.Error(w, err.Error(), 422)
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 	}
@@ -117,7 +117,7 @@ func (s *Server) legalSave(w http.ResponseWriter, r *http.Request) {
 				}
 				release.Token = old.Token
 			}
-			s.renderLegalManage(w, r, 422, release, map[string]any{"Error": err.Error()})
+			s.renderLegalManage(w, r, http.StatusUnprocessableEntity, release, map[string]any{"Error": err.Error()})
 			return
 		}
 		s.legalError(w, r, err)
@@ -131,7 +131,7 @@ func (s *Server) legalPublic(w http.ResponseWriter, r *http.Request) {
 		s.legalError(w, r, err)
 		return
 	}
-	s.renderLegalPublic(w, r, 200, release, []legal.Person{{Date: time.Now().Format("2006-01-02")}}, legal.Token(), "")
+	s.renderLegalPublic(w, r, http.StatusOK, release, []legal.Person{{Date: time.Now().Format("2006-01-02")}}, legal.Token(), "")
 }
 func (s *Server) renderLegalPublic(w http.ResponseWriter, r *http.Request, status int, release legal.Release, people []legal.Person, receipt, message string) {
 	if len(people) == 0 {
@@ -140,11 +140,8 @@ func (s *Server) renderLegalPublic(w http.ResponseWriter, r *http.Request, statu
 	s.render(w, r, status, "legal_public.html", s.page(r, release.Title, map[string]any{"Release": release, "People": people, "ReceiptKey": receipt, "Consent": legal.Consent, "Error": message}))
 }
 func (s *Server) legalSign(w http.ResponseWriter, r *http.Request) {
-	if !s.auth.Allow("legal", s.auth.ClientIP(r)) {
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "Too many submissions. Please wait a minute and try again.", 429)
-		return
-	}
+	// Spent before any read, so a guessed token costs the same as a real one.
+	limited := !s.auth.Allow("legal", s.auth.ClientIP(r))
 	release, err := s.api.Legal.Public(r.Context(), r.PathValue("token"))
 	if err != nil {
 		s.legalError(w, r, err)
@@ -159,23 +156,32 @@ func (s *Server) legalSign(w http.ResponseWriter, r *http.Request) {
 		people = append(people, legal.Person{Name: r.PostForm.Get(prefix + "name"), Date: r.PostForm.Get(prefix + "date"), Email: r.PostForm.Get(prefix + "email"), Consent: r.PostForm.Get(prefix+"consent") == "on", Notify: r.PostForm.Get(prefix+"notify") == "on"})
 	}
 	receipt := r.PostForm.Get("receipt")
+	// The form comes back filled in with the same receipt, so waiting and
+	// sending it again cannot sign twice.
+	if limited {
+		w.Header().Set("Retry-After", "60")
+		s.renderLegalPublic(w, r, http.StatusTooManyRequests, release, people, receipt, "Too many submissions. Please wait a minute and try again.")
+		return
+	}
 	if len(r.PostForm["person"]) > 20 {
 		err = legal.ErrInvalid
 	} else {
 		_, err = s.api.Legal.Sign(r.Context(), release.Token, receipt, legalNumber(r.PostForm.Get("version")), people, r.PostForm.Get("agreement_digest"))
 	}
 	if err != nil {
-		if errors.Is(err, legal.ErrInvalid) || errors.Is(err, legal.ErrChanged) || errors.Is(err, legal.ErrClosed) || errors.Is(err, board.ErrArchived) {
+		if errors.Is(err, legal.ErrInvalid) || errors.Is(err, legal.ErrChanged) || errors.Is(err, legal.ErrClosed) {
 			for i := range people {
 				people[i].Consent = false
 			}
-			s.renderLegalPublic(w, r, 422, release, people, receipt, err.Error())
+			// Nothing was saved, and the old receipt may be spent on different
+			// details, so the corrected form signs under a new one.
+			s.renderLegalPublic(w, r, http.StatusUnprocessableEntity, release, people, legal.Token(), err.Error())
 			return
 		}
 		s.legalError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, "/legal/"+release.Token+"/receipt/"+receipt, 303)
+	http.Redirect(w, r, "/legal/"+release.Token+"/receipt/"+receipt, http.StatusSeeOther)
 }
 func (s *Server) legalReceipt(w http.ResponseWriter, r *http.Request) {
 	sub, err := s.api.Legal.Receipt(r.Context(), r.PathValue("token"), r.PathValue("receipt"))
@@ -190,7 +196,7 @@ func (s *Server) legalReceipt(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(sub)
 		return
 	}
-	s.render(w, r, 200, "legal_receipt.html", s.page(r, "Release signed", map[string]any{"Submission": sub, "SignedAt": time.Unix(sub.SignedAt, 0).UTC().Format(time.RFC3339), "Brand": sub.Agreement.Brand}))
+	s.render(w, r, http.StatusOK, "legal_receipt.html", s.page(r, "Release signed", map[string]any{"Submission": sub, "SignedAt": time.Unix(sub.SignedAt, 0).UTC().Format(time.RFC3339), "Brand": sub.Agreement.Brand}))
 }
 func (s *Server) legalExport(w http.ResponseWriter, r *http.Request) {
 	subs, err := s.api.Legal.Submissions(r.Context(), legalActor(r), legalNumber(r.PathValue("id")))
@@ -213,18 +219,15 @@ func (s *Server) legalNotify(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
 	url, subject, body := f.Get("episode_url"), f.Get("email_subject"), f.Get("email_body")
 	extra := map[string]any{"EpisodeURL": url, "EmailSubject": subject, "EmailBody": body}
-	status := 200
+	status := http.StatusOK
 	if f.Get("send") == "yes" {
-		if _, err = s.mail.Sender(r.Context()); err == nil {
-			ctx, keyErr := core.WithKey(r.Context(), f.Get("key"))
-			if keyErr != nil {
-				http.Error(w, keyErr.Error(), 422)
-				return
-			}
-			_, err = s.api.Legal.Notify(ctx, legalActor(r), id, legalNumber(f.Get("version")), url, subject, body, f.Get("preview_hash"))
+		ctx, keyErr := core.WithKey(r.Context(), f.Get("key"))
+		if keyErr != nil {
+			http.Error(w, keyErr.Error(), http.StatusUnprocessableEntity)
+			return
 		}
+		_, err = s.api.Legal.Notify(ctx, legalActor(r), id, legalNumber(f.Get("version")), url, subject, body, f.Get("preview_hash"))
 		if err == nil {
-			s.mail.Nudge()
 			extra["Notice"] = "Notifications queued. Each opted-in email address receives one episode notification per release."
 		}
 	} else {
@@ -235,8 +238,8 @@ func (s *Server) legalNotify(w http.ResponseWriter, r *http.Request) {
 		extra["Previewed"] = err == nil
 	}
 	if err != nil {
-		if errors.Is(err, legal.ErrInvalid) || errors.Is(err, legal.ErrChanged) || errors.Is(err, mail.ErrNotConfigured) {
-			status = 422
+		if errors.Is(err, legal.ErrInvalid) || errors.Is(err, legal.ErrChanged) || errors.Is(err, legal.ErrRecipientsChanged) || errors.Is(err, mail.ErrNotConfigured) {
+			status = http.StatusUnprocessableEntity
 			extra["Error"] = err.Error()
 		} else {
 			s.legalError(w, r, err)

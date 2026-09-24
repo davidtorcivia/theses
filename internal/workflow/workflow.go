@@ -314,7 +314,8 @@ func (s *Service) Decide(ctx context.Context, a core.Actor, id, version int64, s
 		if err != nil {
 			return core.Change{}, err
 		}
-		if value(before.Reviewer) != a.ID {
+		// A deleted reviewer leaves the review to anyone who could have requested it.
+		if before.Reviewer != nil && *before.Reviewer != a.ID {
 			return core.Change{}, board.ErrNotYours
 		}
 		_, fp, _, err := target(ctx, tx, value(before.Document), value(before.File))

@@ -60,7 +60,7 @@ func (f *fixture) user(t *testing.T, handle string) int64 {
 func (f *fixture) channel(t *testing.T, c Channel, events ...string) Channel {
 	t.Helper()
 	c.VerifiedAt = now
-	saved, err := SaveChannel(context.Background(), f.db, f.set, c)
+	saved, err := SaveChannel(context.Background(), f.db, f.set, c, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,6 +309,31 @@ func TestARowThatIsDueIsNotCollapsedInto(t *testing.T) {
 	}
 }
 
+// A row past its give up cutoff still has a backoff next_at ahead of it, and
+// it never goes out, so a line merged into it would be lost.
+func TestARowGivenUpOnIsNotCollapsedInto(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	grace := f.user(t, "grace")
+	f.onCard(t, 7, grace)
+	f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"}}, "moved")
+
+	if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+		t.Fatal(err)
+	}
+	first := f.outbox(t)[0]
+	if _, err := f.db.ExecContext(context.Background(),
+		`UPDATE notification_outbox SET tried_at = ? WHERE id = ?`, now-int64(giveUpAfter.Seconds())-1, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 2 {
+		t.Fatalf("wrote %d rows, want 2: the given up one must be left alone", len(got))
+	}
+}
+
 func TestQuietHoursHoldARowUntilTheWindowEnds(t *testing.T) {
 	f := newFixture(t)
 	ada := f.user(t, "ada")
@@ -495,6 +520,41 @@ func TestWorkspaceWebhookCanWaitForOneColumn(t *testing.T) {
 	}
 	if got := f.outbox(t); len(got) != 1 {
 		t.Fatalf("wrote %d rows after the card reached Publication, want 1", len(got))
+	}
+}
+
+// The column is the one the move put the card in, not wherever the card is
+// when the notice is queued: a catch-up after a restart reads the event late.
+func TestWorkspaceWebhookReadsTheColumnOffTheMove(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	f.onCard(t, 7, ada)
+	if _, err := f.db.ExecContext(context.Background(),
+		`INSERT INTO columns (id, proposition_id, name, position) VALUES (5, 3, 'Publication', 'b')`); err != nil {
+		t.Fatal(err)
+	}
+	f.channel(t, Channel{Kind: KindWebhook, Config: Config{
+		URL: "https://example.com/hook", Events: []string{"moved"}, Column: "Publication"}})
+
+	// The card sits in Research now, but this move put it in Publication.
+	into := f.move(t, ada, 7)
+	into.After = card(t, map[string]any{"id": 7, "column_id": 5})
+	if err := f.s.Handle(context.Background(), into); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 1 {
+		t.Fatalf("wrote %d rows for a move into Publication, want 1", len(got))
+	}
+	// And the other way: a move into Research does not fire because the card
+	// has since reached Publication.
+	if _, err := f.db.ExecContext(context.Background(), `UPDATE cards SET column_id = 5 WHERE id = 7`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 1 {
+		t.Fatalf("wrote %d rows, want still 1: that move went into Research", len(got))
 	}
 }
 

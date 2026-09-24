@@ -122,8 +122,8 @@
       </div></div>
     </section>
 
-    {{if .CanDel}}<dialog id="delprop">
-      <h3>Delete {{.Num}} {{.P.Title}}?</h3>
+    {{if .CanDel}}<dialog id="delprop" aria-labelledby="delprop-title">
+      <h3 id="delprop-title">Delete {{.Num}} {{.P.Title}}?</h3>
       <p>The board, its cards and everything filed under this proposition go with it. The record of the deletion stays in activity.</p>
       <form method="post" action="{{$path}}/settings" class="acts">
         <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="do" value="delete">

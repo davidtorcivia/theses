@@ -179,9 +179,12 @@ Restore runs from `/settings`, after a confirmation that names the archive and
 its date. It stops writes, swaps the database, rewrites the mirror and starts
 the watcher again. The archive is encrypted to the same key that encrypts the
 stored secrets, so a restore needs `THESES_SECRET_KEY`, which the running app
-needs anyway. Restoring clears API keys and calendar subscription credentials
-so previously revoked secrets cannot become valid again. Recreate keys and
-subscriptions after a restore. Interrupted transcription jobs require explicit
+needs anyway. Restoring clears API keys, calendar subscription credentials,
+sessions, password reset links and unaccepted invitations, so previously
+revoked secrets cannot become valid again, and abandons queued invitation and
+reset mail. Everyone, the owner who ran the restore included, signs in again
+with the password the archive holds. Recreate keys, subscriptions and pending
+invitations after a restore. Interrupted transcription jobs require explicit
 retry. The app retains replaced files under timestamped aside paths; inspect
 any partial-restore error before retrying or removing those files.
 

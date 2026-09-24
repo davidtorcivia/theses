@@ -27,6 +27,7 @@ type harness struct {
 	auth    *auth.Auth
 	set     *settings.Settings
 	handler http.Handler
+	api     *API
 	user    *store.User
 	board   *board.Service
 	docs    *docs.Service
@@ -59,7 +60,7 @@ func newHarness(t *testing.T) *harness {
 	})
 	api.Docs = docs.New(b.Service, "", func() string { return "" }, log)
 	api.Board = b
-	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), user: user,
+	return &harness{T: t, db: db, auth: a, set: set, handler: api.Handler(), api: api, user: user,
 		board: b, docs: api.Docs}
 }
 
@@ -822,5 +823,54 @@ func TestActivityNamesWhatCarriedTheChange(t *testing.T) {
 	}
 	if want := TokenVia("read-write"); carried != want {
 		t.Errorf("via = %q, want %q", carried, want)
+	}
+}
+
+// A handler's read inside a.together goes through the run's transaction, so it
+// sees what the run wrote and takes no second connection from the pool.
+func TestPropositionReadInsideTogetherSeesTheRun(t *testing.T) {
+	h := newHarness(t)
+	a := New(h.db, h.auth, h.set, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.Board = h.board
+	who := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	err := h.board.Together(context.Background(), func(ctx context.Context) error {
+		e, err := h.board.CreateProposition(ctx, who, "Tidal Power")
+		if err != nil {
+			return err
+		}
+		_, err = a.Proposition(ctx, Principal{User: h.user}, e.EntityID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// decode is every route's body reader. An empty body is defaults only where
+// the route says so; otherwise it is refused like one that is not JSON, and a
+// body over the ceiling is 413 either way.
+func TestDecode(t *testing.T) {
+	a := New(nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tests := []struct {
+		name  string
+		body  string
+		empty bool
+		want  int // 0 for carried on
+	}{
+		{"empty where it may be", "", true, 0},
+		{"empty where it may not be", "", false, http.StatusBadRequest},
+		{"JSON", `{"n":1}`, false, 0},
+		{"not JSON", `{"n":`, true, http.StatusBadRequest},
+		{"too large", `{"n":"` + strings.Repeat("x", 64) + `"}`, true, http.StatusRequestEntityTooLarge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			var into struct{ N any }
+			ok := a.decode(w, httptest.NewRequest("POST", "/", strings.NewReader(tt.body)), 32, tt.empty, &into)
+			if ok != (tt.want == 0) || (tt.want != 0 && w.Code != tt.want) {
+				t.Errorf("carried on %v with %d, want %d", ok, w.Code, tt.want)
+			}
+		})
 	}
 }

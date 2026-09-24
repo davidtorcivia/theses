@@ -62,15 +62,6 @@ func next(a string) string {
 	return head[:len(head)-1] + string(digits[last+1])
 }
 
-// First returns the key for the first item in an empty list.
-func First() string { return Between("", "") }
-
-// After returns the smallest key that sorts after a, for appending to a list.
-func After(a string) string { return Between(a, "") }
-
-// Before returns a key that sorts before b and before every key above it.
-func Before(b string) string { return Between("", b) }
-
 // midpoint returns a fraction strictly between the fractions a and b, where an
 // empty a is 0 and an empty b is 1. It walks past the digits the two bounds
 // share and then either picks a digit in the gap or, when the bounds are

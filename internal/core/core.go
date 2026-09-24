@@ -296,6 +296,17 @@ func (s *Service) Together(ctx context.Context, run func(context.Context) error)
 	return s.commit(tx, g.events)
 }
 
+// Querier is where a command reads before its own transaction opens: the
+// shared transaction inside Together, the pool otherwise. From the pool, a read
+// inside Together waits for a connection that writers queued behind the
+// group's lock are holding, and it cannot see what the group has written.
+func (s *Service) Querier(ctx context.Context) store.Querier {
+	if g, joined := ctx.Value(groupKey{}).(*group); joined {
+		return g.open
+	}
+	return s.DB
+}
+
 func (s *Service) commit(tx *sql.Tx, events []Event) error {
 	s.publishing.Lock()
 	defer s.publishing.Unlock()

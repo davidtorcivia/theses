@@ -231,7 +231,7 @@ func (a *API) writeSource(w http.ResponseWriter, r *http.Request, who core.Actor
 	// one field of one row is held to, and a megabyte is a long document with
 	// room to spare. It also bounds the base list, which is a block to look up
 	// each, and so bounds the work one request can ask of the write lock.
-	if !a.decodeUpTo(w, r, maxSourceBytes, &body) {
+	if !a.decode(w, r, maxSourceBytes, true, &body) {
 		return
 	}
 	if a.Docs == nil {
@@ -276,5 +276,5 @@ func (a *API) pathID(w http.ResponseWriter, r *http.Request, what string) (int64
 // that a delete or a move to the head need send nothing.
 func (a *API) documentBody(w http.ResponseWriter, r *http.Request) (documentBody, bool) {
 	var body documentBody
-	return body, a.decode(w, r, &body)
+	return body, a.decode(w, r, maxBodyBytes, true, &body)
 }

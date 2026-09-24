@@ -78,6 +78,32 @@ func TestDriveConnectNeedsAClientFirst(t *testing.T) {
 	}
 }
 
+// A stored token that will not parse says connect again, so Connect and the
+// callback have to go through over it rather than refuse on the same error.
+func TestDriveConnectsOverAnUnreadableToken(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	google, _ := fakeGoogle(t)
+	h.pointAtFakes(google.URL, "")
+	h.saveSecret("integrations.drive.client_id", "the-client")
+	h.saveSecret("integrations.drive.client_secret", "the-secret")
+	h.saveSecret("integrations.drive.token", "not a token")
+
+	res, _ := h.post("/settings/integrations/drive/connect", url.Values{"csrf": {h.csrf("/settings")}})
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("connect over an unreadable token gave %d", res.StatusCode)
+	}
+	sent, _ := url.Parse(res.Header.Get("Location"))
+	res, _ = h.get(driveCallback + "?code=the-code&state=" + url.QueryEscape(sent.Query().Get("state")))
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("the callback gave %d", res.StatusCode)
+	}
+	stored, err := h.srv.settings.Secret(context.Background(), "integrations.drive.token")
+	if err != nil || !strings.Contains(stored, "refresh-1") {
+		t.Fatalf("the token was not replaced: %q %v", stored, err)
+	}
+}
+
 func TestDriveOAuthFlow(t *testing.T) {
 	h := newHarness(t)
 	h.setupOwner()

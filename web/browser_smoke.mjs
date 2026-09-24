@@ -203,6 +203,8 @@ try {
     if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.research').screenshot({animations:'disabled',style:'#top{visibility:hidden}',path:process.env.THESES_SCREENSHOT_DIR+'/research-'+width+'.png'});
   }
   const evidenceId=await page.locator('.evidence-item').first().getAttribute('id');
+  // A copied reference opens in a fresh page, where the research section starts closed.
+  await visit('/show');
   await visit('/p/'+fixture.proposition+'#'+evidenceId);
   await page.waitForFunction(id=>document.activeElement?.id===id,evidenceId);
   const ris=await context.request.get(fixture.url+'/app/evidence/export?proposition='+fixture.proposition+'&format=ris');
@@ -262,6 +264,16 @@ try {
   await page.evaluate(async () => { const old = await caches.open('theses-stale-fixture'); await old.put('/stale', new Response('old')); await fetch('/__smoke/upgrade'); const reg = await navigator.serviceWorker.getRegistration(); await reg.update(); });
   await waitAsync(async () => !(await caches.keys()).includes('theses-stale-fixture') && navigator.serviceWorker.controller !== window.previousController && navigator.serviceWorker.controller?.state === 'activated');
   await waitAsync(() => new Promise(resolve => { const request=indexedDB.open('theses-offline'); request.onsuccess=()=>{const db=request.result;const read=db.transaction('snapshot').objectStore('snapshot').getAll();read.onsuccess=()=>{const rows=read.result;db.close();resolve(rows.some(row=>row.payload.propositions.some(p=>p.kind==='show' && p.id===row.proposition)));};}; }));
+  // Rows another account left behind go at the next signed-in boot; this account's own snapshot stays.
+  const cachedKeys = (seed) => page.evaluate(seed => new Promise(resolve => { const request=indexedDB.open('theses-offline'); request.onsuccess=()=>{const db=request.result;const tx=db.transaction(['snapshot','material'],'readwrite');const out={};for(const name of ['snapshot','material']){const store=tx.objectStore(name);if(seed)store.put({proposition:999,me:999,at:1,v:'fixture',payload:{me:999,propositions:[]}});const keys=store.getAllKeys();keys.onsuccess=()=>{out[name]=keys.result;};}tx.oncomplete=()=>{db.close();resolve(out);};}; }), seed);
+  assert.ok((await cachedKeys(true)).material.includes(999));
+  await visit('/show'); await page.locator('#board').waitFor();
+  for (const deadline = Date.now() + 15000; ;) {
+    const keys = await cachedKeys(false);
+    if (!keys.snapshot.includes(999) && !keys.material.includes(999)) { assert.ok(keys.snapshot.length > 0, 'the signed-in account keeps its own snapshot'); break; }
+    assert.ok(Date.now() < deadline, 'another account\'s cached rows survived a signed-in boot');
+    await page.waitForTimeout(100);
+  }
   await context.setOffline(true); await visit('/show'); await page.locator('#board').waitFor();
   await page.locator('#docmode').click(); await page.locator('#docsrc').fill('Offline source draft');
   await page.getByText('Offline · draft on this device', { exact: true }).waitFor();
@@ -397,6 +409,18 @@ try {
     await page.keyboard.press('Escape');
     assert.equal(await page.getByLabel('Document tools',{exact:true}).evaluate(n=>n===document.activeElement),true);
   }
+  // Two tabs edit different fields of one heading; the title committed second keeps the other tab's statement.
+  const other=await context.newPage();
+  await visit('/p/'+fixture.large);await other.goto(fixture.url+'/p/'+fixture.large);
+  // A render landing between the click and the editor opening replaces the node, so the click repeats until one sticks.
+  const edit=(tab,selector)=>tab.waitForFunction(s=>{const n=document.querySelector(s);if(n&&!n.isContentEditable)n.click();return n?.isContentEditable;},selector,{polling:250});
+  await edit(page,'#wtitle');await edit(other,'#wstate');
+  await other.keyboard.press('Control+A');await other.keyboard.type('Statement from another tab');await other.keyboard.press('Enter');
+  await waitAsync(async id=>(await import(document.querySelector('script[src$="/app/main.js"]').src.replace(/main\.js$/,'state.js'))).proposition(id)?.statement==='Statement from another tab',fixture.large);
+  await page.keyboard.press('Control+A');await page.keyboard.type('Large workspace renamed');await page.keyboard.press('Enter');
+  await other.reload();await other.locator('#wtitle').filter({hasText:'Large workspace renamed'}).waitFor();
+  assert.equal(await other.locator('#wstate').textContent(),'Statement from another tab');
+  await other.close();
   await visit('/profile#tokens');
   assert.equal(await page.locator('#personal-key').count(),0);
   await page.getByRole('button',{name:'Revoke Browser assistant',exact:true}).click();

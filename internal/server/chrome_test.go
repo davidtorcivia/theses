@@ -162,14 +162,14 @@ func TestEveryFormRedirectsToItsSection(t *testing.T) {
 	hook, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
 		UserID: 0, Kind: notify.KindWebhook,
 		Config: notify.Config{URL: "https://127.0.0.1:1/hook", Events: []string{"mentioned"}},
-	})
+	}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}
 	mine, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
 		UserID: 1, Kind: notify.KindNtfy,
 		Config: notify.Config{Server: "https://127.0.0.1:1", Topic: "alerts"},
-	})
+	}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,11 +489,11 @@ func (h *harness) bendFlash(t *testing.T, bend func(*flash)) {
 			continue
 		}
 		var f flash
-		if !h.srv.pending.unseal(c.Value, &f) {
+		if !h.srv.pending.unseal(flashCookie, c.Value, &f) {
 			t.Fatal("the flash cookie does not open")
 		}
 		bend(&f)
-		value, err := h.srv.pending.seal(&f)
+		value, err := h.srv.pending.seal(flashCookie, &f)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -166,6 +166,22 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	if _, err := f.db.ExecContext(ctx, `INSERT INTO api_tokens(user_id,name,hash,scopes,created_at) SELECT id,'Restored key',zeroblob(32),'read',1 FROM users LIMIT 1`); err != nil {
 		t.Fatal(err)
 	}
+	// Sessions, reset links and open invitations are credentials too, and the
+	// mail carrying the last two is queued behind them.
+	for _, q := range []string{
+		`INSERT INTO sessions(user_id,hmac,epoch,created_at,expires_at) SELECT id,randomblob(32),0,1,unixepoch()+3600 FROM users LIMIT 1`,
+		`INSERT INTO password_resets(user_id,token_hash,created_at,expires_at) SELECT id,randomblob(32),1,unixepoch()+3600 FROM users LIMIT 1`,
+		`INSERT INTO invitations(email,role,token_hash,created_at,expires_at) VALUES ('open@example.com','editor',randomblob(32),1,unixepoch()+3600)`,
+		`INSERT INTO invitations(email,role,token_hash,created_at,expires_at,accepted_at) VALUES ('taken@example.com','editor',randomblob(32),1,unixepoch()+3600,2)`,
+		`INSERT INTO mail_outbox(to_addr,subject,body_text,created_at,next_at,expires_at,ref) VALUES
+			('open@example.com','Invited','x',1,1,unixepoch()+3600,'invitation:1'),
+			('ada@example.com','Reset','x',1,1,unixepoch()+3600,'reset:1'),
+			('ada@example.com','Release','x',1,1,NULL,'')`,
+	} {
+		if _, err := f.db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
 	m, err := f.b.Run(ctx)
 	if err != nil {
 		t.Fatalf("run: %v", err)
@@ -212,12 +228,12 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 			t.Error("timed out stopping the document mirror")
 		}
 	}()
-	// Wait for Run to own the current tree before Restore asks it to release it.
+	// Wait for Run to own the current tree before the restore asks it to release it.
 	waitBackup(t, "the document mirror to start", func() bool {
 		return mirror.WithMirrorPaused(ctx, func() error { return nil }) == nil
 	})
 
-	if err := f.b.Restore(ctx, m.Name, 0); err != nil {
+	if err := f.b.restore(ctx, m.Name, 0); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 
@@ -228,6 +244,19 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	var subscriptions int
 	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM calendar_subscriptions`).Scan(&subscriptions); err != nil || subscriptions != 0 {
 		t.Fatalf("restored subscription credentials: %d, %v", subscriptions, err)
+	}
+	for q, want := range map[string]int{
+		`SELECT count(*) FROM sessions`:                                          0,
+		`SELECT count(*) FROM password_resets`:                                   0,
+		`SELECT count(*) FROM invitations WHERE accepted_at IS NULL`:             0,
+		`SELECT count(*) FROM invitations WHERE accepted_at IS NOT NULL`:         1,
+		`SELECT count(*) FROM mail_outbox WHERE expires_at = 0`:                  2,
+		`SELECT count(*) FROM mail_outbox WHERE ref = '' AND expires_at IS NULL`: 1,
+	} {
+		var got int
+		if err := f.db.QueryRowContext(ctx, q).Scan(&got); err != nil || got != want {
+			t.Errorf("%s after the restore: %d, %v, want %d", q, got, err, want)
+		}
 	}
 	show, err := board.GetShow(ctx, f.db)
 	if err != nil || show.Kind != "show" || len(show.Members) == 0 {
@@ -526,7 +555,7 @@ func TestRestoreRefusesATamperedArchiveBeforeAnythingChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := f.b.Restore(ctx, m.Name, 0); err == nil {
+	if err := f.b.restore(ctx, m.Name, 0); err == nil {
 		t.Fatal("a tampered archive was restored")
 	}
 	if got := f.workspaceName(); got != `"after"` {
@@ -561,7 +590,7 @@ func TestRestoreValidatesTheDatabaseBeforeReplacingLiveData(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.save("workspace.name", "after")
-			if err := f.b.Restore(ctx, m.Name, 0); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if err := f.b.restore(ctx, m.Name, 0); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("restore invalid database: %v", err)
 			}
 			if got := f.workspaceName(); got != `"after"` || f.b.Frozen() {
@@ -587,7 +616,7 @@ func TestRestoreRefusesAnArchiveThatDoesNotMatchItsManifest(t *testing.T) {
 	if err := f.bucket.Put(ctx, manifestKey(m.Name), strings.NewReader(wrong), int64(len(wrong)), "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	err = f.b.Restore(ctx, m.Name, 0)
+	err = f.b.restore(ctx, m.Name, 0)
 	if err == nil || !strings.Contains(err.Error(), "hash") {
 		t.Fatalf("the hash was not checked: %v", err)
 	}
@@ -748,7 +777,7 @@ func TestVerificationLeavesTheLiveWorkspaceUntouched(t *testing.T) {
 	if err := f.db.QueryRowContext(ctx, `SELECT count(*) FROM propositions`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.b.Verify(ctx, m.Name)
+	result, err := f.b.verify(ctx, m.Name)
 	if err != nil {
 		t.Fatal(err)
 	}

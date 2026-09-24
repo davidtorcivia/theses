@@ -622,6 +622,31 @@ func TestDeletingAPropositionKeepsTheRecordOfIt(t *testing.T) {
 	}
 }
 
+// An upload in flight holds the multipart id its parts are aborted by, and the
+// delete would cascade it away and leave the parts in the bucket.
+func TestDeletingAPropositionWaitsForItsUploads(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	if _, err := f.db.ExecContext(ctx, `INSERT INTO files(id,proposition_id,name,object_key,state,created_at)
+		VALUES(1,?,'tape.wav','files/1','uploading',0)`, f.prop); err != nil {
+		t.Fatal(err)
+	}
+	// Archived is where the refusal matters most, because the upload cannot be
+	// canceled there; the text says to restore it first.
+	if _, err := f.ArchiveProposition(ctx, f.who["owner"], f.prop); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteProposition(ctx, f.who["owner"], f.prop); !errors.Is(err, ErrUploading) {
+		t.Fatalf("deleting with an upload in flight gave %v", err)
+	}
+	if _, err := f.db.ExecContext(ctx, `UPDATE files SET state='ready' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteProposition(ctx, f.who["owner"], f.prop); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestArchiveAndRestoreAndVia(t *testing.T) {
 	ctx := context.Background()
 	f := setup(t)
@@ -1028,6 +1053,170 @@ func TestUndoRefusesWhenTheOrderingKeyHasBeenTaken(t *testing.T) {
 	}
 	if back.ColumnID != f.cols[0].ID || back.Position != moving.Position {
 		t.Errorf("the card came back to column %d at %q", back.ColumnID, back.Position)
+	}
+}
+
+// Undoing a move back into a column deleted since breaks the foreign key, and
+// that is a refusal rather than a failure.
+func TestUndoIntoADeletedColumnIsNotUndoable(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	editor := f.who["editor"]
+	col, err := f.CreateColumn(ctx, editor, f.prop, "Temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := f.mustCard(t, col.EntityID, "Call the engineer")
+	move, err := f.MoveCard(ctx, editor, card.ID, f.cols[0].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteColumn(ctx, f.who["owner"], col.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, editor, move.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undo into a deleted column gave %v", err)
+	}
+	var undone sql.NullInt64
+	if err := f.db.QueryRowContext(ctx, `SELECT undone_at FROM activity WHERE id = ?`, move.Seq).Scan(&undone); err != nil || undone.Valid {
+		t.Fatalf("the refused undo left undone_at %v (%v)", undone, err)
+	}
+}
+
+// A column deleted since the move may have had its id reused by another
+// proposition, where the foreign key alone would let the undo through.
+func TestUndoIntoAReusedColumnIsNotUndoable(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	owner := f.who["owner"]
+	col, err := f.CreateColumn(ctx, owner, f.prop, "Temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := f.mustCard(t, col.EntityID, "Call the engineer")
+	move, err := f.MoveCard(ctx, owner, card.ID, f.cols[0].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteColumn(ctx, owner, col.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.CreateProposition(ctx, owner, "Wave Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := ListColumns(ctx, f.db, other.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols[0].ID != col.EntityID {
+		t.Fatalf("the new proposition's first column is %d, not the reused %d", cols[0].ID, col.EntityID)
+	}
+	if _, err := f.Undo(ctx, owner, move.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undo into another proposition's column gave %v", err)
+	}
+	back, err := GetCard(ctx, f.db, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.ColumnID != f.cols[0].ID {
+		t.Errorf("the card moved to column %d", back.ColumnID)
+	}
+}
+
+// Column ids are reused, so a deleted card's column may have become the first
+// column of a later proposition. Restoring into it would file the card under
+// one proposition and draw it in no column of it.
+func TestRestoreRefusesAColumnNowAnotherPropositions(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	owner := f.who["owner"]
+	col, err := f.CreateColumn(ctx, owner, f.prop, "Temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := f.mustCard(t, col.EntityID, "Call the engineer")
+	if _, err := f.DeleteCard(ctx, owner, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteColumn(ctx, owner, col.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.CreateProposition(ctx, owner, "Wave Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := ListColumns(ctx, f.db, other.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols[0].ID != col.EntityID {
+		t.Fatalf("the new proposition's first column is %d, not the reused %d", cols[0].ID, col.EntityID)
+	}
+	items, err := f.Trash(ctx, owner, f.prop)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("trash %+v %v", items, err)
+	}
+	if _, err := f.RestoreDeleted(ctx, owner, items[0].ID); !errors.Is(err, core.ErrRestoreConflict) {
+		t.Fatalf("restoring into another proposition's column gave %v", err)
+	}
+}
+
+// User ids are reused too, so an account invited after the delete must not
+// inherit the card's assignment from the one deleted before it.
+func TestRestoreDropsAnAssigneeWhoseIDWasReused(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	owner := f.who["owner"]
+	newUser := func(handle string) int64 {
+		id, err := store.CreateUser(ctx, f.db, &store.User{
+			Handle: handle, Email: handle + "@example.com", Name: handle,
+			Initials: "XX", Colour: "#1100ff", Role: auth.RoleEditor, PasswordHash: "x",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	former := newUser("former")
+	if _, err := f.AddMember(ctx, owner, f.prop, former); err != nil {
+		t.Fatal(err)
+	}
+	made, err := f.CreateCard(ctx, f.who["editor"], f.cols[0].ID, "Call the engineer", []int64{former})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteCard(ctx, owner, made.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, former); err != nil {
+		t.Fatal(err)
+	}
+	newcomer := newUser("newcomer")
+	if newcomer != former {
+		t.Fatalf("the new account is %d, not the reused %d", newcomer, former)
+	}
+	// Invited a while after the delete, which a test in one second cannot wait for.
+	if _, err := f.db.ExecContext(ctx, `UPDATE users SET created_at = created_at + 60 WHERE id = ?`, newcomer); err != nil {
+		t.Fatal(err)
+	}
+	items, err := f.Trash(ctx, owner, f.prop)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("trash %+v %v", items, err)
+	}
+	if _, err := f.RestoreDeleted(ctx, owner, items[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	back, err := GetCard(ctx, f.db, made.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Assignees) != 0 {
+		t.Errorf("the restored card is assigned to %v", back.Assignees)
+	}
+	var by sql.NullInt64
+	if err := f.db.QueryRowContext(ctx, `SELECT created_by FROM cards WHERE id = ?`, made.EntityID).Scan(&by); err != nil || by.Int64 != f.who["editor"].ID {
+		t.Errorf("the restored card was made by %v (%v), want the editor", by, err)
 	}
 }
 

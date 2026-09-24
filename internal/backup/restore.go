@@ -20,6 +20,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -29,21 +30,14 @@ import (
 // attacker, and it is far above any database this app will hold.
 const maxEntry = 64 << 30
 
-// Restore puts the database and the markdown mirror back from one archive.
+// restore puts the database and the markdown mirror back from one archive.
+// RestoreNow runs it.
 //
 // Everything that can fail happens before anything changes: the archive is
 // downloaded, decrypted, checked against the hash in its manifest, unpacked
 // beside the live files and opened as a database. Only then do writes stop and
 // the files change places, and the ones being replaced are moved aside under a
 // timestamp rather than removed.
-func (b *Backup) Restore(ctx context.Context, key string, actorID int64) error {
-	if !b.busy.CompareAndSwap(false, true) {
-		return ErrBusy
-	}
-	defer b.busy.Store(false)
-	return b.restore(ctx, key, actorID)
-}
-
 func (b *Backup) restore(ctx context.Context, key string, actorID int64) error {
 	stage, err := os.MkdirTemp(b.cfg.DataDir, "restore-stage-")
 	if err != nil {
@@ -147,8 +141,17 @@ func (b *Backup) prepare(ctx context.Context, key, dir string) (Manifest, error)
 		check.Close()
 		return Manifest{}, err
 	}
-	// Restoring old credentials would reactivate revoked calendar URLs and API keys.
-	if _, err := check.ExecContext(ctx, `DELETE FROM calendar_subscriptions; DELETE FROM api_tokens`); err != nil {
+	// Restoring old credentials would reactivate revoked calendar URLs, API
+	// keys, sessions, reset links and invitations, so none come back; everyone,
+	// the owner restoring included, signs in again. Mail still queued with one
+	// of those links is abandoned, since the link it carries opens nothing.
+	if _, err := check.ExecContext(ctx, `DELETE FROM calendar_subscriptions; DELETE FROM api_tokens;
+		DELETE FROM sessions; DELETE FROM password_resets; DELETE FROM invitations WHERE accepted_at IS NULL`); err != nil {
+		check.Close()
+		return Manifest{}, err
+	}
+	if _, err := check.ExecContext(ctx, `UPDATE mail_outbox SET expires_at = 0, last_error = ?
+		WHERE sent_at IS NULL AND (ref LIKE 'invitation:%' OR ref LIKE 'reset:%')`, mail.Restored); err != nil {
 		check.Close()
 		return Manifest{}, err
 	}

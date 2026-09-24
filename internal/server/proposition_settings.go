@@ -256,7 +256,7 @@ func lengths(form url.Values) error {
 }
 
 func (s *Server) saveMembers(ctx context.Context, actor core.Actor, id int64, wanted []string) error {
-	p, err := board.GetProposition(ctx, s.db, id)
+	p, err := board.GetProposition(ctx, s.board.Querier(ctx), id)
 	if err != nil {
 		return err
 	}
@@ -288,7 +288,7 @@ func (s *Server) saveMembers(ctx context.Context, actor core.Actor, id int64, wa
 // saveColumns applies the one control that was pressed, then the renames, so
 // that a reorder and a retitle in the same submission both land.
 func (s *Server) saveColumns(ctx context.Context, actor core.Actor, id int64, form url.Values) error {
-	cols, err := board.ListColumns(ctx, s.db, id)
+	cols, err := board.ListColumns(ctx, s.board.Querier(ctx), id)
 	if err != nil {
 		return err
 	}

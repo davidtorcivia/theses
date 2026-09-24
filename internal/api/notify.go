@@ -1,12 +1,17 @@
 package api
 
 import (
-	"encoding/json"
+	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/notify"
+	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -27,6 +32,7 @@ type ChannelView struct {
 	TokenSet  bool     `json:"token_set,omitempty"`
 	SecretSet bool     `json:"secret_set,omitempty"`
 	Events    []string `json:"events,omitempty"`
+	Column    string   `json:"column,omitempty"`
 }
 
 // An EventView is one row of the matrix, so a client can draw it without
@@ -48,7 +54,7 @@ func channelView(c notify.Channel, email string) ChannelView {
 		QuietFrom: c.QuietFrom, QuietTo: c.QuietTo, Digest: c.Digest,
 		Server: c.Config.Server, Topic: c.Config.Topic, URL: c.Config.URL,
 		TokenSet: c.Config.Token != "", SecretSet: c.Config.Secret != "",
-		Events: c.Config.Events,
+		Events: c.Config.Events, Column: c.Config.Column,
 	}
 }
 
@@ -112,14 +118,7 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 		Channels *[]channelIn        `json:"channels"`
 		Rules    *map[string][]int64 `json:"rules"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return
-		}
-		a.fail(w, http.StatusBadRequest, "the body must be JSON with channels, rules, or both")
+	if !a.decode(w, r, maxBodyBytes, false, &body) {
 		return
 	}
 
@@ -153,8 +152,8 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 	a.writeJSON(w, http.StatusOK, view)
 }
 
-func (a *API) saveChannels(r *http.Request, p Principal, q store.Querier, list []channelIn) error {
-	existing, err := notify.ListChannels(r.Context(), q, a.set, p.User.ID)
+func (a *API) saveChannels(r *http.Request, p Principal, tx *sql.Tx, list []channelIn) error {
+	existing, err := notify.ListChannels(r.Context(), tx, a.set, p.User.ID)
 	if err != nil {
 		return err
 	}
@@ -198,13 +197,13 @@ func (a *API) saveChannels(r *http.Request, p Principal, q store.Querier, list [
 		if in.ID != 0 && !c.Config.SameDestination(was[in.ID].Config) {
 			c.VerifiedAt = 0
 		}
-		if _, err := notify.SaveChannel(r.Context(), q, a.set, c); err != nil {
+		if _, err := notify.SaveChannelTx(r.Context(), tx, a.set, c, p.Actor()); err != nil {
 			return err
 		}
 	}
 	for _, c := range existing {
 		if !kept[c.ID] {
-			if err := notify.DeleteChannel(r.Context(), q, c.ID, p.User.ID); err != nil {
+			if err := notify.DeleteChannelTx(r.Context(), tx, a.set, c.ID, p.User.ID, p.Actor()); err != nil {
 				return err
 			}
 		}
@@ -218,9 +217,7 @@ func (a *API) testNotification(w http.ResponseWriter, r *http.Request, p Princip
 	var body struct {
 		Channel int64 `json:"channel"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		a.fail(w, http.StatusBadRequest, "the body must be JSON with a channel field")
+	if !a.decode(w, r, maxBodyBytes, false, &body) {
 		return
 	}
 	c, err := notify.GetChannel(r.Context(), a.db, a.set, body.Channel)
@@ -241,9 +238,184 @@ func (a *API) testNotification(w http.ResponseWriter, r *http.Request, p Princip
 	a.writeJSON(w, http.StatusOK, map[string]any{"sent": true, "channel": c.ID})
 }
 
-// notificationRoutes is registered by Handler.
+// notificationRoutes is registered by Handler. The workspace's webhooks are
+// the settings page's, so they take admin, which only an owner's token has.
 func (a *API) notificationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/me/notifications", a.scoped(auth.ScopeRead, a.notifications))
 	mux.HandleFunc("PUT /api/v1/me/notifications", a.scoped(auth.ScopeWrite, a.putNotifications))
 	mux.HandleFunc("POST /api/v1/me/notifications/test", a.scoped(auth.ScopeWrite, a.testNotification))
+	mux.HandleFunc("GET /api/v1/webhooks", a.scoped(auth.ScopeAdmin, a.listWebhooks))
+	mux.HandleFunc("POST /api/v1/webhooks", a.scoped(auth.ScopeAdmin, a.saveWebhook))
+	mux.HandleFunc("PATCH /api/v1/webhooks/{id}", a.scoped(auth.ScopeAdmin, a.saveWebhook))
+	mux.HandleFunc("DELETE /api/v1/webhooks/{id}", a.scoped(auth.ScopeAdmin, a.deleteWebhook))
+	mux.HandleFunc("POST /api/v1/webhooks/{id}/test", a.scoped(auth.ScopeAdmin, a.testWebhook))
+}
+
+// A WebhookPatch is the fields of a workspace webhook a call names. Every one
+// left out keeps what is stored, so a secret the caller never saw is not
+// cleared by leaving it out, the rule the settings page follows.
+type WebhookPatch struct {
+	URL    *string  `json:"url,omitempty" jsonschema:"the http or https address the workspace posts to"`
+	Secret *string  `json:"secret,omitempty" jsonschema:"what signs the body as X-Theses-Signature; an empty string clears it"`
+	Events []string `json:"events,omitempty" jsonschema:"the events it fires on, as the notification matrix names them"`
+	Column *string  `json:"column,omitempty" jsonschema:"fire a card move only when it lands in this column; empty for any"`
+}
+
+// Webhooks is the workspace's webhooks, for both surfaces.
+func (a *API) Webhooks(ctx context.Context) ([]ChannelView, error) {
+	hooks, err := notify.ListChannels(ctx, a.db, a.set, 0)
+	if err != nil {
+		return nil, err
+	}
+	out := []ChannelView{}
+	for _, c := range hooks {
+		out = append(out, channelView(c, ""))
+	}
+	return out, nil
+}
+
+// webhook is one of the workspace's webhooks, and not there when the id names
+// somebody's own channel.
+func (a *API) webhook(ctx context.Context, q store.Querier, id int64) (notify.Channel, error) {
+	c, err := notify.GetChannel(ctx, q, a.set, id)
+	if err == nil && c.UserID != 0 {
+		return notify.Channel{}, store.ErrNotFound
+	}
+	return c, err
+}
+
+// SaveWebhook adds a workspace webhook when id is zero and changes the one it
+// names otherwise. One that now points somewhere else is unproven again, and
+// nothing is sent to it until TestWebhook reaches it.
+//
+// The row is read inside the transaction that writes it, which holds the
+// write lock from the start, so a patch is laid over the row as committed and
+// two patches of different fields cannot undo each other.
+func (a *API) SaveWebhook(ctx context.Context, who core.Actor, id int64, in WebhookPatch) (ChannelView, error) {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ChannelView{}, fmt.Errorf("%w: save webhook: %w", notify.ErrStorage, err)
+	}
+	defer tx.Rollback()
+	was := notify.Channel{Kind: notify.KindWebhook}
+	if id != 0 {
+		if was, err = a.webhook(ctx, tx, id); err != nil {
+			return ChannelView{}, err
+		}
+	}
+	c := was
+	if in.URL != nil {
+		c.Config.URL = *in.URL
+	}
+	if in.Secret != nil {
+		c.Config.Secret = *in.Secret
+	}
+	if in.Events != nil {
+		c.Config.Events = in.Events
+	}
+	if in.Column != nil {
+		c.Config.Column = *in.Column
+	}
+	if !c.Config.SameDestination(was.Config) {
+		c.VerifiedAt = 0
+	}
+	saved, err := notify.SaveChannelTx(ctx, tx, a.set, c, settingsActor(who))
+	if err != nil {
+		return ChannelView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ChannelView{}, fmt.Errorf("%w: save webhook: %w", notify.ErrStorage, err)
+	}
+	return channelView(saved, ""), nil
+}
+
+// DeleteWebhook removes one of the workspace's webhooks.
+func (a *API) DeleteWebhook(ctx context.Context, who core.Actor, id int64) error {
+	return notify.DeleteChannel(ctx, a.db, a.set, id, 0, settingsActor(who))
+}
+
+// A WebhookTest is what the test message met: sent, or what the destination
+// said, with the webhook's secrets already taken out of it.
+type WebhookTest struct {
+	Sent  bool   `json:"sent"`
+	Error string `json:"error,omitempty"`
+}
+
+// TestWebhook sends the test message to one of the workspace's webhooks and
+// marks it verified when it arrives. Only a webhook that is not there is an
+// error; one that did not answer is the result.
+func (a *API) TestWebhook(ctx context.Context, id int64) (WebhookTest, error) {
+	c, err := a.webhook(ctx, a.db, id)
+	if err != nil {
+		return WebhookTest{}, err
+	}
+	if err := notify.New(a.db, a.set, a.log, "").Test(ctx, c, ""); err != nil {
+		return WebhookTest{Error: err.Error()}, nil
+	}
+	return WebhookTest{Sent: true}, nil
+}
+
+// settingsActor is a command's actor as the tables outside core record one.
+func settingsActor(a core.Actor) settings.Actor {
+	return settings.Actor{Kind: a.Kind, ID: strconv.FormatInt(a.ID, 10), Via: a.Via, UserID: a.ID}
+}
+
+func (a *API) listWebhooks(w http.ResponseWriter, r *http.Request, _ Principal) {
+	hooks, err := a.Webhooks(r.Context())
+	if err != nil {
+		a.serverError(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"webhooks": hooks})
+}
+
+// saveWebhook is both the POST that adds one and the PATCH that changes one:
+// the path's id is all that tells them apart.
+func (a *API) saveWebhook(w http.ResponseWriter, r *http.Request, p Principal) {
+	var id int64
+	if r.PathValue("id") != "" {
+		var ok bool
+		if id, ok = a.pathID(w, r, "webhook"); !ok {
+			return
+		}
+	}
+	var in WebhookPatch
+	if !a.decode(w, r, maxBodyBytes, true, &in) {
+		return
+	}
+	hook, err := a.SaveWebhook(r.Context(), actorOf(p), id, in)
+	if err != nil {
+		a.refuse(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"webhook": hook})
+}
+
+func (a *API) deleteWebhook(w http.ResponseWriter, r *http.Request, p Principal) {
+	id, ok := a.pathID(w, r, "webhook")
+	if !ok {
+		return
+	}
+	if err := a.DeleteWebhook(r.Context(), actorOf(p), id); err != nil {
+		a.refuse(w, r, err)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+}
+
+func (a *API) testWebhook(w http.ResponseWriter, r *http.Request, _ Principal) {
+	id, ok := a.pathID(w, r, "webhook")
+	if !ok {
+		return
+	}
+	got, err := a.TestWebhook(r.Context(), id)
+	if err != nil {
+		a.refuse(w, r, err)
+		return
+	}
+	if !got.Sent {
+		a.fail(w, http.StatusBadGateway, got.Error)
+		return
+	}
+	a.writeJSON(w, http.StatusOK, map[string]any{"sent": true, "webhook": id})
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -21,9 +20,7 @@ func (a *API) transcriptRoutes(m *http.ServeMux, p string, wrap wrapper) {
 			Version  int64              `json:"version"`
 			Segments []workflow.Segment `json:"segments"`
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, workflow.MaxTranscript+65536)
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			a.fail(w, 400, "send a transcript smaller than 4 MiB")
+		if !a.decode(w, r, workflow.MaxTranscript+65536, false, &in) {
 			return
 		}
 		var err error
@@ -61,7 +58,7 @@ func (a *API) transcriptRoutes(m *http.ServeMux, p string, wrap wrapper) {
 		var in struct {
 			Stereo bool `json:"stereo"`
 		}
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Workflow.QueueTranscription(r.Context(), actor, path(r, "id"), in.Stereo)

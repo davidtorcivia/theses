@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,9 +87,30 @@ func (c Config) SameDestination(other Config) bool {
 // notification in silence.
 func (c Channel) Verified() bool { return c.VerifiedAt > 0 }
 
-// Secrets is what must never appear in a log, a stored error or a page.
+// Secrets is what must never appear in a log, a stored error or a page. A
+// webhook's address and an ntfy topic are credentials too, since whoever holds
+// one can post there or read it, and a transport error quotes the address
+// whole. The longer forms come first, so a URL is taken out before its path.
 func (c Channel) Secrets() []string {
-	return []string{c.Config.UserKey, c.Config.Token, c.Config.Secret}
+	out := []string{c.Config.UserKey, c.Config.Token, c.Config.Secret}
+	switch c.Kind {
+	case KindWebhook:
+		out = append(out, c.Config.URL)
+		if u, err := url.Parse(c.Config.URL); err == nil {
+			out = append(out, u.String())
+			// A path of "/" would redact every slash in the message.
+			if rest := u.RequestURI(); len(rest) > 1 {
+				out = append(out, rest)
+			}
+		}
+	case KindNtfy:
+		// A topic of a letter or two would redact that letter everywhere in
+		// the message, and is a guess away whatever the log says.
+		if len(c.Config.Topic) >= 4 {
+			out = append(out, c.Config.Topic)
+		}
+	}
+	return out
 }
 
 // Label is the one line the channel list prints. Nothing in it is a secret:
@@ -147,6 +169,15 @@ func (c Channel) Validate() error {
 		u, err := url.Parse(c.Config.URL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			return Refusal("a webhook needs an http or https URL")
+		}
+		// A workspace webhook has no rules row: its events are all it fires on.
+		if c.UserID == 0 && len(c.Config.Events) == 0 {
+			return Refusal("A webhook that fires on nothing is a webhook nobody needs. Tick at least one event.")
+		}
+		for _, e := range c.Config.Events {
+			if _, ok := LookupEvent(e); !ok {
+				return Refusal(fmt.Sprintf("%q is not an event", e))
+			}
 		}
 	default:
 		return Refusal(fmt.Sprintf("%q is not a kind of channel", c.Kind))
@@ -223,7 +254,26 @@ const configContext = "notification_channels.config_json"
 //
 // The config is encrypted at rest with the settings key: a user key, an ntfy
 // token and a webhook secret are secrets, and the plan says so.
-func SaveChannel(ctx context.Context, q store.Querier, set *settings.Settings, c Channel) (Channel, error) {
+func SaveChannel(ctx context.Context, db *store.DB, set *settings.Settings, c Channel, by settings.Actor) (Channel, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
+	}
+	defer tx.Rollback()
+	saved, err := SaveChannelTx(ctx, tx, set, c, by)
+	if err != nil {
+		return Channel{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
+	}
+	return saved, nil
+}
+
+// SaveChannelTx is SaveChannel inside a transaction the caller already owns,
+// writing the activity row beside the channel so neither lands without the
+// other.
+func SaveChannelTx(ctx context.Context, tx *sql.Tx, set *settings.Settings, c Channel, by settings.Actor) (Channel, error) {
 	if err := c.Validate(); err != nil {
 		return Channel{}, err
 	}
@@ -251,7 +301,7 @@ func SaveChannel(ctx context.Context, q store.Querier, set *settings.Settings, c
 		verified = c.VerifiedAt
 	}
 	if c.ID == 0 {
-		res, err := q.ExecContext(ctx, `INSERT INTO notification_channels
+		res, err := tx.ExecContext(ctx, `INSERT INTO notification_channels
 			(user_id, kind, config_json, quiet_from, quiet_to, digest, created_at, verified_at)
 			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?)`,
 			owner, c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified)
@@ -261,31 +311,108 @@ func SaveChannel(ctx context.Context, q store.Querier, set *settings.Settings, c
 		if c.ID, err = res.LastInsertId(); err != nil {
 			return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
 		}
-		return c, nil
+		return c, logChannel(ctx, tx, by, c.ID, "create", nil, &c)
 	}
-	res, err := q.ExecContext(ctx, `UPDATE notification_channels
-		SET kind = ?, config_json = ?, quiet_from = ?, quiet_to = ?, digest = ?, verified_at = ?
-		WHERE id = ? AND coalesce(user_id, 0) = ?`,
-		c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified, c.ID, c.UserID)
+	was, err := ownChannel(ctx, tx, set, c.ID, c.UserID)
 	if err != nil {
+		return Channel{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE notification_channels
+		SET kind = ?, config_json = ?, quiet_from = ?, quiet_to = ?, digest = ?, verified_at = ?
+		WHERE id = ?`,
+		c.Kind, sealed, c.QuietFrom, c.QuietTo, c.Digest, verified, c.ID); err != nil {
 		return Channel{}, fmt.Errorf("%w: save channel: %w", ErrStorage, err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return Channel{}, store.ErrNotFound
-	}
-	return c, nil
+	return c, logChannel(ctx, tx, by, c.ID, "update", &was, &c)
 }
 
 // DeleteChannel removes one channel, and with it every rule and every queued
 // message pointing at it.
-func DeleteChannel(ctx context.Context, q store.Querier, id, user int64) error {
-	res, err := q.ExecContext(ctx,
-		`DELETE FROM notification_channels WHERE id = ? AND coalesce(user_id, 0) = ?`, id, user)
+func DeleteChannel(ctx context.Context, db *store.DB, set *settings.Settings, id, user int64, by settings.Actor) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("%w: delete channel: %w", ErrStorage, err)
 	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return store.ErrNotFound
+	defer tx.Rollback()
+	if err := DeleteChannelTx(ctx, tx, set, id, user, by); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("%w: delete channel: %w", ErrStorage, err)
+	}
+	return nil
+}
+
+// DeleteChannelTx is DeleteChannel inside a transaction the caller owns.
+func DeleteChannelTx(ctx context.Context, tx *sql.Tx, set *settings.Settings, id, user int64, by settings.Actor) error {
+	was, err := ownChannel(ctx, tx, set, id, user)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM notification_channels WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("%w: delete channel: %w", ErrStorage, err)
+	}
+	return logChannel(ctx, tx, by, id, "delete", &was, nil)
+}
+
+// ownChannel is the channel an id names when it belongs to user, zero being
+// the workspace, and not there otherwise: somebody else's id is refused the
+// same way as one that does not exist.
+func ownChannel(ctx context.Context, q store.Querier, set *settings.Settings, id, user int64) (Channel, error) {
+	c, err := GetChannel(ctx, q, set, id)
+	if err == nil && c.UserID != user {
+		return Channel{}, store.ErrNotFound
+	}
+	return c, err
+}
+
+// A logged channel is what the activity log keeps of one. The log is read by
+// more than the page that holds the credentials, so a key, a token, a secret,
+// an ntfy topic and a webhook's path and query are left out: the host and the
+// events are what tell two webhooks apart.
+type logged struct {
+	UserID      int64    `json:"user_id,omitempty"`
+	Kind        string   `json:"kind"`
+	Destination string   `json:"destination,omitempty"`
+	QuietFrom   string   `json:"quiet_from,omitempty"`
+	QuietTo     string   `json:"quiet_to,omitempty"`
+	Digest      bool     `json:"digest,omitempty"`
+	Events      []string `json:"events,omitempty"`
+	Column      string   `json:"column,omitempty"`
+	Verified    bool     `json:"verified"`
+}
+
+func (c Channel) logged() logged {
+	destination := redact(c.Label(""), c)
+	if u, err := url.Parse(c.Config.URL); c.Kind == KindWebhook && err == nil {
+		destination = u.Scheme + "://" + u.Host
+	}
+	return logged{
+		UserID: c.UserID, Kind: c.Kind, Destination: destination,
+		QuietFrom: c.QuietFrom, QuietTo: c.QuietTo, Digest: c.Digest,
+		Events: c.Config.Events, Column: c.Config.Column, Verified: c.Verified(),
+	}
+}
+
+func logChannel(ctx context.Context, tx *sql.Tx, by settings.Actor, id int64, action string, before, after *Channel) error {
+	encode := func(c *Channel) (string, error) {
+		if c == nil {
+			return "", nil
+		}
+		b, err := json.Marshal(c.logged())
+		return string(b), err
+	}
+	was, err := encode(before)
+	if err != nil {
+		return fmt.Errorf("%w: log channel: %w", ErrStorage, err)
+	}
+	now, err := encode(after)
+	if err != nil {
+		return fmt.Errorf("%w: log channel: %w", ErrStorage, err)
+	}
+	if err := store.InsertActivity(ctx, tx, by.Kind, by.ID, by.Via, "notification_channel",
+		strconv.FormatInt(id, 10), action, was, now); err != nil {
+		return fmt.Errorf("%w: log channel: %w", ErrStorage, err)
 	}
 	return nil
 }

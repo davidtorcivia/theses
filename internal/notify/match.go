@@ -36,9 +36,12 @@ type Notice struct {
 	Users []int64
 	// Exclude is people the match is not for however they were resolved, which
 	// is how an upload finished by the server misses the person who uploaded it.
-	Exclude     []int64
-	Handles     []string
-	Card        int64
+	Exclude []int64
+	Handles []string
+	Card    int64
+	// Column is where a move put the card, read off the event rather than the
+	// board, which may have moved it on again by the time the notice is queued.
+	Column      int64
 	Document    int64
 	Proposition int64
 	Entity      string
@@ -191,7 +194,7 @@ func matchCard(e core.Event, who string) []Notice {
 
 	case "move":
 		m := base
-		m.Event, m.Who = "moved", WhoCardAssignees
+		m.Event, m.Who, m.Column = "moved", WhoCardAssignees, after.ColumnID
 		m.Title = "Moved: " + after.Title
 		m.Text = fmt.Sprintf("%s moved %s.", who, quoted)
 		return []Notice{m}

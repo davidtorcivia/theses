@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"mime"
 	"net"
 	"net/http"
 	"strings"
@@ -21,9 +22,13 @@ import (
 // from it, so the configured endpoints are named in the three directives it
 // reaches them through and nowhere else. A workspace with no storage
 // configured gets this policy unchanged.
+//
+// form-action names Google's consent page because Chromium applies it to the
+// redirect that follows a form post, and Connect Google Drive is a form whose
+// answer is that redirect.
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; " +
 	"img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; " +
-	"frame-ancestors 'none'; form-action 'self'; worker-src 'self'"
+	"frame-ancestors 'none'; form-action 'self' https://accounts.google.com; worker-src 'self'"
 
 // policy is the CSP this process sends, with the storage origins folded in.
 func (s *Server) policy() string {
@@ -224,6 +229,12 @@ func (s *Server) writeGate(next http.Handler) http.Handler {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
 			if s.backups.Frozen() {
+				if machinePath(r.URL.Path) {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					writeJSON(w, map[string]string{"error": "a backup is being restored; retry shortly"})
+					return
+				}
 				s.restoringPage(w, r)
 				return
 			}
@@ -253,10 +264,11 @@ func (s *Server) csrfGuard(next http.Handler) http.Handler {
 			return
 		}
 		// A JSON request carries the token in a header, because it has no form
-		// to put a field in. ParseForm leaves a body that is not a form alone,
-		// so the handler still reads it.
+		// to put a field in, and its handler caps its own body. Anything else
+		// is parsed and capped here whichever way the token came, or a header
+		// token would let a form handler parse a body of any size.
 		token := r.Header.Get(auth.CSRFHeader)
-		if token == "" {
+		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
 			r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 			if err := r.ParseForm(); err != nil {
 				var tooBig *http.MaxBytesError
@@ -267,7 +279,9 @@ func (s *Server) csrfGuard(next http.Handler) http.Handler {
 				s.errorPage(w, r, http.StatusForbidden)
 				return
 			}
-			token = r.PostFormValue("csrf")
+			if token == "" {
+				token = r.PostFormValue("csrf")
+			}
 		}
 		if !s.auth.CheckCSRF(seedOf(r), token) {
 			s.log.Warn("csrf token rejected", "path", logPath(r), "addr", s.auth.ClientIP(r))

@@ -20,7 +20,9 @@ const (
 	maxRetry   = time.Hour
 	// giveUpAfter is the day the plan gives a webhook, counted from the first
 	// attempt rather than from the enqueue, so a row queued before the channel
-	// worked still gets its full day once it does.
+	// worked still gets its full day once it does. A row waiting on a mail
+	// server nobody has set up counts it from the enqueue instead, since it has
+	// had no attempt to count from.
 	giveUpAfter = 24 * time.Hour
 	batchSize   = 20
 )
@@ -129,12 +131,23 @@ func (s *Service) once(ctx context.Context) error {
 		// queued invitation does. It is pushed past the next poll rather than
 		// left due, because a batch is twenty rows and every account has an
 		// email channel: twenty of these sitting at the head of the queue would
-		// otherwise stop everything behind them from ever going out.
+		// otherwise stop everything behind them from ever going out. The wait
+		// has the same day as a retry, counted from the enqueue: without one,
+		// a workspace with no mail server piles up every notification it ever
+		// raised and sends them all the day one is set.
 		if errors.Is(err, mail.ErrNotConfigured) {
-			if _, err := s.db.ExecContext(ctx,
-				`UPDATE notification_outbox SET next_at = ? WHERE id = ?`,
-				time.Now().Add(pollEvery).Unix(), q.id); err != nil {
+			res, err := s.db.ExecContext(ctx,
+				`UPDATE notification_outbox SET next_at = ? WHERE id = ? AND created_at > ?`,
+				time.Now().Add(pollEvery).Unix(), q.id, cutoff)
+			if err != nil {
 				return err
+			}
+			if n, err := res.RowsAffected(); err != nil {
+				return err
+			} else if n == 0 {
+				if err := s.abandon(ctx, q.id, "mail was not set up within a day of this being queued"); err != nil {
+					return err
+				}
 			}
 			continue
 		}

@@ -160,6 +160,11 @@ func (h *Hub) Commands(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) execute(ctx context.Context, user *store.User, cmd command) message {
+	// Worded so the outbox's drain takes it as worth trying again, which is
+	// what the 503 from the write gate says to an HTTP client.
+	if h.Frozen != nil && h.Frozen() {
+		return message{Type: "error", ID: cmd.ID, Error: "a backup is being restored; wait a moment and try again"}
+	}
 	if cmd.Key != "" {
 		keyed, err := core.WithKey(ctx, cmd.Key)
 		if err != nil {
@@ -202,7 +207,7 @@ func reason(err error) string {
 	case errors.Is(err, core.ErrKey), errors.Is(err, core.ErrNotUndoable),
 		errors.Is(err, board.ErrColumnNotEmpty),
 		errors.Is(err, board.ErrNotYours), errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrShow),
-		errors.Is(err, board.ErrLegalReleases), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong),
+		errors.Is(err, board.ErrLegalReleases), errors.Is(err, board.ErrUploading), errors.Is(err, board.ErrArchived), errors.Is(err, board.ErrTooLong),
 		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
 		errors.Is(err, board.ErrDueDate),
 		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrTooManyDocuments),

@@ -52,7 +52,19 @@ the way an upload does, and then asks again to have the probe object removed.
 A bucket whose CORS rule is missing or names another origin fails here rather
 than on somebody's first upload.
 
-Changing a bucket does not move what is already in the old one.
+Changing a bucket does not move what is already in the old one. Recordings
+are the sharp case: a file in the Recordings folder is looked up in whichever
+bucket `storage.recordings.bucket` names at the moment it is read, so setting,
+clearing or changing that bucket leaves every existing recording unreachable
+until its objects are copied across by hand under the same keys.
+
+Give each bucket a lifecycle rule that aborts incomplete multipart uploads
+after a few days (seven is plenty). The hourly upload sweep aborts the parts of
+an upload it gives up on, and a deleted upload aborts its own, but a bucket
+call that fails at that moment leaves the parts billed and invisible with
+nothing left in the app to find them by; the rule is the backstop. On
+Backblaze and R2 it is set in the provider's console, on S3 as a lifecycle
+configuration with `AbortIncompleteMultipartUpload`.
 
 ## Mail
 

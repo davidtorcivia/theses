@@ -743,6 +743,23 @@ func TestUndoOfASetPutsTheTextBack(t *testing.T) {
 	}
 }
 
+// Undoing a rename back to a name another document has taken since breaks the
+// unique slug, and that is a refusal rather than a failure.
+func TestUndoOfARenameOntoATakenNameIsNotUndoable(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t, "")
+	renamed, err := f.RenameDocument(ctx, f.who["editor"], f.doc, "Draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.CreateDocument(ctx, f.who["editor"], f.prop, "Research"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, f.who["editor"], renamed.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undo onto a taken name gave %v", err)
+	}
+}
+
 // A folded run is still one undo. core.Compact keeps the newest row of the
 // run, so undo's check that the block has not moved on since passes, and the
 // before it puts back is the text the person started typing over.

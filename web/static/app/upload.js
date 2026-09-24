@@ -10,7 +10,7 @@ import * as offline from './offline.js';
 // site's whole quota before the first byte reaches the bucket. The live File
 // stays in memory for automatic retries in this tab; after a reload the person
 // is asked to choose it again.
-export const remember = offline.remember;
+const remember = offline.remember;
 export const forget = offline.forget;
 const handles = new Map();
 const newKey = () => crypto.randomUUID ? crypto.randomUUID()

@@ -412,7 +412,7 @@ func (s *Server) postRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	s.back(w, r, "/settings#backups", map[string]any{
 		"BackupResult": "Restoring " + strings.TrimPrefix(key, backup.Prefix) +
-			". Changes are refused until it is done, and this page says what happened when it is.",
+			". Changes are refused until it is done. Everyone, you included, then signs in again, and this page says what happened.",
 	})
 }
 
@@ -929,12 +929,6 @@ func (s *Server) postTokenRevoke(w http.ResponseWriter, r *http.Request) {
 		to = profileTo("tokens", true)
 	}
 	http.Redirect(w, r, to, http.StatusSeeOther)
-}
-
-// activity records a mutation that could not share a transaction with its
-// change, because the change went through a package holding its own handle.
-func (s *Server) activity(ctx context.Context, actorID int64, entity, entityID, action, before, after string) error {
-	return store.InsertActivity(ctx, s.db, "user", itoa(actorID), "", entity, entityID, action, before, after)
 }
 
 // errRefused is what a write closure returns when the statement it guards

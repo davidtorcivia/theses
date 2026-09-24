@@ -79,24 +79,10 @@ func (s *Service) ReadLink(ctx context.Context, a core.Actor, id int64) (Link, e
 	return l, visible(ctx, s.DB, a, l.Proposition)
 }
 
-// Edit is the drawer's fields. Every one of them is what a person corrected,
-// including the kind the guess got wrong.
-type Edit struct {
-	Title    string
-	Author   string
-	Year     string
-	Kind     string
-	Note     string
-	Question string
-}
-
-// EditLink writes the drawer's fields. There is no version on a link: the
+// LinkPatch is the drawer's fields, each one what a person corrected,
+// including the kind the guess got wrong. There is no version on a link: the
 // fields are short, one person edits one at a time, and the last write wins as
 // it does for a card's due date.
-func (s *Service) EditLink(ctx context.Context, a core.Actor, id int64, in Edit) (core.Event, error) {
-	return s.PatchLink(ctx, a, id, LinkPatch{&in.Title, &in.Author, &in.Year, &in.Kind, &in.Note, &in.Question})
-}
-
 type LinkPatch struct {
 	Title    *string `json:"title"`
 	Author   *string `json:"author"`
@@ -127,7 +113,7 @@ func (s *Service) PatchLink(ctx context.Context, a core.Actor, id int64, in Link
 			return core.Event{}, err
 		}
 		var value any = text
-		if field.name == "kind" && text != "" && !known(text, Kinds) {
+		if field.name == "kind" && !known(text, Kinds) {
 			return core.Event{}, ErrKind
 		}
 		if field.name == "question" {
@@ -163,6 +149,9 @@ func (s *Service) RefetchLink(ctx context.Context, a core.Actor, id int64) (core
 		return core.Event{}, err
 	}
 	meta, fetched := s.metadata(ctx, address)
+	if fetched == nil {
+		return core.Event{}, ErrUnreachable
+	}
 	return s.link(ctx, a, id, auth.CanEdit, "update", func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE links SET canonical_url = ?, title = ?,
 			author = ?, year = ?, kind = ?, fetched_at = ?, text_for_search = ? WHERE id = ?`,
@@ -214,18 +203,19 @@ func (s *Service) link(ctx context.Context, a core.Actor, id int64, need, action
 	})
 }
 
-// metadata fetches the page and returns what it said and when, or the empty
-// meta and a null fetched_at when it said nothing. A link nobody can reach is
-// still worth keeping: the address is the part a person pasted.
+// metadata fetches the page and returns what it said and when, or what the
+// address alone implies and a null fetched_at when it said nothing. A link
+// nobody can reach is still worth keeping: the address is the part a person
+// pasted, and the host still guesses a kind the drawer offers.
 func (s *Service) metadata(ctx context.Context, address string) (links.Meta, any) {
 	if s.HTTP == nil {
-		return links.Meta{}, nil
+		return links.Extract(address, nil, ""), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	meta, err := links.Fetch(ctx, s.HTTP, address)
 	if err != nil {
-		return links.Meta{}, nil
+		return links.Extract(address, nil, ""), nil
 	}
 	// A canonical URL is a string off a page somebody else controls, so it is
 	// kept only when it is a web address; a javascript: or data: value in that

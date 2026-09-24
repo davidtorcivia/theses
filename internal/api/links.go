@@ -32,7 +32,7 @@ func (f *fileAPI) addLink(w http.ResponseWriter, r *http.Request, a core.Actor) 
 		Proposition int64  `json:"proposition"`
 		URL         string `json:"url"`
 	}
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.svc.AddLink(r.Context(), a, in.Proposition, in.URL)
@@ -46,7 +46,7 @@ func (f *fileAPI) addLink(w http.ResponseWriter, r *http.Request, a core.Actor) 
 // editLink changes only the fields the body names.
 func (f *fileAPI) editLink(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	var in files.LinkPatch
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.svc.PatchLink(r.Context(), a, path(r, "id"), in)

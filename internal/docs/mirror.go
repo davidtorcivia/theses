@@ -172,34 +172,6 @@ func render(d Document, blocks []Block, conflicted map[int64]bool) []byte {
 	return []byte(b.String())
 }
 
-// legacyRender is render as the version before this one wrote it, with nothing
-// escaped, kept whole so that a file can be compared against it byte for byte.
-// Every mirror file on disk is one of these at the first start after this
-// version is deployed, and reading one back through the parser would take a
-// line of somebody's text that quotes a block comment for a block boundary,
-// with no hand edit anywhere near it.
-//
-// ponytail: this is for one start per deployment, and it can be deleted once
-// every deployment has run this version once. Its ceiling is a file the older
-// version wrote that is no longer what it wrote: a hand edit made while the
-// process was down, or a conflict marker, leaves it to be read back the
-// ordinary way, which is right unless that file also quotes the format.
-func legacyRender(d Document, blocks []Block, conflicted map[int64]bool) []byte {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\nproposition: %d\ndocument: %d\nrevision: %d\n%s\n",
-		frontMatter, d.Proposition, d.ID, d.Revision, frontMatter)
-	for _, block := range blocks {
-		b.WriteString("\n")
-		fmt.Fprintf(&b, blockCommentFmt+"\n", block.ID, block.Version)
-		if conflicted[block.ID] {
-			b.WriteString(conflictMarker + "\n")
-		}
-		b.WriteString(block.Text)
-		b.WriteString("\n")
-	}
-	return []byte(b.String())
-}
-
 func hashOf(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])

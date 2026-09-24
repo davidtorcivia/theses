@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/davidtorcivia/theses/internal/auth"
+	"github.com/davidtorcivia/theses/internal/backup"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/docs"
@@ -40,6 +41,9 @@ type API struct {
 	// Board is the proposition and board commands, set the same way. Every
 	// board route is one of them with a token's actor.
 	Board *board.Service
+	// Backup is the archive and restore behind the settings page's buttons,
+	// set the same way.
+	Backup *backup.Backup
 }
 
 func New(db *store.DB, a *auth.Auth, set *settings.Settings, log *slog.Logger) *API {
@@ -252,6 +256,7 @@ func (a *API) Handler() http.Handler {
 	a.documentRoutes(mux)
 	a.fileRoutes(mux)
 	a.boardRoutes(mux)
+	a.backupRoutes(mux)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, http.StatusNotFound, "no such endpoint")
 	})
@@ -356,9 +361,9 @@ const (
 
 // administration is what the log says about running the workspace rather than
 // about its work: a setting's value either side of a change, the address an
-// invitation went to, the name and scopes of a token. A token without admin
-// reads the log without these.
-const administration = `'setting', 'invitation', 'api_token'`
+// invitation went to, the name and scopes of a token, where a notification
+// channel points. A token without admin reads the log without these.
+const administration = `'setting', 'invitation', 'api_token', 'notification_channel'`
 
 // workspaceWide is every entity whose rows belong to the workspace rather than
 // to one proposition, and so are readable by anyone the scope allows. It is a
@@ -517,14 +522,7 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 	var body struct {
 		Value json.RawMessage `json:"value"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return
-		}
-		a.fail(w, http.StatusBadRequest, "the body must be JSON with a value field")
+	if !a.decode(w, r, maxBodyBytes, false, &body) {
 		return
 	}
 	values, err := formValues(body.Value)

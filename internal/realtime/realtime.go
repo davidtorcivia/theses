@@ -56,6 +56,9 @@ type Hub struct {
 	log   *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
+	// Frozen reports a restore replacing the database, set by the server after
+	// New. The write gate in front of HTTP does not see a socket's frames.
+	Frozen func() bool
 
 	// pingEvery is how often the heartbeat goes out, pongWait how long a socket
 	// may go without a frame, and writeWait how long its peer may stop reading.
@@ -67,13 +70,16 @@ type Hub struct {
 	// without a clock two of them could read the same value from.
 	moves atomic.Uint64
 
-	mu    sync.Mutex
-	rooms map[int64]map[*client]struct{}
-	tabs  int64
+	mu     sync.Mutex
+	rooms  map[int64]map[*client]struct{}
+	tabs   int64
+	closed bool
+	// stop is closed by Close, which answers every held poll at once.
+	stop chan struct{}
 }
 
 func New(b *board.Service, a *auth.Auth, log *slog.Logger) *Hub {
-	return &Hub{board: b, auth: a, log: log, rooms: map[int64]map[*client]struct{}{},
+	return &Hub{board: b, auth: a, log: log, rooms: map[int64]map[*client]struct{}{}, stop: make(chan struct{}),
 		pingEvery: 25 * time.Second, pongWait: time.Minute, writeWait: 10 * time.Second}
 }
 
@@ -511,12 +517,40 @@ func (c *client) close() {
 
 func (h *Hub) join(c *client) {
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		c.close()
+		return
+	}
 	if h.rooms[c.proposition] == nil {
 		h.rooms[c.proposition] = map[*client]struct{}{}
 	}
 	h.rooms[c.proposition][c] = struct{}{}
 	h.mu.Unlock()
 	h.announce(c.proposition)
+}
+
+// Close ends every socket, refuses new ones and answers every held poll.
+// http.Server.Shutdown does not wait for hijacked connections, and a socket
+// left open would go on applying commands after the watchers that match them
+// to notifications have stopped; a poll held for pollWait would outlast the
+// shutdown's own deadline.
+func (h *Hub) Close() {
+	h.mu.Lock()
+	if !h.closed {
+		close(h.stop)
+	}
+	h.closed = true
+	var all []*client
+	for _, room := range h.rooms {
+		for c := range room {
+			all = append(all, c)
+		}
+	}
+	h.mu.Unlock()
+	for _, c := range all {
+		c.close()
+	}
 }
 
 func (h *Hub) leave(c *client) {
@@ -629,6 +663,7 @@ func (h *Hub) EventsFor(w http.ResponseWriter, r *http.Request, user *store.User
 		case e := <-sub.C:
 			events = append(events, e)
 		case <-timer.C:
+		case <-h.stop:
 		case <-ctx.Done():
 			return
 		}

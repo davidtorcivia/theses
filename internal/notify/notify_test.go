@@ -1,9 +1,7 @@
 package notify
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,13 +9,6 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/core"
 )
-
-// logs replaces the service's logger with one a test can read back.
-func (f *fixture) logs() *bytes.Buffer {
-	var buf bytes.Buffer
-	f.s.log = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	return &buf
-}
 
 // Watch takes what the bus carries and stops when its context does. What it
 // does with an event is Handle, which every other test here drives directly,

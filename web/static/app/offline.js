@@ -380,6 +380,15 @@ export const cachedMaterial = (proposition) =>
 export const cached = (proposition) =>
   withStore('snapshot', 'readonly', (store) => store.get(proposition));
 
+// forgetOthers drops the cached propositions of anybody but me. A session that
+// ended without the sign-out wipe leaves them behind, and the next person's
+// offline page has no server to ask whose they are.
+export const forgetOthers = (me) => Promise.all(['snapshot', 'material'].map((name) =>
+  withStore(name, 'readwrite', (store) => {
+    const req = store.getAll();
+    req.onsuccess = () => { for (const row of req.result) if (row.me !== me) store.delete(row.proposition); };
+  })));
+
 export async function showID() {
   const rows = (await withStore('snapshot', 'readonly', (store) => store.getAll())) || [];
   rows.sort((a, b) => b.at - a.at);
@@ -415,7 +424,7 @@ export async function signedOut() {
 }
 
 // wipe drops everything this device holds of the workspace.
-export function wipe() {
+function wipe() {
   return new Promise((resolve) => {
     let req;
     try {

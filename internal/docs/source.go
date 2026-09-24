@@ -142,7 +142,7 @@ func (s *Service) WriteSource(ctx context.Context, a core.Actor, document int64,
 		// The transaction is open and holds the write lock, so the document
 		// cannot change under the rest of this: what is read here is what is
 		// written over.
-		blocks, err := Blocks(ctx, s.DB, document)
+		blocks, err := Blocks(ctx, s.Querier(ctx), document)
 		if err != nil {
 			return err
 		}
@@ -287,7 +287,7 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 			// somebody deleted it, or the id was never this document's. The
 			// second is a request that has no business here, and the two are
 			// told apart before anything is read back under either.
-			gone, err := GetBlock(ctx, s.DB, ref.ID)
+			gone, err := GetBlock(ctx, s.Querier(ctx), ref.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -295,7 +295,7 @@ func (s *Service) plan(ctx context.Context, document int64, base []BlockRef,
 				return nil, core.ErrNotFound
 			}
 		}
-		was, ok, err := baseText(ctx, s.DB, ref.ID, ref.Version)
+		was, ok, err := baseText(ctx, s.Querier(ctx), ref.ID, ref.Version)
 		if err != nil {
 			return nil, err
 		}

@@ -17,8 +17,13 @@ import (
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
 	"github.com/davidtorcivia/theses/internal/legal"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/store"
 )
+
+// The workspace defaults from the settings registry, which cannot import legal.
+const testSubject = "{title} is now available"
+const testBody = "Hello {name},\n\nThank you for taking part in {brand}. The episode is now available:\n\n{url}\n\nThank you,\n{brand}"
 
 func TestLegalReleaseLifecycle(t *testing.T) {
 	h := newHarness(t)
@@ -26,7 +31,7 @@ func TestLegalReleaseLifecycle(t *testing.T) {
 	ctx := context.Background()
 	actor := h.owner()
 	prop := h.proposition("Recorded conversations")
-	release := legal.Release{Proposition: prop, State: "NY", Title: "Street voices", Kind: "street", Brand: "Example show", RightsHolder: "Example LLC", Details: "Market square", EmailSubject: legal.EmailSubject, EmailBody: legal.EmailBody}
+	release := legal.Release{Proposition: prop, State: "NY", Title: "Street voices", Kind: "street", Brand: "Example show", RightsHolder: "Example LLC", Details: "Market square", EmailSubject: testSubject, EmailBody: testBody}
 	e, err := h.srv.api.Legal.Save(ctx, actor, release)
 	if err != nil {
 		t.Fatal(err)
@@ -83,8 +88,16 @@ func TestLegalReleaseLifecycle(t *testing.T) {
 	}
 	h.srv.api.Legal.Now = clock
 	form.Set("person_0_name", "Changed signer")
-	if res, _ = anon.post(path, form); res.StatusCode != 422 {
+	if res, body = anon.post(path, form); res.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("receipt reused with different data %d", res.StatusCode)
+	}
+	fresh := regexp.MustCompile(`name="receipt" value="([^"]+)"`).FindStringSubmatch(body)[1]
+	if fresh == receipt {
+		t.Fatal("corrected form kept the spent receipt")
+	}
+	form.Set("receipt", fresh)
+	if res, _ = anon.post(path, form); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("corrected resubmission %d", res.StatusCode)
 	}
 	release.State = "GA"
 	release.Body = "Updated wording for {rights_holder}"
@@ -102,11 +115,19 @@ func TestLegalReleaseLifecycle(t *testing.T) {
 	if res, _ = anon.post(path, form); res.StatusCode != 422 {
 		t.Fatalf("stale version accepted: %d", res.StatusCode)
 	}
-	messages, err := h.srv.api.Legal.Preview(ctx, actor, release.ID, "https://example.com/ep", legal.EmailSubject, legal.EmailBody)
+	if _, err = h.srv.api.Legal.Notify(ctx, actor, release.ID, 2, "https://example.com/ep", testSubject, testBody); !errors.Is(err, mail.ErrNotConfigured) {
+		t.Fatalf("notify without mail: %v", err)
+	}
+	for key, value := range map[string]string{"mail.host": "smtp.example.com", "mail.from": "studio@example.com"} {
+		if err = h.srv.settings.Set(ctx, key, []string{value}, actor.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messages, err := h.srv.api.Legal.Preview(ctx, actor, release.ID, "https://example.com/ep", testSubject, testBody)
 	if err != nil || len(messages) != 1 || messages[0].Email != "ada@example.com" || !strings.Contains(messages[0].Body, "https://example.com/ep") {
 		t.Fatalf("preview %+v %v", messages, err)
 	}
-	if _, err = h.srv.api.Legal.Notify(ctx, actor, release.ID, 2, "https://example.com/ep", legal.EmailSubject, legal.EmailBody, "stale-preview"); !errors.Is(err, legal.ErrChanged) {
+	if _, err = h.srv.api.Legal.Notify(ctx, actor, release.ID, 2, "https://example.com/ep", testSubject, testBody, "stale-preview"); !errors.Is(err, legal.ErrRecipientsChanged) {
 		t.Fatalf("stale preview: %v", err)
 	}
 	for range 2 {
@@ -114,7 +135,7 @@ func TestLegalReleaseLifecycle(t *testing.T) {
 		if keyErr != nil {
 			t.Fatal(keyErr)
 		}
-		if _, err = h.srv.api.Legal.Notify(retryCtx, actor, release.ID, 2, "https://example.com/ep", legal.EmailSubject, legal.EmailBody, legal.MessageDigest(messages)); err != nil {
+		if _, err = h.srv.api.Legal.Notify(retryCtx, actor, release.ID, 2, "https://example.com/ep", testSubject, testBody, legal.MessageDigest(messages)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -147,7 +168,7 @@ func TestLegalReleaseLifecycle(t *testing.T) {
 		if _, err = h.srv.api.Legal.Submissions(ctx, outsider, release.ID); err == nil {
 			t.Fatal("outsider read signatures")
 		}
-		if _, err = h.srv.api.Legal.Notify(ctx, outsider, release.ID, 2, "https://example.com/ep", legal.EmailSubject, legal.EmailBody); err == nil {
+		if _, err = h.srv.api.Legal.Notify(ctx, outsider, release.ID, 2, "https://example.com/ep", testSubject, testBody); err == nil {
 			t.Fatal("outsider sent email")
 		}
 	}
@@ -193,7 +214,7 @@ func TestLegalValidation(t *testing.T) {
 	ctx := context.Background()
 	a := h.owner()
 	p := h.proposition("Episode")
-	r := legal.Release{Proposition: p, State: "GA", Title: "Interview", Kind: "interview", Brand: "Show", RightsHolder: "Example LLC", EmailSubject: legal.EmailSubject, EmailBody: legal.EmailBody}
+	r := legal.Release{Proposition: p, State: "GA", Title: "Interview", Kind: "interview", Brand: "Show", RightsHolder: "Example LLC", EmailSubject: testSubject, EmailBody: testBody}
 	event, err := h.srv.api.Legal.Save(ctx, a, r)
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +286,7 @@ func TestLegalManualEmailForm(t *testing.T) {
 	ctx := context.Background()
 	actor := h.owner()
 	prop := h.proposition("Episode")
-	e, err := h.srv.api.Legal.Save(ctx, actor, legal.Release{Proposition: prop, State: "NY", Title: "Voices", Brand: "Radio", RightsHolder: "Example LLC", Kind: "street", EmailSubject: legal.EmailSubject, EmailBody: legal.EmailBody})
+	e, err := h.srv.api.Legal.Save(ctx, actor, legal.Release{Proposition: prop, State: "NY", Title: "Voices", Brand: "Radio", RightsHolder: "Example LLC", Kind: "street", EmailSubject: testSubject, EmailBody: testBody})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,6 +334,55 @@ func TestLegalManualEmailForm(t *testing.T) {
 	n = legalCount(t, h, "SELECT count(*) FROM mail_outbox WHERE to_addr='ada@example.com'")
 	if n != 1 {
 		t.Fatalf("duplicate messages %d", n)
+	}
+	api := fmt.Sprintf("/app/legal/releases/%d/", release.ID)
+	csrf := h.csrf(fmt.Sprintf("/releases/%d", release.ID))
+	request := `{"version":1,"url":"https://example.com/ep","subject":"New","body":"{url}"}`
+	res, body = h.send("POST", api+"preview", csrf, request)
+	var preview struct {
+		PreviewHash string `json:"preview_hash"`
+	}
+	if err = json.Unmarshal([]byte(body), &preview); res.StatusCode != 200 || err != nil || preview.PreviewHash == "" {
+		t.Fatalf("api preview %d: %s", res.StatusCode, body)
+	}
+	if _, err = h.srv.api.Legal.Sign(ctx, release.Token, legal.Token(), 1, []legal.Person{{Name: "Grace", Date: time.Now().Format("2006-01-02"), Consent: true, Email: "grace@example.com", Notify: true}}, release.Agreement().Digest()); err != nil {
+		t.Fatal(err)
+	}
+	withHash := strings.Replace(request, "{", `{"preview_hash":"`+preview.PreviewHash+`",`, 1)
+	if res, body = h.send("POST", api+"notify", csrf, withHash); res.StatusCode != http.StatusConflict || !strings.Contains(body, "preview again") {
+		t.Fatalf("api notify after recipients changed %d: %s", res.StatusCode, body)
+	}
+	if n = legalCount(t, h, "SELECT count(*) FROM mail_outbox WHERE to_addr='grace@example.com'"); n != 0 {
+		t.Fatal("stale preview queued mail")
+	}
+}
+
+func TestLegalSignRateLimitKeepsForm(t *testing.T) {
+	h := newHarness(t)
+	h.setupOwner()
+	ctx := context.Background()
+	e, err := h.srv.api.Legal.Save(ctx, h.owner(), legal.Release{Proposition: h.proposition("Episode"), State: "NY", Title: "Voices", Brand: "Radio", RightsHolder: "Example LLC", Kind: "street", EmailSubject: testSubject, EmailBody: testBody})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := h.srv.api.Legal.Get(ctx, h.owner(), e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jar, _ := cookiejar.New(nil)
+	anon := &harness{T: t, srv: h.srv, db: h.db, http: h.http, client: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	path := "/legal/" + release.Token
+	_, body := anon.get(path)
+	receipt := legal.Token()
+	form := url.Values{"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "version": {"1"}, "agreement_digest": {release.Agreement().Digest()}, "receipt": {receipt}, "person": {"0"}, "person_0_name": {"Ada Lovelace"}, "person_0_date": {time.Now().Format("2006-01-02")}}
+	var res *http.Response
+	for range 40 {
+		if res, body = anon.post(path, form); res.StatusCode == http.StatusTooManyRequests {
+			break
+		}
+	}
+	if res.StatusCode != http.StatusTooManyRequests || res.Header.Get("Retry-After") == "" || !strings.Contains(body, "Too many submissions") || !strings.Contains(body, `value="Ada Lovelace"`) || !strings.Contains(body, `name="receipt" value="`+receipt+`"`) {
+		t.Fatalf("rate limit %d: %s", res.StatusCode, body)
 	}
 }
 

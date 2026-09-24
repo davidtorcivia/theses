@@ -81,12 +81,27 @@ func TestLocalTranscriptionQueue(t *testing.T) {
 	defer inference.Close()
 	h.srv.Workflow().WhisperURL = inference.URL
 	endpoint := fmt.Sprintf("/app/files/%d/transcription-jobs", upload.File.ID)
+	for i := range 10 {
+		if _, err := h.db.ExecContext(context.Background(), `INSERT INTO files(proposition_id,name,object_key,state,created_at) VALUES(?,?,?,'uploading',0)`, prop, fmt.Sprintf("busy-%d.wav", i), fmt.Sprintf("busy/%d", i)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.db.ExecContext(context.Background(), `INSERT INTO transcription_jobs(file_id,state,base_version,created_at,updated_at) VALUES(last_insert_rowid(),'queued',0,0,0)`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, raw = h.send("POST", endpoint, csrf, `{}`)
+	if res.StatusCode != http.StatusTooManyRequests || res.Header.Get("Retry-After") == "" || !strings.Contains(raw, "queue is full") {
+		t.Fatalf("full queue %d %s", res.StatusCode, raw)
+	}
+	if _, err := h.db.ExecContext(context.Background(), `DELETE FROM files WHERE object_key LIKE 'busy/%'`); err != nil {
+		t.Fatal(err)
+	}
 	res, raw = h.send("POST", endpoint, csrf, `{"stereo":false}`)
 	if res.StatusCode != 200 {
 		t.Fatal(raw)
 	}
 	res, raw = h.send("POST", endpoint, csrf, `{}`)
-	if res.StatusCode != 409 {
+	if res.StatusCode != 409 || !strings.Contains(raw, "already queued") {
 		t.Fatalf("duplicate queue %d %s", res.StatusCode, raw)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

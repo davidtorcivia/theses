@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/davidtorcivia/theses/internal/notify"
+	"github.com/davidtorcivia/theses/internal/settings"
 )
 
 // The owner is made through the real flow, so the account starts with the
@@ -31,7 +32,7 @@ func TestProfileDrawsTheMatrixForTheStartingChannel(t *testing.T) {
 	if !strings.Contains(body, `name="rule" value="assigned:1"`) {
 		t.Error("the matrix has no cell for assigned on the first channel")
 	}
-	if !strings.Contains(body, `<dialog id="channel-new-ntfy">`) {
+	if !strings.Contains(body, `<dialog id="channel-new-ntfy" `) {
 		t.Error("there is no way to add an ntfy channel")
 	}
 }
@@ -129,7 +130,7 @@ func TestMovingOnlyTheQuietHoursKeepsAChannelProven(t *testing.T) {
 	h.setupOwner()
 	proven, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
 		UserID: 1, Kind: notify.KindNtfy, VerifiedAt: 1,
-		Config: notify.Config{Topic: "alerts", Token: "tk"}})
+		Config: notify.Config{Topic: "alerts", Token: "tk"}}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestThePushoverKeyIsNeverPrintedBack(t *testing.T) {
 	h.setupOwner()
 	saved, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
 		UserID: 1, Kind: notify.KindPushover, VerifiedAt: 1,
-		Config: notify.Config{UserKey: "uk_abcdefgh1234"}})
+		Config: notify.Config{UserKey: "uk_abcdefgh1234"}}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +218,7 @@ func TestSomebodyElsesChannelIsNotFound(t *testing.T) {
 	}
 	other, _ := res.LastInsertId()
 	hers, err := notify.SaveChannel(ctx, h.db, h.srv.settings, notify.Channel{
-		UserID: other, Kind: notify.KindNtfy, Config: notify.Config{Topic: "hers"}})
+		UserID: other, Kind: notify.KindNtfy, Config: notify.Config{Topic: "hers"}}, settings.System())
 	if err != nil {
 		t.Fatal(err)
 	}

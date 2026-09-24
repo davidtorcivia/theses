@@ -11,7 +11,7 @@ docker build --build-arg WHISPER_IMAGE=your-existing-whisper-image -f deploy/whi
 docker compose -f docker-compose.yml -f docker-compose.transcription.yml up -d
 ```
 
-Jobs are explicitly requested in a ready recording's Transcript section. Up to ten jobs can queue; one runs at a time. Requests time out after two hours and recordings larger than 1 GiB are refused. Interrupted jobs require explicit retry after restart. Disabling the service marks queued jobs failed as well, so they can be retried after reconfiguration. The worker rechecks the requesting user's access before processing and saving; a changed transcript is never overwritten by a stale job.
+Jobs are explicitly requested in a ready recording's Transcript section. Up to ten jobs can queue; one runs at a time. A further request is refused until one finishes, and a recording with a queued or running job cannot be queued again. Requests time out after two hours and recordings larger than 1 GiB are refused. Interrupted jobs require explicit retry after restart. Disabling the service marks queued jobs failed as well, so they can be retried after reconfiguration. The worker rechecks the requesting user's access before processing and saving; a changed transcript is never overwritten by a stale job.
 
 Stereo speaker labels require each speaker to occupy a separate channel. They are channel estimates, not identity recognition or diarization of a mixed mono conversation. Mono and mixed recordings can use manually edited speaker labels, or import speaker-tagged VTT from another tool. Plain text and SRT imports work without any inference service. TXT and VTT exports can be used in the host's transcript workflow.
 

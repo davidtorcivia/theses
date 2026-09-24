@@ -27,6 +27,8 @@ type Job struct {
 }
 
 var ErrTranscriptionUnavailable = errors.New("local transcription is not configured")
+var ErrQueueBusy = errors.New("the transcription queue is full; retry when a job finishes")
+var ErrAlreadyQueued = errors.New("this recording is already queued for transcription")
 
 const jobColumns = `id,file_id,user_id,state,error,stereo,base_version,created_at`
 
@@ -56,14 +58,14 @@ func (s *Service) QueueTranscription(ctx context.Context, a core.Actor, file int
 			return core.Change{}, err
 		}
 		if active >= 10 {
-			return core.Change{}, ErrChanged
+			return core.Change{}, ErrQueueBusy
 		}
 		err = tx.QueryRowContext(ctx, `SELECT count(*) FROM transcription_jobs WHERE file_id=? AND state IN ('queued','running')`, file).Scan(&active)
 		if err != nil {
 			return core.Change{}, err
 		}
 		if active > 0 {
-			return core.Change{}, ErrChanged
+			return core.Change{}, ErrAlreadyQueued
 		}
 		var version int64
 		err = tx.QueryRowContext(ctx, `SELECT version FROM transcripts WHERE file_id=?`, file).Scan(&version)

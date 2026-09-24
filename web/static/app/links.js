@@ -79,7 +79,7 @@ function kindFacets() {
   for (const kind of kinds) {
     const n = state.links.filter((l) => l.kind === kind).length;
     facets.append(el('button', {
-      type: 'button', 'data-k': kind, class: state.linkKind === kind ? 'on' : '',
+      type: 'button', 'data-k': kind, class: state.linkKind === kind ? 'on' : '', 'aria-pressed': String(state.linkKind === kind),
       onclick: () => { state.linkKind = kind; emit(); },
     }, kind, kind === 'all' ? null : el('i', { text: ' ' + n })));
   }
@@ -91,7 +91,7 @@ function questionFacets() {
   for (const q of state.questions) {
     facets.append(el('button', {
       type: 'button', 'data-q': q, text: q,
-      class: state.linkQuestion === q ? 'on' : '',
+      class: state.linkQuestion === q ? 'on' : '', 'aria-pressed': String(state.linkQuestion === q),
       title: label(q),
       onclick: () => { state.linkQuestion = state.linkQuestion === q ? null : q; emit(); },
     }));
@@ -159,7 +159,7 @@ const urlRoom = 48;
 // phone it was on. The query stays, because on the sites that hand out
 // identifiers that way it is the only thing telling two of them apart, and so
 // does a port that is not the scheme's own.
-export function shortURL(url) {
+function shortURL(url) {
   let short = url;
   try {
     const parsed = new URL(url);

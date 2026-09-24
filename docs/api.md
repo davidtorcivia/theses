@@ -47,12 +47,12 @@ from.
 | 401 | no `Authorization: Bearer` header, or the token is unknown, expired or revoked |
 | 403 | the token does not have the scope the route needs, the person it belongs to no longer has the standing that scope implies, or the row is somebody else's note |
 | 404 | no such endpoint, no such settings key, or a thing that is not there or that the token's owner may not touch |
-| 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone |
-| 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes. MCP permits 4 MiB plus 64 KiB. REST transcript replacement permits the same larger envelope but reports decoding/size failures as 400. |
+| 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone, a backup or restore already running |
+| 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes, and 4 MiB plus 64 KiB for transcript replacement. MCP permits 4 MiB plus 64 KiB. |
 | 422 | the body is JSON and the rules refuse it: a title that is empty or too long, a kind or a question that is not on the list, a size no upload may be |
-| 429 | over 300 requests a minute for one token |
+| 429 | over 300 requests a minute for one token, or the transcription queue is full |
 | 500 | a fault on the server; the detail is in its log, not in the response |
-| 503 | object storage has not been set up yet, so the route that needs it cannot answer |
+| 503 | object storage, the backup key, local transcription or outgoing mail has not been set up yet, so the route that needs it cannot answer |
 
 Not there and not allowed are both `404`. The commands answer the role and the
 membership with one refusal, so telling the two apart would tell a caller
@@ -232,6 +232,13 @@ API or through MCP is recorded as theirs, with `via` naming what carried it:
 `token:<name>` for this API and `mcp:<client>` for MCP. A change made in the
 browser has no `via` and the field is absent. `before` and `after` are the JSON
 of the entity before and after the change, and are absent when there was none.
+
+Rows about running the workspace need `admin` as well: settings, invitations,
+tokens, and `notification_channel` rows, written when anybody saves or deletes
+a notification channel or a workspace webhook. A channel's row says where it
+points without its credentials: a Pushover key shows its last four characters,
+an ntfy topic and a webhook's path and query are left out, and no token or
+secret is in it.
 
 ## `GET /api/v1/propositions/{id}/events?since=&wait=`
 
@@ -619,7 +626,8 @@ POST /api/v1/links
 
 Scope `read` to read one, `write` to change or remove it. A PATCH changes the
 fields it names, `title`, `author`, `year`, `kind`, `note_md` and `question`,
-and leaves the rest as they were. A kind outside the list, and a question that
+and leaves the rest as they were. A kind outside the list (an empty kind
+included), and a question that
 is not `I`, `II`, `III`, `IV` or empty, are `422`. PATCH returns the link row
 with a top-level `event`; DELETE returns `{"deleted": true, "event": {...}}`.
 
@@ -627,7 +635,8 @@ with a top-level `event`; DELETE returns `{"deleted": true, "event": {...}}`.
 
 Scope `write`. Reads the page again and answers with the current link row and
 its top-level `event`. What the fetch finds replaces what is on the row, which is why this is
-a button and not a background job.
+a button and not a background job. A page that cannot be read is `422` and the
+row stays as it was.
 
 ## `GET /api/v1/files?proposition=`
 
@@ -878,6 +887,49 @@ somebody else, or to the workspace, is `404`. A destination that refused is
 {"sent": true, "channel": 2}
 ```
 
+## `GET POST /api/v1/webhooks`
+
+Scope `admin`, so an owner's token only: these are the webhooks under
+Integrations on `/settings`, which fire on what happened in the workspace
+rather than on who it happened to. `GET` lists them in the shape
+`/me/notifications` reports a channel, with `events` and `column` beside the
+URL and a `secret_set` in place of the secret.
+
+`POST` adds one. The body takes `url`, an optional `secret` that signs each
+body as `X-Theses-Signature`, `events` from the notification matrix, and an
+optional `column` a card move must land in to fire. A webhook with no event, an
+event the matrix does not hold and a URL that is not http or https are `422`.
+It arrives unverified and nothing is sent to it until its test reaches it.
+
+Creating a webhook does not honor `Idempotency-Key`: it is not a board
+command and keeps no key, so a create sent twice makes two webhooks. After a
+create whose answer never arrived, list the webhooks before sending it again.
+
+```
+POST /api/v1/webhooks
+{"url": "https://example.com/hook", "secret": "...", "events": ["moved"]}
+```
+
+```json
+{"webhook": {"id": 4, "kind": "webhook", "label": "https://example.com/hook",
+  "verified": false, "digest": false, "url": "https://example.com/hook",
+  "secret_set": true, "events": ["moved"]}}
+```
+
+## `PATCH DELETE /api/v1/webhooks/{id}`
+
+Scope `admin`. `PATCH` changes the fields the body names and keeps the rest; a
+`secret` left out keeps the stored one and an empty string clears it. One that
+now points somewhere else is unverified again. `DELETE` removes it. An id that
+is a person's own channel is `404`, the same as one that is not there. Both are
+recorded in the activity log, without the secret or the URL's path.
+
+## `POST /api/v1/webhooks/{id}/test`
+
+Scope `admin`. Sends the test message now and marks the webhook verified when it
+arrives, as the settings page's Test button does. A destination that refused is
+`502`, with what it said.
+
 ## `GET /api/v1/settings`
 
 Scope `admin`. Every known setting, its definition and its current value.
@@ -914,6 +966,41 @@ A value the key's definition refuses is `422`; a body that is not JSON, or has
 no `value` field, is `400`.
 
 A write is recorded in the activity log as the person the token belongs to.
+
+## `GET POST /api/v1/backups`
+
+Scope `admin`. The Backups section of `/settings`. `GET` lists the archives
+under the backup prefix, newest first; `complete` is false for one with no
+manifest beside it, which cannot be verified or restored. `POST` starts one
+backup in the background and answers `202` at once; what it did appears in the
+list and on the settings page when it is done.
+
+```json
+{"backups": [{"key": "backups/2026-09-24T031500Z.tar.gz.age",
+  "when": 1790219700, "size": 18342012, "complete": true}]}
+```
+
+A backup key nobody has set is `503`, and a backup or restore already running
+is `409`.
+
+## `POST /api/v1/backups/verify`
+
+Scope `admin`. The body is `{"key": ...}` naming an archive from the list.
+Restores it into an isolated workspace in the background to prove it can be,
+and answers `202`; the result is on the settings page. A key that is not an
+archive under the backup prefix is `404`.
+
+## `POST /api/v1/backups/restore`
+
+Scope `admin`. The body is `{"key": ..., "confirm": ...}` naming an archive
+from the list, with `confirm` repeating the same key. A missing or different
+`confirm` is `422` and starts nothing, so a call that was not meant, or names
+the wrong archive by a typo, cannot restore anything. Starts replacing the database and the markdown mirror with it and answers
+`202`. What is here now is moved aside under a timestamp rather than removed,
+and every write is refused until it is done. Then every session, API token and
+calendar link from before it is gone, the one that asked included, and
+everybody signs in again. The settings page asks in a dialog before it sends
+this; send `confirm` only once the person has said to restore that archive.
 
 ## The board
 
@@ -1021,9 +1108,13 @@ Scope `write`, and the role has to be one that may delete, which a researcher
 is not. A token whose owner may not delete is answered `404`, the same as a
 proposition that is not there. The board, the documents, the links and the
 files go with it, and the record of the deletion is filed with no proposition
-so that it survives the cascade. An archived proposition can be deleted without
-being restored first: deleting and restoring are the two writes an archived one
-still takes.
+so that it survives the cascade. A proposition with recording releases, or
+with a file still uploading, is refused with `409`. Finish or cancel the
+uploads first, or wait for the sweep to abandon them after 48 hours without
+progress. An
+archived proposition can otherwise be deleted without being restored first,
+since deleting and restoring are the two writes an archived one still takes;
+its uploads cannot be finished or canceled until it is restored.
 
 ## `POST /api/v1/propositions/{id}/members/{user}`
 
@@ -1254,10 +1345,16 @@ one endpoint serves every tool.
 | `insert_after_heading` | `write` | Adds a paragraph at the end of the section under a heading. |
 | `replace_block` | `write` | Replaces the text of one block. |
 | `move_block` | `write` | Moves one block within its document, after another block or to the head of it. |
+| `rename_document` | `write` | Renames a document: `PATCH /api/v1/documents/{id}`. |
+| `delete_document` | `write` | Deletes a document: `DELETE /api/v1/documents/{id}`. |
+| `list_revisions` | `read` | Lists a document's revisions with their markdown: `GET /api/v1/documents/{id}/revisions`. |
+| `create_revision` | `write` | Keeps a revision of a document now: `POST /api/v1/documents/{id}/revisions`. |
 | `write_document` | `write` | Replaces a document, or the part of it `base` names, with markdown, and answers with the block each paragraph now stands in, what did not go in and what went in changed: `PUT /api/v1/documents/{id}/source` with `base` and `key` optional in the same way. |
 | `list_links` | `read` | Lists the links saved on one proposition, with their citation. |
 | `add_link` | `write` | Saves a URL on one proposition, reading the page for its title, author, year and kind. |
-| `annotate_link` | `write` | Changes a saved link's note, kind and question. |
+| `annotate_link` | `write` | Changes a saved link's title, author, year, note, kind and question, keeping each one left out. |
+| `refetch_link` | `write` | Reads a saved link's page again: `POST /api/v1/links/{id}/refetch`. |
+| `delete_link` | `write` | Deletes a saved link: `DELETE /api/v1/links/{id}`. |
 | `get_file` | `read` | Reads a current or historical file and its metadata. |
 | `edit_file` | `write` | Updates names, folders, notes and tags with metadata version checks. |
 | `list_file_comments` | `read` | Reads timestamped recording comments. |
@@ -1268,39 +1365,72 @@ one endpoint serves every tool.
 | `storage_cleanup` | `admin` | Rechecks and deletes one reported object for an owner. |
 | `list_files` | `read` | Lists the files uploaded to one proposition, with their folder, size and state. |
 | `get_download_url` | `read` | Returns a download link for one file that works for a few minutes. |
-| `request_upload` | `files` | Makes a file row and returns its presigned URLs. |
+| `request_upload` | `files` | Makes a file row and returns its presigned URLs: `POST /api/v1/files`. |
+| `upload_parts` | `files` | Resumes a multipart upload: `GET /api/v1/files/{id}/parts`. |
+| `complete_upload` | `files` | Checks the object is in the bucket and makes the file available: `POST /api/v1/files/{id}/complete`. |
+| `delete_file` | `files` | Deletes a file: `DELETE /api/v1/files/{id}`. |
+| `list_file_versions` | `read` | Lists the older versions a file replaced: `GET /api/v1/files/{id}/versions`. |
 | `attach_to_card` | `write` | Attaches a link or a file to a card on the same proposition, or detaches it. |
 | `list_propositions` | `read` | Lists the propositions this token's owner may read. |
 | `get_proposition` | `read` | Reads one proposition and its schedule. |
 | `create_proposition` | `write` | Starts a proposition with the default columns. |
 | `set_status` | `write` | Moves one proposition to one of the workspace's statuses. |
+| `edit_proposition` | `write` | Changes the title, statement, blurb, status, episode or release date: `PATCH /api/v1/propositions/{id}`. |
+| `move_proposition` | `write` | Moves a proposition on the rail: `POST /api/v1/propositions/{id}/move`. |
+| `archive_proposition` | `write` | Archives a proposition, or restores it with `restore`. |
+| `delete_proposition` | `write` | Deletes a proposition and everything on it: `DELETE /api/v1/propositions/{id}`. |
+| `set_member` | `write` | Adds somebody to a proposition, or takes them off with `remove`. |
+| `create_column` | `write` | Adds a column: `POST /api/v1/propositions/{id}/columns`. |
+| `rename_column` | `write` | Renames a column: `PATCH /api/v1/columns/{id}`. |
+| `move_column` | `write` | Moves a column: `POST /api/v1/columns/{id}/move`. |
+| `delete_column` | `write` | Deletes an empty column: `DELETE /api/v1/columns/{id}`. |
 | `list_cards` | `read` | Lists the columns and cards of one proposition, with the sequence number. |
 | `create_card` | `write` | Adds a card at the end of a column. |
 | `move_card` | `write` | Moves a card into a column on the same proposition. |
 | `assign_card` | `write` | Puts somebody on a card, or takes them off. |
 | `complete_card` | `write` | Marks a card done, or reopens it. |
+| `edit_card` | `write` | Changes a card's title, description, question or due date: `PATCH /api/v1/cards/{id}`, with the same `base_version`. |
+| `delete_card` | `write` | Deletes a card: `DELETE /api/v1/cards/{id}`. |
+| `add_checklist_item` | `write` | Adds a checklist item: `POST /api/v1/cards/{id}/checklist`. |
+| `check_item` | `write` | Ticks or unticks a checklist item: `PATCH /api/v1/checklist/{id}`. |
+| `remove_checklist_item` | `write` | Removes a checklist item: `DELETE /api/v1/checklist/{id}`. |
 | `comment` | `write` | Writes a note on a card. |
+| `delete_comment` | `write` | Deletes one of your notes: `DELETE /api/v1/comments/{id}`. |
+| `undo` | `write` | Puts back one activity row: `POST /api/v1/activity/{id}/undo`. |
 | `activity` | `read` | Reads the activity log after a sequence number. |
-| `backup_now` | `admin` | Starts one backup in the background. |
+| `backup_now` | `admin` | Starts one backup in the background: `POST /api/v1/backups`. |
+| `list_backups` | `admin` | Lists the archives: `GET /api/v1/backups`. |
+| `verify_backup` | `admin` | Verifies one archive in isolation: `POST /api/v1/backups/verify`. |
+| `restore_backup` | `admin` | Restores one archive, with `confirm` repeating its key: `POST /api/v1/backups/restore`. |
+| `list_webhooks` | `admin` | Lists the workspace's webhooks: `GET /api/v1/webhooks`. |
+| `save_webhook` | `admin` | Adds a webhook, or with `id` changes one: `POST` and `PATCH /api/v1/webhooks`. |
+| `delete_webhook` | `admin` | Deletes a webhook: `DELETE /api/v1/webhooks/{id}`. |
+| `test_webhook` | `admin` | Sends a webhook its test message: `POST /api/v1/webhooks/{id}/test`. |
 
 Every tool returns structured output against a schema the tool list carries, and
-is annotated with what calling it does. The read tools are read only.
-`set_setting`, `replace_block`, `move_block`, `set_status`, `move_card`,
-`complete_card` and `annotate_link` are destructive and idempotent, since each
-replaces what was there. `create_document`, `append_block`,
-`insert_after_heading`, `add_link`, `create_proposition`, `create_card`,
-`comment`, `request_upload` and `backup_now` are neither, because calling one
-twice makes two of the thing, and `add_link` also reads a page on the open web.
-`attach_to_card` and `assign_card` are idempotent without being destructive:
-doing either twice leaves the one thing there.
+is annotated with what calling it does. The read tools are read only. The tools
+that set, move, rename or delete are destructive and idempotent, since each
+replaces or removes what was there; `refetch_link` is one of them and also
+reads a page on the open web. The tools that make something, `create_document`,
+`append_block`, `insert_after_heading`, `add_link`, `create_proposition`,
+`create_card`, `create_column`, `add_checklist_item`, `create_revision`,
+`comment`, `request_upload`, `verify_backup` and `backup_now`, are neither,
+because calling one twice makes two of the thing, and `add_link` and
+`test_webhook` also reach the open web. `undo`, `complete_upload`,
+`save_webhook` and `restore_backup` are destructive without being idempotent.
+`attach_to_card`, `assign_card` and `set_member` are idempotent without being
+destructive: doing any of them twice leaves the one thing there. The tools
+added for parity with the REST routes answer with their value under `result`.
 
 The tools that make something take an optional `key`, which is the same idea as
 the `Idempotency-Key` header above and takes the same 1 to 64 letters, digits,
 hyphens or underscores. A call an agent never saw the answer to is made again
 under the same key and returns the id of the thing the first call made rather
 than making a second: `create_proposition`, `create_card`, `comment`,
-`create_document`, `append_block`, `insert_after_heading`, `add_link` and
-`add_file_comment`. `write_document` also accepts a key for its source-write
+`create_document`, `append_block`, `insert_after_heading`, `add_link`,
+`add_file_comment`, `create_column`, `add_checklist_item`, `create_revision`
+and `request_upload`. `request_upload` sent again under its key answers with
+the first call's file and, for a multipart upload, its resume. `write_document` also accepts a key for its source-write
 transaction. Workflow mutation keys are described in the parity section below.
 Other tools may omit retry keys; inspect each tool schema rather than assuming
 all writes support them.
@@ -1314,8 +1444,15 @@ call is that text with yours worked into it.
 A tool reads and writes only what its token's owner may: a proposition they are
 not a member of answers the same way as one that is not there, an archived
 proposition refuses every write, and a card cannot move to a column on another
-proposition. `backup_now` answers as soon as the archive has begun; what it did
-is read from the settings page.
+proposition. `backup_now`, `verify_backup` and `restore_backup` answer as soon
+as the job has begun; what it did is read from the settings page. A restore
+ends every token, the one that asked for it included, and starts only when
+`confirm` repeats the archive's key, which an agent sends only after the person
+has said to restore that archive.
+
+An upload is finished through MCP alone: `request_upload`, then a `PUT` of the
+bytes to the URL it returned (or to each part URL of a multipart upload, with
+`upload_parts` to resume), then `complete_upload`.
 
 Resource `theses://workspace` describes the workspace: its name, time zone, how
 many people and propositions it holds, and what this endpoint can do. Three
@@ -1358,13 +1495,13 @@ The session routes below use `/app`; bearer routes use the same paths under `/ap
 | `GET /snapshots/{id}` | Read an exact immutable script snapshot. |
 | `GET /reviews?proposition={id}` | Named reviewer, decision, note and whether the requested version is stale. |
 | `POST /reviews` | Request a review with `document_id` or `file_id`, and `reviewer_id`. |
-| `PATCH /reviews/{id}` | The named reviewer sends `version`, `state` (`approved` or `changes_requested`) and `note`. Changed targets return 409. |
-| `GET/PUT /evidence` | GET accepts `proposition`; PUT accepts `proposition_id`, optional existing `id`, `version`, title, author, year, URL, quotation, locator, interpretation, claim, verification, and optional link/file/block IDs. |
+| `PATCH /reviews/{id}` | The named reviewer sends `version`, `state` (`approved` or `changes_requested`) and `note`; once the reviewer's account is deleted, any editor may decide. Changed targets return 409. |
+| `GET/PUT /evidence` | GET accepts `proposition`; PUT accepts `proposition_id`, optional existing `id`, `version`, title, author, year, URL, quotation, locator, interpretation, claim, verification, and optional link/file/block IDs. `verified` true on a save that changes content records the caller as verifier; an unchanged save keeps the previous one. |
 | `DELETE /evidence/{id}?version={version}` | Delete a reference with delete permission and a matching version. |
 | `GET /evidence/export?proposition={id}&format=md` | Export research notes and bibliography. Use `format=ris` for reference managers. |
 | `GET/PUT /files/{id}/transcript` | Read a recording transcript or replace it using its current `version`. PUT accepts `text` and `format` (`txt`, `srt`, `vtt`), or edited `segments`. Imports are bounded to 4 MiB and 10,000 passages. |
 | `GET /files/{id}/transcript/export?format=vtt` | Export timed captions. `format=txt` also supports untimed transcripts. |
-| `GET/POST /files/{id}/transcription-jobs` | Read recent jobs or queue local transcription; optional `stereo` labels separate left/right speakers. |
+| `GET/POST /files/{id}/transcription-jobs` | Read recent jobs or queue local transcription; optional `stereo` labels separate left/right speakers. A recording already queued returns 409; a full queue of ten returns 429 with `Retry-After`. |
 | `PATCH /files/{id}/comments/{comment}` | Resolve or reopen a recording comment with `version` and boolean `resolved`. |
 
 Each transcript segment has `start_ms`, `end_ms`, `speaker` and `text`. Plain text imports have null timestamps. Editing a transcript while a transcription job runs causes the job's replacement to be refused, preserving the edited transcript. Script approvals include the document's monotonic revision and block contents; moving or editing and then reverting a block still invalidates the approval. Replacement recordings require a new review. Deleting a source document or recording retains pinned script and review history under the proposition; deleting the proposition removes that history.
@@ -1418,8 +1555,9 @@ MCP requests allow 4 MiB plus 64 KiB for the envelope; transcript content still
 has its own 4 MiB limit. Ordinary REST bodies remain limited to 64 KiB;
 document source writes accept 1 MiB.
 `PUT /api/v1/files/{id}/transcript` accepts a JSON envelope up to 4 MiB plus
-64 KiB. JSON escaping counts toward the envelope size. An oversized or malformed
-REST transcript body returns 400; content validation failures return 422.
+64 KiB. JSON escaping counts toward the envelope size. An oversized REST
+transcript body returns 413 and a malformed one 400, like every other route;
+content validation failures return 422.
 
 ## Recover deleted content
 

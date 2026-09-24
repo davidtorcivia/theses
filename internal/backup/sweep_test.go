@@ -24,6 +24,10 @@ func TestSweepTakesOnlyWhatAnInterruptedRunLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(filepath.Join("restore-20260917T033000Z.docs", "10-proposition", "research.md"))
+	if err := os.MkdirAll(filepath.Join(dir, "verify-1234567"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join("verify-1234567", "theses.db"))
 	// What it must not touch: the database, the mirror, and the copies a
 	// restore moved aside to be the way back.
 	write("theses.db")
@@ -39,7 +43,7 @@ func TestSweepTakesOnlyWhatAnInterruptedRunLeft(t *testing.T) {
 
 	for _, gone := range []string{
 		"restore-20260917T033000Z.tar.gz", "restore-20260917T033000Z.db",
-		"backup-20260917T033000Z.db", "restore-20260917T033000Z.docs",
+		"backup-20260917T033000Z.db", "restore-20260917T033000Z.docs", "verify-1234567",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, gone)); err == nil {
 			t.Errorf("%s was left behind", gone)

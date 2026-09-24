@@ -131,8 +131,10 @@ func SetPasswordHash(ctx context.Context, q Querier, id int64, hash string) erro
 	return err
 }
 
-func SetTOTPSecret(ctx context.Context, q Querier, id int64, secret string) error {
-	_, err := q.ExecContext(ctx, `UPDATE users SET totp_secret = ?, totp_last_step = 0 WHERE id = ?`, secret, id)
+// SetTOTPSecret replaces the secret and records step, the one the enrolling
+// code proved, as used, so that code cannot sign in a second time.
+func SetTOTPSecret(ctx context.Context, q Querier, id int64, secret string, step int64) error {
+	_, err := q.ExecContext(ctx, `UPDATE users SET totp_secret = ?, totp_last_step = ? WHERE id = ?`, secret, step, id)
 	return err
 }
 
@@ -356,16 +358,6 @@ type APIToken struct {
 	CreatedAt  int64
 	LastUsedAt sql.NullInt64
 	ExpiresAt  sql.NullInt64
-}
-
-func CreateAPIToken(ctx context.Context, q Querier, userID int64, name string, hash []byte, scopes string) (int64, error) {
-	res, err := q.ExecContext(ctx, `INSERT INTO api_tokens
-		(user_id, name, hash, scopes, created_at) VALUES (?, ?, ?, ?, unixepoch())`,
-		userID, name, hash, scopes)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
 }
 
 func APITokenByHash(ctx context.Context, q Querier, hash []byte) (*APIToken, error) {

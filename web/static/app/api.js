@@ -109,9 +109,11 @@ export async function put(url, headers, body, onProgress) {
       }
       reject(new Refused(bucketTrouble(xhr.status), xhr.status));
     });
+    // A dropped connection raises the same error as a CORS refusal, and only
+    // one of them is the bucket's fault.
     xhr.addEventListener('error', () =>
-      reject(new Refused(
-        'The bucket refused the upload. Check its CORS rule on the Storage settings page.', 0)));
+      reject(new Refused(navigator.onLine === false ? 'The connection dropped. Retry to resume the upload.'
+        : 'The bucket refused the upload. Check its CORS rule on the Storage settings page.', 0)));
     xhr.addEventListener('abort', () => reject(new Refused(stalled?'The upload stopped making progress. Retry to resume it.':'That upload was stopped.', 0)));
     watch();
     xhr.send(body);

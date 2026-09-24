@@ -147,7 +147,7 @@ function run(act, id) {
   });
 }
 
-export function go(id) {
+function go(id) {
   // Closing the active row does not navigate, so chrome must synchronize
   // the narrow rail's focus, inert state and disclosure state.
   const toggle = $('#railtoggle');

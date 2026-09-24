@@ -6,7 +6,7 @@ import { connectedSection } from './connected.js';
 // and members, the four tabs, and the panes under them.
 
 import { $, el, children, num, initials, say, editable } from './dom.js';
-import { state, user, open, emit, hold, canEdit, archived } from './state.js';
+import { state, user, open, emit, hold, canEdit, archived, proposition } from './state.js';
 import { send } from './net.js';
 import { renderBoard, boardSummary } from './board.js';
 import { renderDocument } from './docs.js';
@@ -80,10 +80,15 @@ function head(p) {
   const title = el('h1', { id: 'wtitle', text: p.title, spellcheck: 'false' });
   const statement = el('p', { id: 'wstate', text: p.statement, spellcheck: 'false' });
   if (canEdit()) {
-    editOnClick(title, () => p.title, (value) =>
-      send('proposition.edit', { proposition: p.id, title: value, statement: p.statement, blurb: p.blurb }));
-    editOnClick(statement, () => p.statement, (value) =>
-      send('proposition.edit', { proposition: p.id, title: p.title, statement: value, blurb: p.blurb }));
+    // The edit replaces all three fields, and rendering is held while the
+    // editor is open, so the other two are read at commit time: a title or
+    // blurb someone else changed meanwhile is not sent back over theirs.
+    const edit = (field) => (value) => {
+      const now = proposition(p.id) || p;
+      return send('proposition.edit', { proposition: p.id, title: now.title, statement: now.statement, blurb: now.blurb, [field]: value });
+    };
+    editOnClick(title, () => (proposition(p.id) || p).title, edit('title'));
+    editOnClick(statement, () => (proposition(p.id) || p).statement, edit('statement'));
   }
 
   const members = el('span', { id: 'wmembers', class: 'members' });
@@ -168,7 +173,7 @@ function pane(p) {
   for (const [id, label] of [['all', 'All'], ['mine', 'Mine'], ['open', 'Open']]) {
     filters.append(el('button', {
       type: 'button', 'data-f': id, text: label,
-      class: state.boardFilter === id ? 'on' : '',
+      class: state.boardFilter === id ? 'on' : '', 'aria-pressed': String(state.boardFilter === id),
       onclick: () => { state.boardFilter = id; saveFilters(); emit(); },
     }));
   }
