@@ -773,7 +773,7 @@ func (s *Service) CreateRevision(ctx context.Context, a core.Actor, document int
 				Scan(&r.ID, &r.Document, &r.Markdown, &by, &r.CreatedAt, &r.Reason); err != nil {
 				return core.Change{}, err
 			}
-			r.CreatedBy = number(by)
+			r.CreatedBy = board.Number(by)
 			return core.Change{Entity: "revision", EntityID: id, Action: "create", After: r}, nil
 		})
 }
@@ -871,14 +871,6 @@ func (s *Service) matchesNewestRevision(ctx context.Context, document int64) (bo
 		return false, err
 	}
 	return Markdown(blocks) == newest, nil
-}
-
-// Editing reports how many documents have a periodic revision timer armed,
-// which is what a test asserts stops when the editing does.
-func (s *Service) Editing() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.pending)
 }
 
 // Stop cancels every armed timer, for a process on its way out.

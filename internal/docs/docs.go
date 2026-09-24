@@ -203,15 +203,8 @@ func scanDocument(row interface{ Scan(...any) error }) (Document, error) {
 	var d Document
 	var by sql.NullInt64
 	err := row.Scan(&d.ID, &d.Proposition, &d.Name, &d.Slug, &d.Position, &by, &d.CreatedAt, &d.Revision)
-	d.CreatedBy = number(by)
+	d.CreatedBy = board.Number(by)
 	return d, err
-}
-
-func number(n sql.NullInt64) *int64 {
-	if !n.Valid {
-		return nil
-	}
-	return &n.Int64
 }
 
 // GetDocument reads one document row, which is what every document event
@@ -231,7 +224,7 @@ func scanBlock(row interface{ Scan(...any) error }) (Block, error) {
 	var b Block
 	var by, deleted sql.NullInt64
 	err := row.Scan(&b.ID, &b.Document, &b.Position, &b.Text, &b.Version, &by, &b.UpdatedAt, &deleted)
-	b.UpdatedBy, b.DeletedAt = number(by), number(deleted)
+	b.UpdatedBy, b.DeletedAt = board.Number(by), board.Number(deleted)
 	return b, err
 }
 
@@ -326,7 +319,7 @@ func ListRevisions(ctx context.Context, q store.Querier, document int64) ([]Revi
 		if err := rows.Scan(&r.ID, &r.Document, &r.Markdown, &by, &r.CreatedAt, &r.Reason); err != nil {
 			return nil, err
 		}
-		r.CreatedBy = number(by)
+		r.CreatedBy = board.Number(by)
 		out = append(out, r)
 	}
 	return out, rows.Err()

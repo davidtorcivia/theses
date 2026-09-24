@@ -957,7 +957,7 @@ func (s *Service) DeleteComment(ctx context.Context, a core.Actor, id int64) (co
 		if err != nil {
 			return core.Change{}, err
 		}
-		was.UserID = number(user)
+		was.UserID = Number(user)
 		if a.Kind != core.KindUser || !user.Valid || user.Int64 != a.ID {
 			return core.Change{}, ErrNotYours
 		}

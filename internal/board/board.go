@@ -137,7 +137,8 @@ func text(n sql.NullString) *string {
 	return &n.String
 }
 
-func number(n sql.NullInt64) *int64 {
+// Number is a nullable integer column as the pointer a JSON payload carries.
+func Number(n sql.NullInt64) *int64 {
 	if !n.Valid {
 		return nil
 	}
@@ -162,7 +163,7 @@ func scanProposition(rows interface{ Scan(...any) error }) (Proposition, error) 
 	var archived sql.NullInt64
 	err := rows.Scan(&p.ID, &p.Number, &p.Kind, &p.Title, &p.Statement, &p.Blurb, &p.Status,
 		&episode, &target, &p.Position, &p.CreatedAt, &archived)
-	p.Episode, p.TargetDate, p.ArchivedAt = text(episode), text(target), number(archived)
+	p.Episode, p.TargetDate, p.ArchivedAt = text(episode), text(target), Number(archived)
 	p.Members = []int64{}
 	return p, err
 }
@@ -273,7 +274,7 @@ func scanCard(rows interface{ Scan(...any) error }) (Card, error) {
 	var done sql.NullInt64
 	err := rows.Scan(&c.ID, &c.Proposition, &c.ColumnID, &c.Position, &c.Title, &c.Description,
 		&question, &due, &done, &c.CreatedAt, &c.Version)
-	c.Question, c.DueDate, c.DoneAt = text(question), text(due), number(done)
+	c.Question, c.DueDate, c.DoneAt = text(question), text(due), Number(done)
 	c.Assignees, c.Checklist, c.Comments = []int64{}, []ChecklistItem{}, []Comment{}
 	return c, err
 }
@@ -398,7 +399,7 @@ func fillCards(ctx context.Context, q store.Querier, where string, arg any, card
 		if err := notes.Scan(&n.ID, &n.CardID, &user, &n.Body, &n.CreatedAt); err != nil {
 			return err
 		}
-		n.UserID = number(user)
+		n.UserID = Number(user)
 		if c, ok := cards[n.CardID]; ok {
 			c.Comments = append(c.Comments, n)
 		}
