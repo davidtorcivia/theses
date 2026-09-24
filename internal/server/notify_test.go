@@ -31,7 +31,7 @@ func TestProfileDrawsTheMatrixForTheStartingChannel(t *testing.T) {
 	if !strings.Contains(body, `name="rule" value="assigned:1"`) {
 		t.Error("the matrix has no cell for assigned on the first channel")
 	}
-	if !strings.Contains(body, `<dialog id="channel-new-ntfy">`) {
+	if !strings.Contains(body, `<dialog id="channel-new-ntfy" `) {
 		t.Error("there is no way to add an ntfy channel")
 	}
 }

@@ -159,8 +159,8 @@
     </section>
   </div>
 
-  {{range .ChannelForms}}<dialog id="{{.DialogID}}">
-    <h3>{{if .ID}}{{.KindLabel}}{{else}}Add {{.KindLabel}}{{end}}</h3>
+  {{range .ChannelForms}}<dialog id="{{.DialogID}}" aria-labelledby="{{.DialogID}}-title">
+    <h3 id="{{.DialogID}}-title">{{if .ID}}{{.KindLabel}}{{else}}Add {{.KindLabel}}{{end}}</h3>
     <form class="form" method="post" action="/profile/notifications/channel">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <input type="hidden" name="id" value="{{.ID}}">
@@ -192,8 +192,8 @@
     </form>{{end}}
   </dialog>{{end}}
 
-  <dialog id="signout-all">
-    <h3>Sign out everywhere</h3>
+  <dialog id="signout-all" aria-labelledby="signout-all-title">
+    <h3 id="signout-all-title">Sign out everywhere</h3>
     <p>Every browser signed in as {{.User.Handle}}, including this one, is signed out. Your password and authenticator are unchanged.</p>
     <form method="post" action="/profile/signout-everywhere" class="acts">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -202,8 +202,8 @@
     </form>
   </dialog>
 
-  <dialog id="delete-account">
-    <h3>Delete this account</h3>
+  <dialog id="delete-account" aria-labelledby="delete-account-title">
+    <h3 id="delete-account-title">Delete this account</h3>
     <p>{{.User.Name}} ({{.User.Handle}}) is removed along with every session and API token. Cards, documents and files stay, with the author left blank.</p>
     <form method="post" action="/profile/delete" class="acts">
       <input type="hidden" name="csrf" value="{{.CSRF}}">

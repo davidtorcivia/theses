@@ -174,7 +174,7 @@ func TestBackUpNowThenListAndRestore(t *testing.T) {
 	if !recorded {
 		t.Error("the page does not say when the last backup was")
 	}
-	if !strings.Contains(body, "Restore") || !strings.Contains(body, "<dialog id=\"restore-0\">") {
+	if !strings.Contains(body, "Restore") || !strings.Contains(body, "<dialog id=\"restore-0\" ") {
 		t.Errorf("the listed backup has no confirmation dialog:\n%s", body)
 	}
 
