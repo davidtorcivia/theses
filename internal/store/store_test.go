@@ -305,6 +305,46 @@ func TestSwapReplacesTheFileAndKeepsTheOldOne(t *testing.T) {
 	}
 }
 
+// A restored file is older than the live one, and its activity ids stop
+// where it was taken. The next id after the swap has to be past every id the
+// live file handed out, or a tab reading from its last seen id misses it.
+func TestSwapKeepsIDsFromGoingBackwards(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := Open(filepath.Join(dir, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	restored := filepath.Join(dir, "restored.db")
+	other, err := Open(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for q, n := range map[Querier]int{db: 5, other: 2} {
+		for range n {
+			if err := InsertActivity(ctx, q, "user", "1", "", "card", "1", "edit", "", ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	other.Close()
+
+	if err := db.Swap(ctx, restored, filepath.Join(dir, "app.db.aside")); err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+	if err := InsertActivity(ctx, db, "user", "1", "", "card", "1", "edit", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	var last int64
+	if err := db.QueryRowContext(ctx, `SELECT max(id) FROM activity`).Scan(&last); err != nil {
+		t.Fatal(err)
+	}
+	if last != 6 {
+		t.Fatalf("the first activity id after the swap is %d, want 6", last)
+	}
+}
+
 func TestSwapPutsTheOldFileBackWhenTheNewOneWillNotOpen(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
