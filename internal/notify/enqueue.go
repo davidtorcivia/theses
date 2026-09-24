@@ -169,7 +169,8 @@ func (s *Service) schedule(c Channel, m Notice, now int64, loc *time.Location) (
 //
 // Only a row whose turn has not come merges: one that is due may be inside the
 // worker's batch between its re-check and its send, and a line appended there
-// would be marked sent without ever going out.
+// would be marked sent without ever going out. Nor does a row past its give up
+// cutoff, whose backoff still puts next_at ahead but which never goes out.
 func (s *Service) write(ctx context.Context, tx *sql.Tx, channelID int64, m Notice,
 	actor core.Actor, at int64, collapse string, now int64) error {
 	line := item{Text: m.Text, URL: s.noticeLink(m)}
@@ -177,8 +178,8 @@ func (s *Service) write(ctx context.Context, tx *sql.Tx, channelID int64, m Noti
 		var id int64
 		var stored string
 		err := tx.QueryRowContext(ctx, `SELECT id, payload_json FROM notification_outbox
-			WHERE channel_id = ? AND collapse = ? AND sent_at IS NULL AND next_at > ?
-			ORDER BY id LIMIT 1`, channelID, collapse, now).Scan(&id, &stored)
+			WHERE channel_id = ? AND collapse = ? AND sent_at IS NULL AND next_at > ? AND `+sendable+`
+			ORDER BY id LIMIT 1`, channelID, collapse, now, now-int64(giveUpAfter.Seconds())).Scan(&id, &stored)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("notify: collapse: %w", err)
 		}

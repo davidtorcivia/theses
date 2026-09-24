@@ -309,6 +309,31 @@ func TestARowThatIsDueIsNotCollapsedInto(t *testing.T) {
 	}
 }
 
+// A row past its give up cutoff still has a backoff next_at ahead of it, and
+// it never goes out, so a line merged into it would be lost.
+func TestARowGivenUpOnIsNotCollapsedInto(t *testing.T) {
+	f := newFixture(t)
+	ada := f.user(t, "ada")
+	grace := f.user(t, "grace")
+	f.onCard(t, 7, grace)
+	f.channel(t, Channel{UserID: grace, Kind: KindNtfy, Config: Config{Topic: "t"}}, "moved")
+
+	if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+		t.Fatal(err)
+	}
+	first := f.outbox(t)[0]
+	if _, err := f.db.ExecContext(context.Background(),
+		`UPDATE notification_outbox SET tried_at = ? WHERE id = ?`, now-int64(giveUpAfter.Seconds())-1, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Handle(context.Background(), f.move(t, ada, 7)); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.outbox(t); len(got) != 2 {
+		t.Fatalf("wrote %d rows, want 2: the given up one must be left alone", len(got))
+	}
+}
+
 func TestQuietHoursHoldARowUntilTheWindowEnds(t *testing.T) {
 	f := newFixture(t)
 	ada := f.user(t, "ada")
