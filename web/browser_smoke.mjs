@@ -399,6 +399,18 @@ try {
     await page.keyboard.press('Escape');
     assert.equal(await page.getByLabel('Document tools',{exact:true}).evaluate(n=>n===document.activeElement),true);
   }
+  // Two tabs edit different fields of one heading; the title committed second keeps the other tab's statement.
+  const other=await context.newPage();
+  await visit('/p/'+fixture.large);await other.goto(fixture.url+'/p/'+fixture.large);
+  // A render landing between the click and the editor opening replaces the node, so the click repeats until one sticks.
+  const edit=(tab,selector)=>tab.waitForFunction(s=>{const n=document.querySelector(s);if(n&&!n.isContentEditable)n.click();return n?.isContentEditable;},selector,{polling:250});
+  await edit(page,'#wtitle');await edit(other,'#wstate');
+  await other.keyboard.press('Control+A');await other.keyboard.type('Statement from another tab');await other.keyboard.press('Enter');
+  await waitAsync(async id=>(await import(document.querySelector('script[src$="/app/main.js"]').src.replace(/main\.js$/,'state.js'))).proposition(id)?.statement==='Statement from another tab',fixture.large);
+  await page.keyboard.press('Control+A');await page.keyboard.type('Large workspace renamed');await page.keyboard.press('Enter');
+  await other.reload();await other.locator('#wtitle').filter({hasText:'Large workspace renamed'}).waitFor();
+  assert.equal(await other.locator('#wstate').textContent(),'Statement from another tab');
+  await other.close();
   await visit('/profile#tokens');
   assert.equal(await page.locator('#personal-key').count(),0);
   await page.getByRole('button',{name:'Revoke Browser assistant',exact:true}).click();
