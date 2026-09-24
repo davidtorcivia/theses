@@ -346,8 +346,7 @@ func TestConcurrentWritesLeaveTheCacheMatchingTheRow(t *testing.T) {
 }
 
 func TestBlockedSettingsWriteDoesNotBlockCacheReads(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := t.Context()
 	db := store.OpenTemp(t)
 	s := open(t, db, key)
 
@@ -384,7 +383,7 @@ func TestBlockedSettingsWriteDoesNotBlockCacheReads(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-ctx.Done():
+	case <-time.After(60 * time.Second):
 		t.Fatal("settings write did not finish after the database lock was released")
 	}
 	if got := Get[string](s, "workspace.name"); got != "After the lock" {
@@ -401,8 +400,7 @@ func TestBlockedSettingsWriteDoesNotBlockCacheReads(t *testing.T) {
 }
 
 func TestBlockedSettingsDeleteDoesNotBlockCacheReads(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	ctx := t.Context()
 	db := store.OpenTemp(t)
 	s := open(t, db, key)
 	if err := s.Set(ctx, "workspace.name", []string{"Before delete"}, 0); err != nil {
@@ -439,15 +437,16 @@ func TestBlockedSettingsDeleteDoesNotBlockCacheReads(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-ctx.Done():
+	case <-time.After(60 * time.Second):
 		t.Fatal("settings delete did not finish after the database lock was released")
 	}
 	assertNameCacheMatchesRow(t, ctx, db, s)
 }
 
 func TestConcurrentDeleteSetAndReloadLeaveTheCacheMatchingTheRow(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	// The hang guard below is the only clock: a deadline on the operations
+	// themselves failed a loaded race run that was slow, not stuck.
+	ctx := t.Context()
 	db := store.OpenTemp(t)
 	s := open(t, db, key)
 
@@ -479,7 +478,7 @@ func TestConcurrentDeleteSetAndReloadLeaveTheCacheMatchingTheRow(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(60 * time.Second):
 		t.Fatal("concurrent settings operations did not finish")
 	}
 	assertNameCacheMatchesRow(t, ctx, db, s)
