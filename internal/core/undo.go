@@ -156,6 +156,19 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 			}
 		}
 
+		// Column ids are reused, so the column a card goes back to may be gone
+		// or now be another proposition's.
+		if column, ok := fields["column_id"]; ok && spec.scope == "column_id" {
+			var ours bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM columns WHERE id = ? AND proposition_id = ?)`,
+				column, proposition.Int64).Scan(&ours); err != nil {
+				return Change{}, err
+			}
+			if !ours {
+				return Change{}, ErrNotUndoable
+			}
+		}
+
 		// An ordering key is unique within its scope, and the key this undo
 		// would put back may have been given to something else since the row
 		// left it. Two rows on one key is an order that depends on which the

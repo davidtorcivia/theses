@@ -1078,6 +1078,47 @@ func TestUndoIntoADeletedColumnIsNotUndoable(t *testing.T) {
 	}
 }
 
+// A column deleted since the move may have had its id reused by another
+// proposition, where the foreign key alone would let the undo through.
+func TestUndoIntoAReusedColumnIsNotUndoable(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	owner := f.who["owner"]
+	col, err := f.CreateColumn(ctx, owner, f.prop, "Temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := f.mustCard(t, col.EntityID, "Call the engineer")
+	move, err := f.MoveCard(ctx, owner, card.ID, f.cols[0].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteColumn(ctx, owner, col.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.CreateProposition(ctx, owner, "Wave Power")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols, err := ListColumns(ctx, f.db, other.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols[0].ID != col.EntityID {
+		t.Fatalf("the new proposition's first column is %d, not the reused %d", cols[0].ID, col.EntityID)
+	}
+	if _, err := f.Undo(ctx, owner, move.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undo into another proposition's column gave %v", err)
+	}
+	back, err := GetCard(ctx, f.db, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.ColumnID != f.cols[0].ID {
+		t.Errorf("the card moved to column %d", back.ColumnID)
+	}
+}
+
 // Column ids are reused, so a deleted card's column may have become the first
 // column of a later proposition. Restoring into it would file the card under
 // one proposition and draw it in no column of it.
