@@ -15,6 +15,11 @@ import (
 // rather than by a panic.
 var ErrNoBackups = errors.New("this endpoint has no backups")
 
+// ErrUnconfirmed is a restore whose confirm field does not repeat the key it
+// names. A restore ends every session and token, so a call that was not meant,
+// or that names the wrong archive by a typo, starts nothing.
+var ErrUnconfirmed = errors.New("a restore needs confirm set to the same archive key it restores")
+
 // backupRoutes is the settings page's backup buttons. They take admin, which
 // only an owner's token has, like the page.
 func (a *API) backupRoutes(mux *http.ServeMux) {
@@ -72,8 +77,11 @@ func (a *API) VerifyBackup(ctx context.Context, key string) error {
 // RestoreBackup starts replacing the database and the markdown mirror with one
 // archive. What is here now is moved aside rather than removed, writes are
 // refused until it is done, and every session and token ends with it, this
-// one included.
-func (a *API) RestoreBackup(ctx context.Context, who core.Actor, key string) error {
+// one included. confirm must repeat key, and is checked before anything else.
+func (a *API) RestoreBackup(ctx context.Context, who core.Actor, key, confirm string) error {
+	if confirm != key {
+		return ErrUnconfirmed
+	}
 	if a.Backup == nil {
 		return ErrNoBackups
 	}
@@ -113,10 +121,11 @@ func (a *API) verifyBackup(w http.ResponseWriter, r *http.Request, _ Principal) 
 
 func (a *API) restoreBackup(w http.ResponseWriter, r *http.Request, p Principal) {
 	var in struct {
-		Key string `json:"key"`
+		Key     string `json:"key"`
+		Confirm string `json:"confirm"`
 	}
 	if a.decode(w, r, maxBodyBytes, true, &in) {
-		a.started(w, r, a.RestoreBackup(r.Context(), actorOf(p), in.Key))
+		a.started(w, r, a.RestoreBackup(r.Context(), actorOf(p), in.Key, in.Confirm))
 	}
 }
 

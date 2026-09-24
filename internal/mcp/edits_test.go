@@ -98,7 +98,7 @@ func TestEditToolsAreListedAndScoped(t *testing.T) {
 		{"test_webhook", auth.ScopeAdmin, map[string]any{"id": 1}},
 		{"list_backups", auth.ScopeAdmin, map[string]any{}},
 		{"verify_backup", auth.ScopeAdmin, map[string]any{"archive": "x"}},
-		{"restore_backup", auth.ScopeAdmin, map[string]any{"archive": "x"}},
+		{"restore_backup", auth.ScopeAdmin, map[string]any{"archive": "x", "confirm": "x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -428,10 +428,16 @@ func TestBackupToolsWithoutBackups(t *testing.T) {
 	for tool, args := range map[string]map[string]any{
 		"list_backups":   {},
 		"verify_backup":  {"archive": "backups/x.tar.gz.age"},
-		"restore_backup": {"archive": "backups/x.tar.gz.age"},
+		"restore_backup": {"archive": "backups/x.tar.gz.age", "confirm": "backups/x.tar.gz.age"},
 	} {
 		if why := h.refused(cs, tool, args); why != api.ErrNoBackups.Error() {
 			t.Errorf("%s said %q", tool, why)
+		}
+	}
+	// A restore that does not repeat its key starts nothing, whatever else.
+	for _, confirm := range []string{"", "backups/y.tar.gz.age"} {
+		if why := h.refused(cs, "restore_backup", map[string]any{"archive": "backups/x.tar.gz.age", "confirm": confirm}); why != api.ErrUnconfirmed.Error() {
+			t.Errorf("confirm %q said %q", confirm, why)
 		}
 	}
 }

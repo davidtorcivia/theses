@@ -101,6 +101,10 @@ type webhookArgs struct {
 type archiveKeyArgs struct {
 	Archive string `json:"archive" jsonschema:"the archive's key, as list_backups reports it"`
 }
+type restoreBackupArgs struct {
+	archiveKeyArgs
+	Confirm string `json:"confirm" jsonschema:"the same archive key again, sent only once the person has said to restore it"`
+}
 
 // addEditTools registers them. It is called from Board, beside the tools whose
 // services these share.
@@ -239,7 +243,7 @@ func addEditTools(s *Server, b *board.Service, svc *files.Service) {
 	workflowTool(s, "verify_backup", "Starts restoring one archive into an isolated workspace to prove it can be, with the result on the settings page.", auth.ScopeAdmin, adds("Verify a backup"), func(ctx context.Context, _ core.Actor, in archiveKeyArgs) (bool, error) {
 		return true, s.api.VerifyBackup(ctx, in.Archive)
 	})
-	workflowTool(s, "restore_backup", "Starts replacing the database and documents with one archive, after which everyone signs in again and every token stops working.", auth.ScopeAdmin, changes("Restore a backup"), func(ctx context.Context, a core.Actor, in archiveKeyArgs) (bool, error) {
-		return true, s.api.RestoreBackup(ctx, a, in.Archive)
+	workflowTool(s, "restore_backup", "Starts replacing the database and documents with one archive, after which everyone signs in again and every token stops working.", auth.ScopeAdmin, changes("Restore a backup"), func(ctx context.Context, a core.Actor, in restoreBackupArgs) (bool, error) {
+		return true, s.api.RestoreBackup(ctx, a, in.Archive, in.Confirm)
 	})
 }

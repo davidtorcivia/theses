@@ -71,7 +71,8 @@ func (a *API) answer(w http.ResponseWriter, err error) bool {
 		return false
 	case errors.As(err, &refused):
 		a.fail(w, http.StatusUnprocessableEntity, err.Error())
-	case errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong),
+	case errors.Is(err, ErrUnconfirmed),
+		errors.Is(err, board.ErrEmpty), errors.Is(err, board.ErrTooLong),
 		errors.Is(err, board.ErrQuestion), errors.Is(err, board.ErrStatus),
 		errors.Is(err, board.ErrDueDate),
 		errors.Is(err, docs.ErrNameTaken), errors.Is(err, docs.ErrAfterBoth),

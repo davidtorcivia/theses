@@ -46,8 +46,9 @@ matching MCP tools returning a typed `result`; an owner's `admin` key also
 reaches workspace webhooks and backups. An upload is `request_upload`, a `PUT`
 of the bytes to the returned URL, then `complete_upload`. See the tables in
 [api.md](api.md), and discover each tool's exact argument schema with
-`tools/list`. `restore_backup` ends every key, including yours; never call it
-without the user's explicit instruction.
+`tools/list`. `restore_backup` ends every key, including yours, and needs
+`confirm` set to the archive's key; never send it without the user's explicit
+instruction to restore that archive.
 
 ## Permissions and attribution
 

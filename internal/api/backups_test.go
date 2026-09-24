@@ -25,10 +25,13 @@ func TestBackupRoutes(t *testing.T) {
 	}{
 		{"list needs admin", "GET", "/api/v1/backups", write, "", http.StatusForbidden, http.StatusForbidden},
 		{"now needs admin", "POST", "/api/v1/backups", write, "", http.StatusForbidden, http.StatusForbidden},
-		{"restore needs admin", "POST", "/api/v1/backups/restore", write, `{"key":"backups/a.tar.gz.age"}`, http.StatusForbidden, http.StatusForbidden},
+		{"restore needs admin", "POST", "/api/v1/backups/restore", write, `{"key":"backups/a.tar.gz.age","confirm":"backups/a.tar.gz.age"}`, http.StatusForbidden, http.StatusForbidden},
+		{"restore unconfirmed", "POST", "/api/v1/backups/restore", admin, `{"key":"backups/a.tar.gz.age"}`, http.StatusUnprocessableEntity, http.StatusUnprocessableEntity},
+		{"restore confirming another key", "POST", "/api/v1/backups/restore", admin, `{"key":"backups/a.tar.gz.age","confirm":"backups/b.tar.gz.age"}`, http.StatusUnprocessableEntity, http.StatusUnprocessableEntity},
+		{"restore with an empty body", "POST", "/api/v1/backups/restore", admin, ``, http.StatusServiceUnavailable, http.StatusNotFound},
 		{"list with no key", "GET", "/api/v1/backups", admin, "", http.StatusServiceUnavailable, http.StatusServiceUnavailable},
 		{"verify another object", "POST", "/api/v1/backups/verify", admin, `{"key":"uploads/secret.pdf"}`, http.StatusServiceUnavailable, http.StatusNotFound},
-		{"restore another object", "POST", "/api/v1/backups/restore", admin, `{"key":"backups/a.json"}`, http.StatusServiceUnavailable, http.StatusNotFound},
+		{"restore another object", "POST", "/api/v1/backups/restore", admin, `{"key":"backups/a.json","confirm":"backups/a.json"}`, http.StatusServiceUnavailable, http.StatusNotFound},
 		{"restore not JSON", "POST", "/api/v1/backups/restore", admin, `key`, http.StatusBadRequest, http.StatusBadRequest},
 	}
 	run := func(t *testing.T, with bool) {

@@ -988,13 +988,15 @@ archive under the backup prefix is `404`.
 
 ## `POST /api/v1/backups/restore`
 
-Scope `admin`. The body is `{"key": ...}` naming an archive from the list.
-Starts replacing the database and the markdown mirror with it and answers
+Scope `admin`. The body is `{"key": ..., "confirm": ...}` naming an archive
+from the list, with `confirm` repeating the same key. A missing or different
+`confirm` is `422` and starts nothing, so a call that was not meant, or names
+the wrong archive by a typo, cannot restore anything. Starts replacing the database and the markdown mirror with it and answers
 `202`. What is here now is moved aside under a timestamp rather than removed,
 and every write is refused until it is done. Then every session, API token and
 calendar link from before it is gone, the one that asked included, and
 everybody signs in again. The settings page asks in a dialog before it sends
-this; the API does not ask again, so confirm with the person first.
+this; send `confirm` only once the person has said to restore that archive.
 
 ## The board
 
@@ -1395,7 +1397,7 @@ one endpoint serves every tool.
 | `backup_now` | `admin` | Starts one backup in the background: `POST /api/v1/backups`. |
 | `list_backups` | `admin` | Lists the archives: `GET /api/v1/backups`. |
 | `verify_backup` | `admin` | Verifies one archive in isolation: `POST /api/v1/backups/verify`. |
-| `restore_backup` | `admin` | Restores one archive: `POST /api/v1/backups/restore`. |
+| `restore_backup` | `admin` | Restores one archive, with `confirm` repeating its key: `POST /api/v1/backups/restore`. |
 | `list_webhooks` | `admin` | Lists the workspace's webhooks: `GET /api/v1/webhooks`. |
 | `save_webhook` | `admin` | Adds a webhook, or with `id` changes one: `POST` and `PATCH /api/v1/webhooks`. |
 | `delete_webhook` | `admin` | Deletes a webhook: `DELETE /api/v1/webhooks/{id}`. |
@@ -1440,8 +1442,9 @@ not a member of answers the same way as one that is not there, an archived
 proposition refuses every write, and a card cannot move to a column on another
 proposition. `backup_now`, `verify_backup` and `restore_backup` answer as soon
 as the job has begun; what it did is read from the settings page. A restore
-ends every token, the one that asked for it included, and the tool does not
-ask for confirmation, so an agent confirms with the person before calling it.
+ends every token, the one that asked for it included, and starts only when
+`confirm` repeats the archive's key, which an agent sends only after the person
+has said to restore that archive.
 
 An upload is finished through MCP alone: `request_upload`, then a `PUT` of the
 bytes to the URL it returned (or to each part URL of a multipart upload, with

@@ -117,6 +117,7 @@ func (s *Server) refusal(what string, err error) error {
 		errors.Is(err, backup.ErrBusy),
 		errors.Is(err, backup.ErrNotConfigured),
 		errors.Is(err, api.ErrNoBackups),
+		errors.Is(err, api.ErrUnconfirmed),
 		errors.Is(err, workflow.ErrChanged),
 		errors.Is(err, workflow.ErrInvalid),
 		errors.Is(err, workflow.ErrTranscriptionUnavailable),
