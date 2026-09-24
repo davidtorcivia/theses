@@ -1234,3 +1234,49 @@ func (r *rig) cards(ctx context.Context) int {
 	}
 	return n
 }
+
+// Close ends an open socket, refuses a new one and answers a held poll, so a
+// shutdown is not held up by any of them.
+func TestCloseEndsSocketsAndPolls(t *testing.T) {
+	r := newRig(t)
+	ws := r.mustDial("ada")
+	read(t, ws, "presence")
+
+	polled := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequest("GET", r.http.URL+"/api/events?since=1000000&proposition="+strconv.FormatInt(r.prop, 10), nil)
+		req.Header.Set("Cookie", r.cookie["ada"])
+		res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			polled <- 0
+			return
+		}
+		res.Body.Close()
+		polled <- res.StatusCode
+	}()
+	time.Sleep(100 * time.Millisecond)
+	r.hub.Close()
+
+	select {
+	case status := <-polled:
+		if status != http.StatusOK {
+			t.Errorf("the held poll answered %d", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held poll outlived Close")
+	}
+	for {
+		if _, err := awaitFrame(t, ws, 5*time.Second); err != nil {
+			if timedOut(err) {
+				t.Fatal("the socket outlived Close")
+			}
+			break
+		}
+	}
+	late, err := r.dial("grace")
+	if err == nil {
+		if _, err := awaitFrame(t, late, 5*time.Second); err == nil || timedOut(err) {
+			t.Error("a socket opened after Close was kept")
+		}
+	}
+}

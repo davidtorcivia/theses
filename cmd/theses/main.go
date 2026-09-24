@@ -140,6 +140,8 @@ func run() error {
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
 	}
 
+	httpSrv.RegisterOnShutdown(srv.CloseSockets)
+
 	done := make(chan error, 1)
 	go func() {
 		log.Info("theses listening", "version", Version, "bind", cfg.Bind, "base_url", cfg.BaseURL, "dev", cfg.Dev)

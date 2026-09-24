@@ -250,6 +250,9 @@ func (s *Server) AddCheck(c Check) { s.checks = append(s.checks, c) }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
+// CloseSockets ends every websocket and held poll, for http.Server.RegisterOnShutdown.
+func (s *Server) CloseSockets() { s.hub.Close() }
+
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
