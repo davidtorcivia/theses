@@ -1031,6 +1031,33 @@ func TestUndoRefusesWhenTheOrderingKeyHasBeenTaken(t *testing.T) {
 	}
 }
 
+// Undoing a move back into a column deleted since breaks the foreign key, and
+// that is a refusal rather than a failure.
+func TestUndoIntoADeletedColumnIsNotUndoable(t *testing.T) {
+	ctx := context.Background()
+	f := setup(t)
+	editor := f.who["editor"]
+	col, err := f.CreateColumn(ctx, editor, f.prop, "Temporary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := f.mustCard(t, col.EntityID, "Call the engineer")
+	move, err := f.MoveCard(ctx, editor, card.ID, f.cols[0].ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.DeleteColumn(ctx, f.who["owner"], col.EntityID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Undo(ctx, editor, move.Seq); !errors.Is(err, core.ErrNotUndoable) {
+		t.Fatalf("undo into a deleted column gave %v", err)
+	}
+	var undone sql.NullInt64
+	if err := f.db.QueryRowContext(ctx, `SELECT undone_at FROM activity WHERE id = ?`, move.Seq).Scan(&undone); err != nil || undone.Valid {
+		t.Fatalf("the refused undo left undone_at %v (%v)", undone, err)
+	}
+}
+
 // The rail groups by status, so a proposition cannot be moved to a word the
 // workspace does not have: the rail would have nowhere to draw it.
 func TestSetStatusTakesOnlyTheWorkspacesStatuses(t *testing.T) {

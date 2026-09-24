@@ -19,6 +19,13 @@ var ErrRestoreBusy = errors.New("backup or storage cleanup is running; retry res
 
 var ErrRestoreConflict = errors.New("this item cannot be restored because a name, position, or related item changed; restore missing related items first")
 
+// constraint reports a SQLite constraint failure, whose primary code is 19
+// under every extended code.
+func constraint(err error) bool {
+	var sqlite interface{ Code() int }
+	return errors.As(err, &sqlite) && sqlite.Code()&255 == 19
+}
+
 type trashTable struct{ table, where string }
 
 var trashTables = map[string][]trashTable{
@@ -330,8 +337,7 @@ func (s *Service) RestoreDeleted(ctx context.Context, a Actor, id int64) (Event,
 					}
 				}
 				if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" ("+strings.Join(quoted, ",")+") VALUES ("+strings.Join(marks, ",")+")", row...); err != nil {
-					var sqlite interface{ Code() int }
-					if errors.As(err, &sqlite) && sqlite.Code()&255 == 19 {
+					if constraint(err) {
 						return Change{}, ErrRestoreConflict
 					}
 					return Change{}, err

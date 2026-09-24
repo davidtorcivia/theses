@@ -224,6 +224,11 @@ func (s *Service) Undo(ctx context.Context, a Actor, activityID int64) (Event, e
 		args = append(args, id)
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE `+spec.table+` SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); err != nil {
+			// What the before names may be gone or taken since: the column a
+			// card came from, the name another document now has.
+			if constraint(err) {
+				return Change{}, ErrNotUndoable
+			}
 			return Change{}, err
 		}
 
