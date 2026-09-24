@@ -35,7 +35,9 @@ Open **Research & references** on a proposition. Evidence can record a source
 title, author, year, URL, exact quotation, page/section/timestamp, interpretation
 and supported claim. Link evidence to a source URL, file or script block. Mark
 it verified after checking the source; editing its fields clears that check
-until explicitly reconfirmed. **Copy reference** produces a link to the saved
+until explicitly reconfirmed. Through REST or MCP, saving changed content with
+`verified` true reconfirms it under your name, so send false unless you checked
+the source again. **Copy reference** produces a link to the saved
 evidence. Export Markdown for notes or RIS for a reference manager.
 
 ## Recording and reviews
@@ -49,7 +51,8 @@ or edit audio.
 Request a review of a document or ready recording and select an eligible
 reviewer. Approvals and change requests apply to the requested version. Later
 script edits or replacement audio make the old review superseded; request a
-new review for the new version. Review history retains the pinned script.
+new review for the new version. Review history retains the pinned script. If
+the selected reviewer's account is deleted, any editor can decide the review.
 
 Ready recordings support timestamped comments, comment resolution and
 transcripts with editable speaker labels. Import TXT, SRT or VTT; export TXT

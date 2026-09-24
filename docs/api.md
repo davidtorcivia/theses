@@ -50,9 +50,9 @@ from.
 | 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone |
 | 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes. MCP permits 4 MiB plus 64 KiB. REST transcript replacement permits the same larger envelope but reports decoding/size failures as 400. |
 | 422 | the body is JSON and the rules refuse it: a title that is empty or too long, a kind or a question that is not on the list, a size no upload may be |
-| 429 | over 300 requests a minute for one token |
+| 429 | over 300 requests a minute for one token, or the transcription queue is full |
 | 500 | a fault on the server; the detail is in its log, not in the response |
-| 503 | object storage has not been set up yet, so the route that needs it cannot answer |
+| 503 | object storage, local transcription or outgoing mail has not been set up yet, so the route that needs it cannot answer |
 
 Not there and not allowed are both `404`. The commands answer the role and the
 membership with one refusal, so telling the two apart would tell a caller
@@ -1362,13 +1362,13 @@ The session routes below use `/app`; bearer routes use the same paths under `/ap
 | `GET /snapshots/{id}` | Read an exact immutable script snapshot. |
 | `GET /reviews?proposition={id}` | Named reviewer, decision, note and whether the requested version is stale. |
 | `POST /reviews` | Request a review with `document_id` or `file_id`, and `reviewer_id`. |
-| `PATCH /reviews/{id}` | The named reviewer sends `version`, `state` (`approved` or `changes_requested`) and `note`. Changed targets return 409. |
-| `GET/PUT /evidence` | GET accepts `proposition`; PUT accepts `proposition_id`, optional existing `id`, `version`, title, author, year, URL, quotation, locator, interpretation, claim, verification, and optional link/file/block IDs. |
+| `PATCH /reviews/{id}` | The named reviewer sends `version`, `state` (`approved` or `changes_requested`) and `note`; once the reviewer's account is deleted, any editor may decide. Changed targets return 409. |
+| `GET/PUT /evidence` | GET accepts `proposition`; PUT accepts `proposition_id`, optional existing `id`, `version`, title, author, year, URL, quotation, locator, interpretation, claim, verification, and optional link/file/block IDs. `verified` true on a save that changes content records the caller as verifier; an unchanged save keeps the previous one. |
 | `DELETE /evidence/{id}?version={version}` | Delete a reference with delete permission and a matching version. |
 | `GET /evidence/export?proposition={id}&format=md` | Export research notes and bibliography. Use `format=ris` for reference managers. |
 | `GET/PUT /files/{id}/transcript` | Read a recording transcript or replace it using its current `version`. PUT accepts `text` and `format` (`txt`, `srt`, `vtt`), or edited `segments`. Imports are bounded to 4 MiB and 10,000 passages. |
 | `GET /files/{id}/transcript/export?format=vtt` | Export timed captions. `format=txt` also supports untimed transcripts. |
-| `GET/POST /files/{id}/transcription-jobs` | Read recent jobs or queue local transcription; optional `stereo` labels separate left/right speakers. |
+| `GET/POST /files/{id}/transcription-jobs` | Read recent jobs or queue local transcription; optional `stereo` labels separate left/right speakers. A recording already queued returns 409; a full queue of ten returns 429 with `Retry-After`. |
 | `PATCH /files/{id}/comments/{comment}` | Resolve or reopen a recording comment with `version` and boolean `resolved`. |
 
 Each transcript segment has `start_ms`, `end_ms`, `speaker` and `text`. Plain text imports have null timestamps. Editing a transcript while a transcription job runs causes the job's replacement to be refused, preserving the edited transcript. Script approvals include the document's monotonic revision and block contents; moving or editing and then reverting a block still invalidates the approval. Replacement recordings require a new review. Deleting a source document or recording retains pinned script and review history under the proposition; deleting the proposition removes that history.
