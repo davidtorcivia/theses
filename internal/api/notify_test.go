@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -254,5 +255,68 @@ func TestANotificationRefusalIsToldApartFromAFailure(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "notification_rules") {
 		t.Errorf("the answer carries the driver's detail: %s", w.Body)
+	}
+}
+
+// The workspace's webhooks over REST, in the order an owner's script would
+// make the calls: refused without admin, refused without an event, never
+// answering with the secret, keeping it when a change leaves it out, and not
+// reaching somebody's own channel by its id.
+func TestWorkspaceWebhookRoutes(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	admin := h.token(auth.ScopeAdmin)
+	mine, err := notify.SaveChannel(ctx, h.db, h.set, notify.Channel{UserID: h.user.ID, Kind: notify.KindNtfy,
+		Config: notify.Config{Topic: "alerts"}}, settings.System())
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "https://hooks.example.com/services/T0?token=abc"
+	var id string
+	steps := []struct {
+		name, method, path, token, body string
+		want                            int
+		then                            func(t *testing.T, body string)
+	}{
+		{"a write token", "GET", "/api/v1/webhooks", h.token(auth.ScopeRead, auth.ScopeWrite), "", http.StatusForbidden, nil},
+		{"no event", "POST", "/api/v1/webhooks", admin, `{"url":"` + url + `"}`, http.StatusUnprocessableEntity, nil},
+		{"an event nobody fires", "POST", "/api/v1/webhooks", admin, `{"url":"` + url + `","events":["lunch"]}`, http.StatusUnprocessableEntity, nil},
+		{"add one", "POST", "/api/v1/webhooks", admin, `{"url":"` + url + `","secret":"shh_signing","events":["moved"]}`, http.StatusOK,
+			func(t *testing.T, body string) {
+				var out struct{ Webhook ChannelView }
+				if err := json.Unmarshal([]byte(body), &out); err != nil || out.Webhook.ID == 0 || !out.Webhook.SecretSet {
+					t.Fatalf("added %s: %v", body, err)
+				}
+				id = strconv.FormatInt(out.Webhook.ID, 10)
+			}},
+		{"change its column", "PATCH", "/api/v1/webhooks/{id}", admin, `{"column":"Publication"}`, http.StatusOK,
+			func(t *testing.T, body string) {
+				n, _ := strconv.ParseInt(id, 10, 64)
+				c, err := notify.GetChannel(ctx, h.db, h.set, n)
+				if err != nil || c.Config.Secret != "shh_signing" || c.Config.Column != "Publication" {
+					t.Errorf("stored %+v, %v", c.Config, err)
+				}
+			}},
+		{"list", "GET", "/api/v1/webhooks", admin, "", http.StatusOK, func(t *testing.T, body string) {
+			if !strings.Contains(body, `"column":"Publication"`) {
+				t.Errorf("list = %s", body)
+			}
+		}},
+		{"somebody's own channel", "PATCH", "/api/v1/webhooks/" + strconv.FormatInt(mine.ID, 10), admin, `{"column":"x"}`, http.StatusNotFound, nil},
+		{"delete somebody's own", "DELETE", "/api/v1/webhooks/" + strconv.FormatInt(mine.ID, 10), admin, "", http.StatusNotFound, nil},
+		{"delete it", "DELETE", "/api/v1/webhooks/{id}", admin, "", http.StatusOK, nil},
+		{"delete it again", "DELETE", "/api/v1/webhooks/{id}", admin, "", http.StatusNotFound, nil},
+	}
+	for _, step := range steps {
+		w := h.do(step.method, strings.Replace(step.path, "{id}", id, 1), step.token, step.body)
+		if w.Code != step.want {
+			t.Fatalf("%s: %d, want %d: %s", step.name, w.Code, step.want, w.Body)
+		}
+		if strings.Contains(w.Body.String(), "shh_signing") {
+			t.Errorf("%s answered with the secret: %s", step.name, w.Body)
+		}
+		if step.then != nil {
+			step.then(t, w.Body.String())
+		}
 	}
 }
