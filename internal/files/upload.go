@@ -495,8 +495,9 @@ func (s *Service) Complete(ctx context.Context, a core.Actor, id int64, duration
 		// The object is the wrong size and the multipart upload, if there was
 		// one, has already been assembled into it: there is nothing left to go
 		// on uploading to. Both are cleared so that the same file can be added
-		// again, rather than leaving a row stuck at uploading forever.
-		s.abandon(ctx, source)
+		// again, rather than leaving a row stuck at uploading forever. A live
+		// context, because the browser that asked may already have gone.
+		s.abandon(context.WithoutCancel(ctx), source)
 		return core.Event{}, ErrSize
 	}
 	// Duration and dimensions are what the browser measured, so they are a
@@ -663,7 +664,9 @@ func (s *Service) Delete(ctx context.Context, a core.Actor, id int64) (core.Even
 		return core.Event{}, err
 	}
 	if !retained {
-		s.forget(ctx, was, multipart)
+		// The row is gone, so a request cancelled now must not leave its
+		// object behind with nothing left to find it by.
+		s.forget(context.WithoutCancel(ctx), was, multipart)
 	}
 	return event, nil
 }
