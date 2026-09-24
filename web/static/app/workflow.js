@@ -149,6 +149,9 @@ async function editEvidence(p,e,refresh){
 }
 
 export async function openEvidence(id){
- const section=researchSection(proposition(state.open));section.open=true;await section.load();
+ const section=researchSection(proposition(state.open));
+ // Opening queues a toggle that starts its own draw and would supersede ours, leaving the list unloaded when we look.
+ if(!section.open){section.open=true;await new Promise(done=>section.addEventListener('toggle',done,{once:true}));}
+ await section.load();
  const node=document.getElementById('evidence-'+id);if(node){node.tabIndex=-1;node.scrollIntoView({block:'center'});node.focus({preventScroll:true});}else say('This reference is unavailable.');
 }

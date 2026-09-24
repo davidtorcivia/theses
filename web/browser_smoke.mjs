@@ -203,6 +203,8 @@ try {
     if(process.env.THESES_SCREENSHOT_DIR)await page.locator('.research').screenshot({animations:'disabled',style:'#top{visibility:hidden}',path:process.env.THESES_SCREENSHOT_DIR+'/research-'+width+'.png'});
   }
   const evidenceId=await page.locator('.evidence-item').first().getAttribute('id');
+  // A copied reference opens in a fresh page, where the research section starts closed.
+  await visit('/show');
   await visit('/p/'+fixture.proposition+'#'+evidenceId);
   await page.waitForFunction(id=>document.activeElement?.id===id,evidenceId);
   const ris=await context.request.get(fixture.url+'/app/evidence/export?proposition='+fixture.proposition+'&format=ris');
