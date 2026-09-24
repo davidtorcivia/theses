@@ -110,7 +110,13 @@ func TestEditToolsAreListedAndScoped(t *testing.T) {
 				t.Errorf("description is not one sentence: %q", tool.Description)
 			}
 			if tool.Annotations == nil || tool.Annotations.Title == "" || tool.OutputSchema == nil {
-				t.Errorf("no annotations or no output schema")
+				t.Fatalf("no annotations or no output schema")
+			}
+			// A client asks before it runs a tool that changes something, so
+			// only the ones that look may say they only look.
+			looks := strings.HasPrefix(tt.tool, "list_") || tt.tool == "upload_parts"
+			if a := tool.Annotations; a.ReadOnlyHint != looks || (!looks && a.DestructiveHint == nil) {
+				t.Errorf("hints = %+v", a)
 			}
 			// Admin carries every scope, so it is refused only what needs more.
 			for _, scope := range []string{auth.ScopeRead, auth.ScopeWrite, auth.ScopeFiles} {
