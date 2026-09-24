@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/mail"
+	"github.com/davidtorcivia/theses/internal/safehttp"
 )
 
 var note = Note{
@@ -22,6 +23,15 @@ var note = Note{
 	Body:     "Ada assigned you a card in Episode 12.",
 	URL:      "https://theses.example/c/7",
 	Priority: 1,
+}
+
+// loopback lets destination reach an httptest server for one test, which the
+// production client refuses as a private address.
+func loopback(t *testing.T) {
+	t.Helper()
+	was := destination
+	destination = guardedClient(safehttp.AllowLoopback())
+	t.Cleanup(func() { destination = was })
 }
 
 // record serves one request and keeps it.
@@ -34,6 +44,7 @@ type record struct {
 
 func serve(t *testing.T, status int, reply string) (*httptest.Server, *record) {
 	t.Helper()
+	loopback(t)
 	got := &record{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -81,7 +92,7 @@ func TestPushover(t *testing.T) {
 
 func TestNtfy(t *testing.T) {
 	srv, got := serve(t, 200, "{}")
-	if err := (Ntfy{Server: srv.URL + "/", Topic: "theses", Token: "tok", allowPrivate: true}).Send(context.Background(), note); err != nil {
+	if err := (Ntfy{Server: srv.URL + "/", Topic: "theses", Token: "tok"}).Send(context.Background(), note); err != nil {
 		t.Fatal(err)
 	}
 	if got.method != http.MethodPost || got.path != "/theses" {
@@ -105,7 +116,7 @@ func TestNtfy(t *testing.T) {
 func TestNtfyPriorities(t *testing.T) {
 	for p, want := range map[int]string{-1: "2", 0: "3", 1: "4"} {
 		srv, got := serve(t, 200, "{}")
-		if err := (Ntfy{Server: srv.URL, Topic: "t", allowPrivate: true}).Send(context.Background(), Note{Priority: p}); err != nil {
+		if err := (Ntfy{Server: srv.URL, Topic: "t"}).Send(context.Background(), Note{Priority: p}); err != nil {
 			t.Fatal(err)
 		}
 		if gotp := got.header.Get("Priority"); gotp != want {
@@ -119,7 +130,7 @@ func TestNtfyPriorities(t *testing.T) {
 
 func TestWebhook(t *testing.T) {
 	srv, got := serve(t, 202, "")
-	w := Webhook{URL: srv.URL + "/hook", Secret: "s3cret", allowPrivate: true}
+	w := Webhook{URL: srv.URL + "/hook", Secret: "s3cret"}
 	if err := w.Send(context.Background(), note); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +166,7 @@ func TestWebhook(t *testing.T) {
 
 func TestWebhookWithoutSecretIsUnsigned(t *testing.T) {
 	srv, got := serve(t, 200, "")
-	if err := (Webhook{URL: srv.URL, allowPrivate: true}).Send(context.Background(), note); err != nil {
+	if err := (Webhook{URL: srv.URL}).Send(context.Background(), note); err != nil {
 		t.Fatal(err)
 	}
 	if s := got.header.Get("X-Theses-Signature"); s != "" {
@@ -164,11 +175,12 @@ func TestWebhookWithoutSecretIsUnsigned(t *testing.T) {
 }
 
 func TestRedirectIsNotFollowed(t *testing.T) {
+	loopback(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
 	}))
 	t.Cleanup(srv.Close)
-	err := (Webhook{URL: srv.URL, allowPrivate: true}).Send(context.Background(), note)
+	err := (Webhook{URL: srv.URL}).Send(context.Background(), note)
 	if err == nil || !strings.Contains(err.Error(), "302") {
 		t.Errorf("error = %v, want a 302", err)
 	}
@@ -216,8 +228,8 @@ func TestNon2xxIsAnError(t *testing.T) {
 		Send(context.Context, Note) error
 	}{
 		"pushover": Pushover{},
-		"ntfy":     Ntfy{Server: srv.URL, Topic: "t", allowPrivate: true},
-		"webhook":  Webhook{URL: srv.URL, allowPrivate: true},
+		"ntfy":     Ntfy{Server: srv.URL, Topic: "t"},
+		"webhook":  Webhook{URL: srv.URL},
 	} {
 		err := s.Send(context.Background(), note)
 		if err == nil {

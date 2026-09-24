@@ -35,20 +35,11 @@ var client = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
-var (
-	publicDestinationClient   = guardedClient()
-	loopbackDestinationClient = guardedClient(safehttp.AllowLoopback())
-)
-
-// destinationClient protects every account-supplied URL with the same address
+// destination protects every account-supplied URL with the same address
 // checks used by the other outbound fetchers. Redirects stay visible to the
 // sender instead of carrying an ntfy token or webhook body to another host.
-func destinationClient(allowLoopback bool) *http.Client {
-	if allowLoopback {
-		return loopbackDestinationClient
-	}
-	return publicDestinationClient
-}
+// The tests swap it for one that reaches an httptest server on loopback.
+var destination = guardedClient()
 
 func guardedClient(opts ...safehttp.Option) *http.Client {
 	c := safehttp.Client(opts...)

@@ -19,9 +19,6 @@ type Ntfy struct {
 	Server string
 	Topic  string
 	Token  string
-
-	// allowPrivate lets the tests point at an httptest server on loopback.
-	allowPrivate bool
 }
 
 func (t Ntfy) Send(ctx context.Context, n Note) error {
@@ -48,7 +45,7 @@ func (t Ntfy) Send(ctx context.Context, n Note) error {
 	if t.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+t.Token)
 	}
-	resp, err := destinationClient(t.allowPrivate).Do(req)
+	resp, err := destination.Do(req)
 	if err != nil {
 		return fmt.Errorf("ntfy: %w", err)
 	}

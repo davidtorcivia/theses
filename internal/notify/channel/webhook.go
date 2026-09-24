@@ -17,9 +17,6 @@ import (
 type Webhook struct {
 	URL    string
 	Secret string
-
-	// allowPrivate lets the tests point at an httptest server on loopback.
-	allowPrivate bool
 }
 
 func (w Webhook) Send(ctx context.Context, n Note) error {
@@ -50,7 +47,7 @@ func (w Webhook) Send(ctx context.Context, n Note) error {
 		mac.Write(body)
 		req.Header.Set("X-Theses-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
-	resp, err := destinationClient(w.allowPrivate).Do(req)
+	resp, err := destination.Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook: %w", err)
 	}
