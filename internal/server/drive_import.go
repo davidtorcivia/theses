@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -170,16 +172,11 @@ func (s *Server) postDriveImport(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("could not extend the write deadline for an import", "err", err)
 	}
 
-	body, err := drive.Open(r.Context(), found.ID)
-	if err != nil {
-		s.refuseJSON(w, r, err)
-		return
-	}
-	defer body.Close()
-
 	me := userOf(r)
 	row, err := s.files.Import(r.Context(), core.Actor{Kind: core.KindUser, ID: me.ID, Name: me.Name},
-		in.Proposition, name, in.Folder, found.Size, body)
+		in.Proposition, name, in.Folder, found.Size, func(ctx context.Context) (io.ReadCloser, error) {
+			return drive.Open(ctx, found.ID)
+		})
 	if err != nil {
 		s.refuseJSON(w, r, err)
 		return

@@ -38,8 +38,12 @@ var ErrImportSize = fmt.Errorf("a file imported this way has to be between 1 byt
 //
 // name, folder and size are the caller's to validate as far as they can; the
 // checks the browser path runs are run here too, on the same function.
+//
+// The source is opened only once this import holds the lock, because one
+// queued behind another may wait hours, and a stream opened before that has
+// timed out at the far end by the time it is read.
 func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
-	name, folder string, size int64, body io.Reader) (File, error) {
+	name, folder string, size int64, open func(context.Context) (io.ReadCloser, error)) (File, error) {
 	s.importMu.Lock()
 	defer s.importMu.Unlock()
 	if size <= 0 || size > maxImport {
@@ -55,6 +59,12 @@ func (s *Service) Import(ctx context.Context, a core.Actor, proposition int64,
 	if row.Size > maxImport {
 		return File{}, ErrImportSize
 	}
+	body, err := open(ctx)
+	if err != nil {
+		s.abandon(context.WithoutCancel(ctx), row)
+		return File{}, err
+	}
+	defer body.Close()
 	// Exactly the declared length is sent, whatever the other end goes on
 	// offering. A short body fails on the way out, and a long one is cut here
 	// rather than becoming an object that is not the size the row says.

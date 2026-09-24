@@ -155,7 +155,9 @@ func publishable(t *testing.T) (*harness, *transistorFake, int64) {
 	}
 	const audio = "twelve bytes"
 	if _, err := h.srv.files.Import(ctx, actor, id, "Episode.mp3", files.Recordings,
-		int64(len(audio)), io.LimitReader(bytes.NewReader([]byte(audio)), int64(len(audio)))); err != nil {
+		int64(len(audio)), func(context.Context) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader([]byte(audio))), nil
+		}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.srv.board.SetStatus(ctx, actor, id, "released"); err != nil {

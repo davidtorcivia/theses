@@ -18,12 +18,17 @@ func stream(body string) io.Reader {
 	return io.LimitReader(bytes.NewReader([]byte(body)), int64(len(body)))
 }
 
+// opens is the source Import asks for once it holds its lock.
+func opens(r io.Reader) func(context.Context) (io.ReadCloser, error) {
+	return func(context.Context) (io.ReadCloser, error) { return io.NopCloser(r), nil }
+}
+
 func TestImportWritesTheObjectAndMarksTheFileReady(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 	const body = "twelve bytes"
 
-	row, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, int64(len(body)), stream(body))
+	row, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, int64(len(body)), opens(stream(body)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +76,7 @@ func TestImportRefusesWhatTheUploadPathWouldRefuse(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := f.Import(ctx, c.actor, c.prop, c.file, c.folder, c.size, stream("abc"))
+			_, err := f.Import(ctx, c.actor, c.prop, c.file, c.folder, c.size, opens(stream("abc")))
 			if err == nil {
 				t.Fatal("the import was allowed")
 			}
@@ -111,7 +116,7 @@ func TestImportLeavesNothingBehindWhenTheSourceStopsEarly(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 
-	_, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 64, stream("only ten."))
+	_, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 64, opens(stream("only ten.")))
 	if err == nil {
 		t.Fatal("a body that stopped early was accepted")
 	}
@@ -133,7 +138,7 @@ func TestImportLeavesNothingBehindWhenTheRequestIsCancelled(t *testing.T) {
 	defer cancel()
 
 	_, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 64,
-		readerThatCancels(cancel, 64))
+		opens(readerThatCancels(cancel, 64)))
 	if err == nil {
 		t.Fatal("a canceled copy was accepted")
 	}
@@ -176,18 +181,18 @@ func TestOverlappingImportRetriesDoNotCopyTwice(t *testing.T) {
 		err  error
 	}
 	results := make(chan result, 2)
-	run := func(body io.Reader) {
+	run := func(open func(context.Context) (io.ReadCloser, error)) {
 		keyed, err := core.WithKey(ctx, "overlapping-import")
 		if err == nil {
 			var file File
-			file, err = f.Import(keyed, f.who["editor"], f.prop, "notes.txt", "Documents", 3, body)
+			file, err = f.Import(keyed, f.who["editor"], f.prop, "notes.txt", "Documents", 3, open)
 			results <- result{file, err}
 		} else {
 			results <- result{err: err}
 		}
 	}
 	first := true
-	go run(readerFunc(func(p []byte) (int, error) {
+	go run(opens(readerFunc(func(p []byte) (int, error) {
 		if !first {
 			return 0, io.EOF
 		}
@@ -199,22 +204,24 @@ func TestOverlappingImportRetriesDoNotCopyTwice(t *testing.T) {
 		case <-ctx.Done():
 			return 0, ctx.Err()
 		}
-	}))
+	})))
 	select {
 	case <-entered:
 	case <-ctx.Done():
 		t.Fatal("first import did not start")
 	}
-	go run(readerFunc(func(p []byte) (int, error) {
+	// Opening the source counts as reading it: a retry queued behind the lock
+	// should not hold a stream open while it waits.
+	go run(func(context.Context) (io.ReadCloser, error) {
 		select {
 		case secondRead <- struct{}{}:
 		default:
 		}
-		return copy(p, "xyz"), nil
-	}))
+		return io.NopCloser(strings.NewReader("xyz")), nil
+	})
 	select {
 	case <-secondRead:
-		t.Error("overlapping retry started a second copy")
+		t.Error("overlapping retry opened its source while the first held the lock")
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
@@ -246,10 +253,10 @@ func TestAbandonedImportCanRetryItsKey(t *testing.T) {
 		}
 		return ctx
 	}
-	if _, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("x")); err == nil {
+	if _, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, opens(stream("x"))); err == nil {
 		t.Fatal("short import accepted")
 	}
-	row, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("abc"))
+	row, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, opens(stream("abc")))
 	if err != nil || !row.Ready() {
 		t.Fatalf("retry: %+v %v", row, err)
 	}
@@ -264,11 +271,11 @@ func TestImportReplayKeepsCompletedBytes(t *testing.T) {
 		}
 		return ctx
 	}
-	first, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("abc"))
+	first, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, opens(stream("abc")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, stream("xyz"))
+	again, err := f.Import(keyed(), f.who["editor"], f.prop, "notes.txt", "Documents", 3, opens(stream("xyz")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +299,7 @@ func TestImportWritesNoMoreThanTheDeclaredSize(t *testing.T) {
 	f := setup(t)
 	ctx := context.Background()
 
-	row, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 5, stream("far more than five"))
+	row, err := f.Import(ctx, f.who["editor"], f.prop, "Interview.wav", Recordings, 5, opens(stream("far more than five")))
 	if err != nil {
 		t.Fatal(err)
 	}
