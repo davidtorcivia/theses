@@ -1846,3 +1846,47 @@ func TestMirrorFailureCounterExcludesMissingDocuments(t *testing.T) {
 		t.Fatal("filesystem failure not counted")
 	}
 }
+
+// A file this version wrote, untouched while the process was down, is not
+// imported at the next start: reading a block that holds a blank line back
+// through the parser would split it in two and publish the second half as a
+// new block.
+func TestRunLeavesAnUnchangedFileAlone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f, path := mirrorFixture(t)
+	f.Debounce = 40 * time.Millisecond
+	f.Every = 0
+
+	// The editor keeps a typed blank line inside one block; the commands
+	// would split it, so the row is written the way that leaves it.
+	blocks := f.blocks(t)
+	if _, err := f.db.ExecContext(ctx, `UPDATE blocks SET text = ? WHERE id = ?`, "first\n\nsecond", blocks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Mirror(ctx, f.doc, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	was := f.blocks(t)
+	f.mu.Lock()
+	f.written = map[string]mirrored{}
+	f.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { defer close(done); f.Run(ctx) }()
+	waitFor(t, "the start to record the file as its own", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return f.written[path].hash != ""
+	})
+	time.Sleep(200 * time.Millisecond)
+	now := f.blocks(t)
+	if len(now) != len(was) || now[0].Text != "first\n\nsecond" || now[0].Version != was[0].Version {
+		t.Fatalf("the start rewrote the document: %+v", now)
+	}
+	if n := len(revisionsOf(t, f)); n != 0 {
+		t.Fatalf("the unchanged file was imported: %d revisions", n)
+	}
+	cancel()
+	<-done
+}
