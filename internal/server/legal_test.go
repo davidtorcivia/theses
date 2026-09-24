@@ -335,6 +335,26 @@ func TestLegalManualEmailForm(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("duplicate messages %d", n)
 	}
+	api := fmt.Sprintf("/app/legal/releases/%d/", release.ID)
+	csrf := h.csrf(fmt.Sprintf("/releases/%d", release.ID))
+	request := `{"version":1,"url":"https://example.com/ep","subject":"New","body":"{url}"}`
+	res, body = h.send("POST", api+"preview", csrf, request)
+	var preview struct {
+		PreviewHash string `json:"preview_hash"`
+	}
+	if err = json.Unmarshal([]byte(body), &preview); res.StatusCode != 200 || err != nil || preview.PreviewHash == "" {
+		t.Fatalf("api preview %d: %s", res.StatusCode, body)
+	}
+	if _, err = h.srv.api.Legal.Sign(ctx, release.Token, legal.Token(), 1, []legal.Person{{Name: "Grace", Date: time.Now().Format("2006-01-02"), Consent: true, Email: "grace@example.com", Notify: true}}, release.Agreement().Digest()); err != nil {
+		t.Fatal(err)
+	}
+	withHash := strings.Replace(request, "{", `{"preview_hash":"`+preview.PreviewHash+`",`, 1)
+	if res, body = h.send("POST", api+"notify", csrf, withHash); res.StatusCode != http.StatusConflict || !strings.Contains(body, "preview again") {
+		t.Fatalf("api notify after recipients changed %d: %s", res.StatusCode, body)
+	}
+	if n = legalCount(t, h, "SELECT count(*) FROM mail_outbox WHERE to_addr='grace@example.com'"); n != 0 {
+		t.Fatal("stale preview queued mail")
+	}
 }
 
 func TestLegalSignRateLimitKeepsForm(t *testing.T) {
@@ -353,14 +373,15 @@ func TestLegalSignRateLimitKeepsForm(t *testing.T) {
 	anon := &harness{T: t, srv: h.srv, db: h.db, http: h.http, client: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	path := "/legal/" + release.Token
 	_, body := anon.get(path)
-	form := url.Values{"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "version": {"1"}, "agreement_digest": {release.Agreement().Digest()}, "receipt": {legal.Token()}, "person": {"0"}, "person_0_name": {"Ada Lovelace"}, "person_0_date": {time.Now().Format("2006-01-02")}}
+	receipt := legal.Token()
+	form := url.Values{"csrf": {csrfRe.FindStringSubmatch(body)[1]}, "version": {"1"}, "agreement_digest": {release.Agreement().Digest()}, "receipt": {receipt}, "person": {"0"}, "person_0_name": {"Ada Lovelace"}, "person_0_date": {time.Now().Format("2006-01-02")}}
 	var res *http.Response
 	for range 40 {
 		if res, body = anon.post(path, form); res.StatusCode == http.StatusTooManyRequests {
 			break
 		}
 	}
-	if res.StatusCode != http.StatusTooManyRequests || res.Header.Get("Retry-After") == "" || !strings.Contains(body, "Too many submissions") || !strings.Contains(body, `value="Ada Lovelace"`) {
+	if res.StatusCode != http.StatusTooManyRequests || res.Header.Get("Retry-After") == "" || !strings.Contains(body, "Too many submissions") || !strings.Contains(body, `value="Ada Lovelace"`) || !strings.Contains(body, `name="receipt" value="`+receipt+`"`) {
 		t.Fatalf("rate limit %d: %s", res.StatusCode, body)
 	}
 }

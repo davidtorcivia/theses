@@ -26,11 +26,21 @@ func (a *API) legalAnswer(w http.ResponseWriter, r *http.Request, value any, err
 	a.workflowAnswer(w, r, value, err)
 }
 
+func previewed(hash string) []string {
+	if hash == "" {
+		return nil
+	}
+	return []string{hash}
+}
+
 type LegalNotification struct {
 	Version int64  `json:"version"`
 	URL     string `json:"url"`
 	Subject string `json:"subject"`
 	Body    string `json:"body"`
+	// PreviewHash is the preview_hash a preview returned. Notify refuses when
+	// the recipients or messages no longer match it; empty skips the check.
+	PreviewHash string `json:"preview_hash,omitempty"`
 }
 
 func (a *API) legalRoutes(m *http.ServeMux, p string, wrap wrapper) {
@@ -60,14 +70,14 @@ func (a *API) legalRoutes(m *http.ServeMux, p string, wrap wrapper) {
 			return
 		}
 		out, err := a.Legal.Preview(r.Context(), actor, path(r, "id"), in.URL, in.Subject, in.Body)
-		a.legalAnswer(w, r, map[string]any{"messages": out}, err)
+		a.legalAnswer(w, r, map[string]any{"messages": out, "preview_hash": legal.MessageDigest(out)}, err)
 	}))
 	m.HandleFunc("POST "+p+"/legal/releases/{id}/notify", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		var in LegalNotification
 		if !(&fileAPI{API: a}).read(w, r, &in) {
 			return
 		}
-		out, err := a.Legal.Notify(r.Context(), actor, path(r, "id"), in.Version, in.URL, in.Subject, in.Body)
+		out, err := a.Legal.Notify(r.Context(), actor, path(r, "id"), in.Version, in.URL, in.Subject, in.Body, previewed(in.PreviewHash)...)
 		a.legalAnswer(w, r, map[string]any{"event": out}, err)
 	}))
 }

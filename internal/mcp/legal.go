@@ -14,11 +14,16 @@ type releaseSave struct {
 }
 type releaseNotify struct {
 	workflowKey
-	ID      int64  `json:"id"`
-	Version int64  `json:"version"`
-	URL     string `json:"url"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	ID          int64  `json:"id"`
+	Version     int64  `json:"version"`
+	URL         string `json:"url"`
+	Subject     string `json:"subject"`
+	Body        string `json:"body"`
+	PreviewHash string `json:"preview_hash,omitempty" jsonschema:"preview_hash from preview_release_email; notify refuses if recipients or messages changed since"`
+}
+type releasePreview struct {
+	Messages    []legal.Message `json:"messages"`
+	PreviewHash string          `json:"preview_hash"`
 }
 
 func Legal(s *Server) {
@@ -35,10 +40,15 @@ func Legal(s *Server) {
 	workflowTool(s, "list_release_submissions", "Read or export signed agreements with participant names and optional email addresses. Requires an editor role.", auth.ScopeRead, reads("Read signed releases"), func(ctx context.Context, a core.Actor, in workflowID) ([]legal.Submission, error) {
 		return l.Submissions(ctx, a, in.ID)
 	})
-	workflowTool(s, "preview_release_email", "Preview messages for opted-in participants who have not already been notified. Does not send email.", auth.ScopeWrite, reads("Preview participant email"), func(ctx context.Context, a core.Actor, in releaseNotify) ([]legal.Message, error) {
-		return l.Preview(ctx, a, in.ID, in.URL, in.Subject, in.Body)
+	workflowTool(s, "preview_release_email", "Preview messages for opted-in participants who have not already been notified, with a preview_hash to pass to notify. Does not send email.", auth.ScopeWrite, reads("Preview participant email"), func(ctx context.Context, a core.Actor, in releaseNotify) (releasePreview, error) {
+		messages, err := l.Preview(ctx, a, in.ID, in.URL, in.Subject, in.Body)
+		return releasePreview{messages, legal.MessageDigest(messages)}, err
 	})
 	workflowTool(s, "notify_release_participants", "Explicitly queue an episode notification for opted-in participants. Sends email; get user authorization before calling. Each email address is notified once per release.", auth.ScopeWrite, changes("Notify participants"), func(ctx context.Context, a core.Actor, in releaseNotify) (core.Event, error) {
-		return l.Notify(ctx, a, in.ID, in.Version, in.URL, in.Subject, in.Body)
+		var expected []string
+		if in.PreviewHash != "" {
+			expected = []string{in.PreviewHash}
+		}
+		return l.Notify(ctx, a, in.ID, in.Version, in.URL, in.Subject, in.Body, expected...)
 	})
 }
