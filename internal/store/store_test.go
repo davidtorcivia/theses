@@ -595,3 +595,33 @@ func TestStableLinkMigrationPreservesExistingRowsAndRelations(t *testing.T) {
 		t.Fatalf("revision trigger: %d %v", revision, err)
 	}
 }
+
+func TestChecklistKeyMigrationRespellsA0(t *testing.T) {
+	ctx := context.Background()
+	db := OpenTemp(t)
+	for _, q := range []string{
+		`INSERT INTO propositions(id,number,title,status,position,created_at) VALUES(1,1,'P','idea','V',0)`,
+		`INSERT INTO columns(id,proposition_id,name,position) VALUES(1,1,'C','V')`,
+		`INSERT INTO cards(id,proposition_id,column_id,position,title,created_at) VALUES(1,1,1,'V','T',0)`,
+		`INSERT INTO checklist_items(id,card_id,text,position) VALUES(1,1,'x','a0'),(2,1,'y','a1')`,
+		`INSERT INTO activity(proposition_id,actor_kind,entity,entity_id,action,before_json,after_json,created_at)
+			VALUES(1,'user','checklist_item','1','move','{"position":"a2"}','{"position":"a0"}',0)`,
+		`DELETE FROM schema_migrations WHERE name='021_checklist_keys.sql'`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var first, second, before, after string
+	if err := db.QueryRowContext(ctx, `SELECT (SELECT position FROM checklist_items WHERE id=1),
+		(SELECT position FROM checklist_items WHERE id=2), json_extract(before_json,'$.position'),
+		json_extract(after_json,'$.position') FROM activity`).Scan(&first, &second, &before, &after); err != nil {
+		t.Fatal(err)
+	}
+	if first != "a" || second != "a1" || before != "a2" || after != "a" {
+		t.Fatalf("positions %q %q, activity %q to %q", first, second, before, after)
+	}
+}

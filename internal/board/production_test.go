@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+
+	"github.com/davidtorcivia/theses/internal/frac"
 )
 
 func TestProductionTemplateIsAtomicAndReusable(t *testing.T) {
@@ -107,5 +109,33 @@ func TestProductionPlanValidationAndConflict(t *testing.T) {
 	in.Version = 2
 	if _, err = f.SaveProductionPlan(ctx, f.who["owner"], f.prop, in); err == nil {
 		t.Fatal("edited archived plan")
+	}
+}
+
+// The template once spelled its keys a0 to a3, and frac panics placing after a
+// key ending in zero, so an item added under a lone a0 took the command down.
+func TestProductionChecklistTakesAnotherItem(t *testing.T) {
+	f := setup(t)
+	ctx := context.Background()
+	e, err := f.ProductionTemplate(ctx, f.who["editor"], f.prop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := GetCard(ctx, f.db, e.EntityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range card.Checklist {
+		if !frac.Valid(item.Position) {
+			t.Errorf("template key %q is not one frac accepts", item.Position)
+		}
+	}
+	for _, item := range card.Checklist[1:] {
+		if _, err := f.RemoveChecklistItem(ctx, f.who["editor"], item.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.AddChecklistItem(ctx, f.who["editor"], card.ID, "Share: episode posted"); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/frac"
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
@@ -58,8 +58,10 @@ func (s *Service) ProductionTemplate(ctx context.Context, a core.Actor, proposit
 		if err := assignCard(ctx, tx, id, proposition, a.ID); err != nil {
 			return core.Change{}, err
 		}
-		for i, label := range []string{"Review: sources checked and script approved", "Record: audio captured and backed up", "Edit: mix reviewed and final audio approved", "Publish: title, description, credits, and release time checked"} {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(card_id,text,position) VALUES(?,?,?)`, id, label, fmt.Sprintf("a%d", i)); err != nil {
+		position = ""
+		for _, label := range []string{"Review: sources checked and script approved", "Record: audio captured and backed up", "Edit: mix reviewed and final audio approved", "Publish: title, description, credits, and release time checked"} {
+			position = frac.Between(position, "")
+			if _, err := tx.ExecContext(ctx, `INSERT INTO checklist_items(card_id,text,position) VALUES(?,?,?)`, id, label, position); err != nil {
 				return core.Change{}, err
 			}
 		}

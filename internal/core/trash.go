@@ -323,6 +323,10 @@ func (s *Service) RestoreDeleted(ctx context.Context, a Actor, id int64) (Event,
 						if col == "id" {
 							row[j] = nil
 						}
+						// Migration 021 respelled the template's a0; a card deleted before it still holds one.
+						if col == "position" && row[j] == "a0" {
+							row[j] = "a"
+						}
 					}
 				}
 				if _, err := tx.ExecContext(ctx, "INSERT INTO "+table+" ("+strings.Join(quoted, ",")+") VALUES ("+strings.Join(marks, ",")+")", row...); err != nil {
