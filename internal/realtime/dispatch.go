@@ -160,6 +160,11 @@ func (h *Hub) Commands(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) execute(ctx context.Context, user *store.User, cmd command) message {
+	// Worded so the outbox's drain takes it as worth trying again, which is
+	// what the 503 from the write gate says to an HTTP client.
+	if h.Frozen != nil && h.Frozen() {
+		return message{Type: "error", ID: cmd.ID, Error: "a backup is being restored; wait a moment and try again"}
+	}
 	if cmd.Key != "" {
 		keyed, err := core.WithKey(ctx, cmd.Key)
 		if err != nil {

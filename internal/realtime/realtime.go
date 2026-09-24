@@ -56,6 +56,9 @@ type Hub struct {
 	log   *slog.Logger
 	// Docs is the document service, set by the server after New.
 	Docs *docs.Service
+	// Frozen reports a restore replacing the database, set by the server after
+	// New. The write gate in front of HTTP does not see a socket's frames.
+	Frozen func() bool
 
 	// pingEvery is how often the heartbeat goes out, pongWait how long a socket
 	// may go without a frame, and writeWait how long its peer may stop reading.

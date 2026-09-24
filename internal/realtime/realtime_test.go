@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -381,6 +382,29 @@ func TestSocketAnswersAConflictAndARefusal(t *testing.T) {
 		!strings.Contains(refusal.Error, "four questions") {
 		t.Errorf("a question that is not one of the four got %+v", refusal)
 	}
+}
+
+// A restore refuses writes at the HTTP gate, which a socket's frames never
+// pass, so the hub asks for itself and answers in words the drain retries.
+func TestSocketRefusesCommandsWhileARestoreRuns(t *testing.T) {
+	r := newRig(t)
+	var frozen atomic.Bool
+	r.hub.Frozen = frozen.Load
+	ws := r.mustDial("ada")
+
+	frozen.Store(true)
+	send(t, ws, command{ID: 1, Cmd: "card.create", Args: args{Column: r.cols[0].ID, Title: "During"}})
+	if refusal := read(t, ws, "error"); refusal.ID != 1 || !strings.Contains(refusal.Error, "wait a moment") {
+		t.Fatalf("a command during a restore got %+v", refusal)
+	}
+	var n int
+	if err := r.db.QueryRowContext(context.Background(), `SELECT count(*) FROM cards WHERE title = 'During'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the refused command wrote %d cards, %v", n, err)
+	}
+
+	frozen.Store(false)
+	send(t, ws, command{ID: 2, Cmd: "card.create", Args: args{Column: r.cols[0].ID, Title: "After"}})
+	read(t, ws, "ack")
 }
 
 // A socket is only as open as the person behind it. Someone who is not a member

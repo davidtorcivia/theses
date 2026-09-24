@@ -165,7 +165,7 @@ func New(cfg *config.Config, db *store.DB, set *settings.Settings, log *slog.Log
 		}
 		return nil
 	}
-	s.api.Docs, s.hub.Docs = s.docs, s.docs
+	s.api.Docs, s.hub.Docs, s.hub.Frozen = s.docs, s.docs, s.backups.Frozen
 	// A new proposition arrives with the three documents every episode has, so
 	// that nobody meets an empty document area and has to guess what goes in it.
 	// The first takes the workspace template; the other two are their heading.
