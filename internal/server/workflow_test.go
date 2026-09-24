@@ -86,7 +86,7 @@ func TestLocalTranscriptionQueue(t *testing.T) {
 		t.Fatal(raw)
 	}
 	res, raw = h.send("POST", endpoint, csrf, `{}`)
-	if res.StatusCode != 409 {
+	if res.StatusCode != 409 || !strings.Contains(raw, "already queued") {
 		t.Fatalf("duplicate queue %d %s", res.StatusCode, raw)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

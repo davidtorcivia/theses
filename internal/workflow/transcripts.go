@@ -198,8 +198,13 @@ func (s *Service) saveTranscript(ctx context.Context, a core.Actor, in Transcrip
 				return core.Change{}, ErrChanged
 			}
 		}
-		// Transcript bodies are fetched on demand, not broadcast to every open board.
-		return core.Change{Entity: "transcript", EntityID: in.File, Action: "edit", After: map[string]any{"file_id": in.File, "version": in.Version}}, err
+		// Transcript bodies are fetched on demand, not broadcast to every open board,
+		// so the log records that a transcript was replaced rather than its text.
+		var before any
+		if version > 0 {
+			before = map[string]any{"file_id": in.File, "version": version}
+		}
+		return core.Change{Entity: "transcript", EntityID: in.File, Action: "edit", Before: before, After: map[string]any{"file_id": in.File, "version": in.Version}}, err
 	})
 }
 func ExportTranscript(t Transcript, format string) (string, error) {

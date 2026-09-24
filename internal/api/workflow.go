@@ -19,8 +19,13 @@ func (a *API) workflowAnswer(w http.ResponseWriter, r *http.Request, value any, 
 		a.fail(w, 422, err.Error())
 		return
 	}
-	if errors.Is(err, workflow.ErrChanged) {
+	if errors.Is(err, workflow.ErrChanged) || errors.Is(err, workflow.ErrAlreadyQueued) {
 		a.fail(w, 409, err.Error())
+		return
+	}
+	if errors.Is(err, workflow.ErrQueueBusy) {
+		w.Header().Set("Retry-After", "60")
+		a.fail(w, http.StatusTooManyRequests, err.Error())
 		return
 	}
 	if err != nil {
