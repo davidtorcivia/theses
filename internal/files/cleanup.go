@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/davidtorcivia/theses/internal/auth"
@@ -49,10 +50,6 @@ type OrphanReport struct {
 	More    bool     `json:"more"`
 }
 
-func (s *Service) Orphans(ctx context.Context, a core.Actor) ([]Orphan, error) {
-	report, err := s.OrphanPage(ctx, a, 0)
-	return report.Objects, err
-}
 func (s *Service) OrphanPage(ctx context.Context, a core.Actor, before int64) (OrphanReport, error) {
 	return s.orphanPage(ctx, a, before, 0)
 }
@@ -116,7 +113,9 @@ func (s *Service) orphanPage(ctx context.Context, a core.Actor, before, only int
 		for _, key := range []string{f.ObjectKey, thumbKey(f.ObjectKey)} {
 			if key == thumbKey(f.ObjectKey) {
 				var protected int
-				if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM files WHERE substr(object_key,1,length(?))=?`, path.Dir(f.ObjectKey)+"/", path.Dir(f.ObjectKey)+"/").Scan(&protected); err != nil {
+				// A range rather than substr, so the object_key index answers
+				// it: '0' is the byte after '/', so dir0 bounds every key in dir/.
+				if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM files WHERE object_key>=? AND object_key<?`, path.Dir(f.ObjectKey)+"/", path.Dir(f.ObjectKey)+"0").Scan(&protected); err != nil {
 					return OrphanReport{}, err
 				}
 				if protected > 0 {
@@ -176,7 +175,7 @@ func (s *Service) CleanupObject(ctx context.Context, a core.Actor, in Orphan) (c
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	var live int
-	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM files WHERE object_key=? OR (? LIKE '%/.thumb.jpg' AND substr(object_key,1,length(?))=?)`, in.Key, in.Key, path.Dir(in.Key)+"/", path.Dir(in.Key)+"/").Scan(&live); err != nil {
+	if err := s.DB.QueryRowContext(ctx, `SELECT count(*) FROM files WHERE object_key=? OR (? AND object_key>=? AND object_key<?)`, in.Key, strings.HasSuffix(in.Key, "/.thumb.jpg"), path.Dir(in.Key)+"/", path.Dir(in.Key)+"0").Scan(&live); err != nil {
 		return core.Event{}, err
 	}
 	if live != 0 {
