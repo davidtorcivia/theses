@@ -13,7 +13,6 @@
 // begins the way a mouse does.
 
 import { hold } from './state.js';
-import { say } from './dom.js';
 
 const PRESS = 300;
 const SLOP = 6;
@@ -72,13 +71,6 @@ addEventListener('touchmove', (ev) => {
   if (touchDrag && ev.cancelable) ev.preventDefault();
 }, { passive: false });
 
-// A phone has no console, so with dragdebug set in local storage the bar names
-// what ended each drag. This goes away once a device has shown whether the
-// press holds.
-const debug = () => {
-  try { return localStorage.getItem('dragdebug'); } catch { return null; }
-};
-
 // movable carries node with the pointer. zone is the selector of a container a
 // row may be let go over, list finds the element inside one whose children are
 // the rows, rows is the selector of those among that element's children, over
@@ -124,7 +116,6 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
     // is for nothing else and refuses touch action, so nothing is scrolling
     // under it.
     const holds = !handle && !mouse;
-    const began = Date.now();
     const from = { x: e.clientX, y: e.clientY };
     let at = { ...from };
     let grab = null;
@@ -290,7 +281,6 @@ export function movable(node, { zone: zoneSel, list = (z) => z, rows: rowSel = '
       if (zone && over) zone.classList.remove(over);
       zone = null;
       hold(false);
-      if (debug()) say(`drag ended by ${ev.key || ev.type} after ${Date.now() - began}ms`);
     }
   });
 }
