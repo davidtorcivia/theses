@@ -824,3 +824,23 @@ func TestActivityNamesWhatCarriedTheChange(t *testing.T) {
 		t.Errorf("via = %q, want %q", carried, want)
 	}
 }
+
+// A handler's read inside a.together goes through the run's transaction, so it
+// sees what the run wrote and takes no second connection from the pool.
+func TestPropositionReadInsideTogetherSeesTheRun(t *testing.T) {
+	h := newHarness(t)
+	a := New(h.db, h.auth, h.set, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	a.Board = h.board
+	who := core.Actor{Kind: core.KindUser, ID: h.user.ID, Name: h.user.Name}
+	err := h.board.Together(context.Background(), func(ctx context.Context) error {
+		e, err := h.board.CreateProposition(ctx, who, "Tidal Power")
+		if err != nil {
+			return err
+		}
+		_, err = a.Proposition(ctx, Principal{User: h.user}, e.EntityID)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/auth"
 	"github.com/davidtorcivia/theses/internal/board"
 	"github.com/davidtorcivia/theses/internal/core"
+	"github.com/davidtorcivia/theses/internal/store"
 )
 
 // boardRoutes is the board as REST resources: propositions, columns, cards,
@@ -638,7 +639,7 @@ func (a *API) together(w http.ResponseWriter, r *http.Request, run func(context.
 // one that is not there answer alike, because the rule is that they are not
 // told it is there.
 func (a *API) Readable(ctx context.Context, p Principal, proposition int64) error {
-	ok, err := board.Readable(ctx, a.db, p.User, proposition)
+	ok, err := board.Readable(ctx, a.reads(ctx), p.User, proposition)
 	if err != nil {
 		return err
 	}
@@ -653,7 +654,16 @@ func (a *API) Proposition(ctx context.Context, p Principal, id int64) (board.Pro
 	if err := a.Readable(ctx, p, id); err != nil {
 		return board.Proposition{}, err
 	}
-	return board.GetProposition(ctx, a.db, id)
+	return board.GetProposition(ctx, a.reads(ctx), id)
+}
+
+// reads is the open transaction when a handler reads inside a.together, where
+// a read from the pool would wait on the writers queued behind it.
+func (a *API) reads(ctx context.Context) store.Querier {
+	if a.Board == nil {
+		return a.db
+	}
+	return a.Board.Querier(ctx)
 }
 
 // Show is the permanent workspace this token may read.
