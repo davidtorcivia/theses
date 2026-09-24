@@ -845,3 +845,32 @@ func TestPropositionReadInsideTogetherSeesTheRun(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// decode is every route's body reader. An empty body is defaults only where
+// the route says so; otherwise it is refused like one that is not JSON, and a
+// body over the ceiling is 413 either way.
+func TestDecode(t *testing.T) {
+	a := New(nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tests := []struct {
+		name  string
+		body  string
+		empty bool
+		want  int // 0 for carried on
+	}{
+		{"empty where it may be", "", true, 0},
+		{"empty where it may not be", "", false, http.StatusBadRequest},
+		{"JSON", `{"n":1}`, false, 0},
+		{"not JSON", `{"n":`, true, http.StatusBadRequest},
+		{"too large", `{"n":"` + strings.Repeat("x", 64) + `"}`, true, http.StatusRequestEntityTooLarge},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			var into struct{ N any }
+			ok := a.decode(w, httptest.NewRequest("POST", "/", strings.NewReader(tt.body)), 32, tt.empty, &into)
+			if ok != (tt.want == 0) || (tt.want != 0 && w.Code != tt.want) {
+				t.Errorf("carried on %v with %d, want %d", ok, w.Code, tt.want)
+			}
+		})
+	}
+}

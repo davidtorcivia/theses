@@ -48,7 +48,7 @@ from.
 | 403 | the token does not have the scope the route needs, the person it belongs to no longer has the standing that scope implies, or the row is somebody else's note |
 | 404 | no such endpoint, no such settings key, or a thing that is not there or that the token's owner may not touch |
 | 409 | the thing changed while you were editing it, or its state refuses the change: an archived proposition, a column with cards still in it, a change that cannot be undone, a backup or restore already running |
-| 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes. MCP permits 4 MiB plus 64 KiB. REST transcript replacement permits the same larger envelope but reports decoding/size failures as 400. |
+| 413 | a REST JSON body exceeds its limit: 64 KiB normally, 1 MiB for document source writes, and 4 MiB plus 64 KiB for transcript replacement. MCP permits 4 MiB plus 64 KiB. |
 | 422 | the body is JSON and the rules refuse it: a title that is empty or too long, a kind or a question that is not on the list, a size no upload may be |
 | 429 | over 300 requests a minute for one token, or the transcription queue is full |
 | 500 | a fault on the server; the detail is in its log, not in the response |
@@ -1548,8 +1548,9 @@ MCP requests allow 4 MiB plus 64 KiB for the envelope; transcript content still
 has its own 4 MiB limit. Ordinary REST bodies remain limited to 64 KiB;
 document source writes accept 1 MiB.
 `PUT /api/v1/files/{id}/transcript` accepts a JSON envelope up to 4 MiB plus
-64 KiB. JSON escaping counts toward the envelope size. An oversized or malformed
-REST transcript body returns 400; content validation failures return 422.
+64 KiB. JSON escaping counts toward the envelope size. An oversized REST
+transcript body returns 413 and a malformed one 400, like every other route;
+content validation failures return 422.
 
 ## Recover deleted content
 

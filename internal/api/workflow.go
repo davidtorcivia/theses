@@ -29,7 +29,7 @@ func (a *API) workflowAnswer(w http.ResponseWriter, r *http.Request, value any, 
 		return
 	}
 	if err != nil {
-		(&fileAPI{API: a}).refuse(w, r, err)
+		a.refuse(w, r, err)
 		return
 	}
 	a.writeJSON(w, 200, value)
@@ -61,7 +61,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 	}))
 	m.HandleFunc("POST "+p+"/calendar-events", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		var in workflow.CalendarEntry
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Workflow.SaveCalendarEvent(r.Context(), actor, in)
@@ -77,7 +77,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 			Date   string `json:"date"`
 			Column int64  `json:"column"`
 		}
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Board.CreateCalendarTask(r.Context(), actor, in.Column, in.Title, in.Date)
@@ -99,7 +99,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 			Resolved bool  `json:"resolved"`
 			Version  int64 `json:"version"`
 		}
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Files.ResolveComment(r.Context(), actor, path(r, "id"), path(r, "comment"), in.Version, in.Resolved)
@@ -126,7 +126,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 		var in struct {
 			Cues string `json:"cues"`
 		}
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Workflow.Pin(r.Context(), actor, path(r, "id"), in.Cues)
@@ -142,7 +142,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 			File     int64 `json:"file_id"`
 			Reviewer int64 `json:"reviewer_id"`
 		}
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Workflow.RequestReview(r.Context(), actor, in.Document, in.File, in.Reviewer)
@@ -154,7 +154,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 			Note    string `json:"note"`
 			Version int64  `json:"version"`
 		}
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Workflow.Decide(r.Context(), actor, path(r, "id"), in.Version, in.State, in.Note)
@@ -166,7 +166,7 @@ func (a *API) workflowRoutes(m *http.ServeMux, p string, wrap wrapper) {
 	}))
 	m.HandleFunc("PUT "+p+"/evidence", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		var in workflow.Evidence
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		event, err := a.Workflow.SaveEvidence(r.Context(), actor, in)

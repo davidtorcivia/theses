@@ -522,14 +522,7 @@ func (a *API) putSetting(w http.ResponseWriter, r *http.Request, p Principal) {
 	var body struct {
 		Value json.RawMessage `json:"value"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return
-		}
-		a.fail(w, http.StatusBadRequest, "the body must be JSON with a value field")
+	if !a.decode(w, r, maxBodyBytes, false, &body) {
 		return
 	}
 	values, err := formValues(body.Value)

@@ -106,7 +106,7 @@ func (a *API) verifyBackup(w http.ResponseWriter, r *http.Request, _ Principal) 
 	var in struct {
 		Key string `json:"key"`
 	}
-	if a.decode(w, r, &in) {
+	if a.decode(w, r, maxBodyBytes, true, &in) {
 		a.started(w, r, a.VerifyBackup(r.Context(), in.Key))
 	}
 }
@@ -115,7 +115,7 @@ func (a *API) restoreBackup(w http.ResponseWriter, r *http.Request, p Principal)
 	var in struct {
 		Key string `json:"key"`
 	}
-	if a.decode(w, r, &in) {
+	if a.decode(w, r, maxBodyBytes, true, &in) {
 		a.started(w, r, a.RestoreBackup(r.Context(), actorOf(p), in.Key))
 	}
 }

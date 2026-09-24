@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -118,14 +117,7 @@ func (a *API) putNotifications(w http.ResponseWriter, r *http.Request, p Princip
 		Channels *[]channelIn        `json:"channels"`
 		Rules    *map[string][]int64 `json:"rules"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			a.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return
-		}
-		a.fail(w, http.StatusBadRequest, "the body must be JSON with channels, rules, or both")
+	if !a.decode(w, r, maxBodyBytes, false, &body) {
 		return
 	}
 
@@ -224,9 +216,7 @@ func (a *API) testNotification(w http.ResponseWriter, r *http.Request, p Princip
 	var body struct {
 		Channel int64 `json:"channel"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		a.fail(w, http.StatusBadRequest, "the body must be JSON with a channel field")
+	if !a.decode(w, r, maxBodyBytes, false, &body) {
 		return
 	}
 	c, err := notify.GetChannel(r.Context(), a.db, a.set, body.Channel)
@@ -378,7 +368,7 @@ func (a *API) saveWebhook(w http.ResponseWriter, r *http.Request, p Principal) {
 		}
 	}
 	var in WebhookPatch
-	if !a.decode(w, r, &in) {
+	if !a.decode(w, r, maxBodyBytes, true, &in) {
 		return
 	}
 	hook, err := a.SaveWebhook(r.Context(), actorOf(p), id, in)

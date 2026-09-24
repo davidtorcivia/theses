@@ -54,7 +54,7 @@ func (a *API) legalRoutes(m *http.ServeMux, p string, wrap wrapper) {
 	}))
 	m.HandleFunc("POST "+p+"/legal/releases", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		var in legal.Release
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		out, err := a.Legal.Save(r.Context(), actor, in)
@@ -66,7 +66,7 @@ func (a *API) legalRoutes(m *http.ServeMux, p string, wrap wrapper) {
 	}))
 	m.HandleFunc("POST "+p+"/legal/releases/{id}/preview", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		var in LegalNotification
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		out, err := a.Legal.Preview(r.Context(), actor, path(r, "id"), in.URL, in.Subject, in.Body)
@@ -74,7 +74,7 @@ func (a *API) legalRoutes(m *http.ServeMux, p string, wrap wrapper) {
 	}))
 	m.HandleFunc("POST "+p+"/legal/releases/{id}/notify", wrap(auth.ScopeWrite, func(w http.ResponseWriter, r *http.Request, actor core.Actor) {
 		var in LegalNotification
-		if !(&fileAPI{API: a}).read(w, r, &in) {
+		if !a.decode(w, r, maxBodyBytes, false, &in) {
 			return
 		}
 		out, err := a.Legal.Notify(r.Context(), actor, path(r, "id"), in.Version, in.URL, in.Subject, in.Body, previewed(in.PreviewHash)...)

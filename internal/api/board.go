@@ -89,22 +89,19 @@ type boardBody struct {
 // a delete, a done or a move to the head need send nothing.
 func (a *API) boardBody(w http.ResponseWriter, r *http.Request) (boardBody, bool) {
 	var body boardBody
-	return body, a.decode(w, r, &body)
+	return body, a.decode(w, r, maxBodyBytes, true, &body)
 }
 
-// decode reads a JSON body into a value, answering the client itself when it
-// cannot, and reports whether the handler should carry on. An empty body is all
-// defaults, so a route whose fields are every one optional need send nothing.
-func (a *API) decode(w http.ResponseWriter, r *http.Request, into any) bool {
-	return a.decodeUpTo(w, r, maxBodyBytes, into)
-}
-
-// decodeUpTo is decode with a ceiling of its own, for the one body that is a
-// whole document rather than one field of one row.
-func (a *API) decodeUpTo(w http.ResponseWriter, r *http.Request, most int64, into any) bool {
+// decode is how every route reads its JSON body: at most most bytes into a
+// value, answering the client itself when it cannot, and reporting whether the
+// handler should carry on. empty says whether a body with nothing in it is all
+// defaults, for a route whose fields are every one optional, or is refused
+// like one that is not JSON, so that a bare POST cannot complete an upload
+// with every size zero.
+func (a *API) decode(w http.ResponseWriter, r *http.Request, most int64, empty bool, into any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, most)
 	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		if errors.Is(err, io.EOF) {
+		if empty && errors.Is(err, io.EOF) {
 			return true
 		}
 		var tooBig *http.MaxBytesError

@@ -1,8 +1,6 @@
 package api
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
@@ -133,7 +131,7 @@ func (f *fileAPI) createFile(w http.ResponseWriter, r *http.Request, a core.Acto
 		Size        int64  `json:"size"`
 		Replace     int64  `json:"replace"`
 	}
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	up, err := f.svc.Create(r.Context(), a, in.Proposition, in.Name, in.Folder, in.Size, in.Replace)
@@ -161,7 +159,7 @@ func (f *fileAPI) complete(w http.ResponseWriter, r *http.Request, a core.Actor)
 		Width      int64 `json:"width"`
 		Height     int64 `json:"height"`
 	}
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.svc.Complete(r.Context(), a, path(r, "id"), in.DurationMS, in.Width, in.Height)
@@ -202,7 +200,7 @@ func (f *fileAPI) versions(w http.ResponseWriter, r *http.Request, a core.Actor)
 // editFile changes only the fields the body names.
 func (f *fileAPI) editFile(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	var in files.FilePatch
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.svc.PatchFileDetails(r.Context(), a, path(r, "id"), in)
@@ -259,22 +257,6 @@ func (f *fileAPI) joined(w http.ResponseWriter, r *http.Request, e core.Event, e
 	f.writeJSON(w, http.StatusOK, map[string]any{"card": e.EntityID, "action": e.Action, "event": e})
 }
 
-// read decodes a JSON body, answering the client itself when it cannot. It
-// reports whether the handler should carry on.
-func (f *fileAPI) read(w http.ResponseWriter, r *http.Request, into any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	if err := json.NewDecoder(r.Body).Decode(into); err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			f.fail(w, http.StatusRequestEntityTooLarge, "that body is too large")
-			return false
-		}
-		f.fail(w, http.StatusBadRequest, "the body must be JSON")
-		return false
-	}
-	return true
-}
-
 // path is a numeric path value, zero when it is not one. Zero reaches the
 // service and comes back as ErrNotFound, so a bad id needs no branch here.
 func path(r *http.Request, name string) int64 {
@@ -309,7 +291,7 @@ func (f *fileAPI) addFileComment(w http.ResponseWriter, r *http.Request, a core.
 		Body     string `json:"body_md"`
 		Position int64  `json:"position_ms"`
 	}
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.svc.AddFileComment(r.Context(), a, path(r, "id"), in.Position, in.Body)
@@ -347,7 +329,7 @@ func (f *fileAPI) orphans(w http.ResponseWriter, r *http.Request, a core.Actor) 
 }
 func (f *fileAPI) cleanup(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	var in files.Orphan
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.svc.CleanupObject(r.Context(), a, in)
@@ -360,7 +342,7 @@ func (f *fileAPI) cleanup(w http.ResponseWriter, r *http.Request, a core.Actor) 
 
 func (f *fileAPI) saveProductionPlan(w http.ResponseWriter, r *http.Request, a core.Actor) {
 	var in board.ProductionPlan
-	if !f.read(w, r, &in) {
+	if !f.decode(w, r, maxBodyBytes, false, &in) {
 		return
 	}
 	e, err := f.Board.SaveProductionPlan(r.Context(), a, path(r, "id"), in)
