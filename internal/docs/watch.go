@@ -291,7 +291,26 @@ func (s *Service) catchUp(ctx context.Context, watcher *fsnotify.Watcher) []stri
 			s.log.Warn("document not mirrored", "document", id, "err", err)
 			continue
 		}
-		_, err = readMirror(path)
+		content, err := readMirror(path)
+		if err == nil {
+			// A file that is exactly what this version would write for the
+			// document as it stands holds nothing to import. Importing it
+			// anyway reads the blocks back through the parser, which splits a
+			// block holding a blank line into two and treats the second as a
+			// new block, mentions and all. Writing it again records the hash.
+			same, err := s.unchanged(ctx, id, content)
+			if err != nil {
+				s.log.Warn("document file not read", "document", id, "err", err)
+			}
+			if same {
+				if err := s.Mirror(ctx, id, nil, true); err != nil {
+					s.log.Warn("document not mirrored", "document", id, "err", err)
+					continue
+				}
+				s.watch(watcher, filepath.Dir(path))
+				continue
+			}
+		}
 		if err == nil || !errors.Is(err, os.ErrNotExist) {
 			// The file is this document's, but nothing here wrote it, so what
 			// is in it is unknown: an empty hash matches nothing, which makes
@@ -406,6 +425,20 @@ func (s *Service) reconcile(ctx context.Context, watcher *fsnotify.Watcher) {
 			s.watch(watcher, dir)
 		}
 	}
+}
+
+// unchanged reports a file that is what render writes for the document now.
+// A file carrying a conflict marker is not, so it is read back the ordinary way.
+func (s *Service) unchanged(ctx context.Context, document int64, content []byte) (bool, error) {
+	d, err := GetDocument(ctx, s.DB, document)
+	if err != nil {
+		return false, err
+	}
+	blocks, err := Blocks(ctx, s.DB, document)
+	if err != nil {
+		return false, err
+	}
+	return hashOf(content) == hashOf(render(d, blocks, nil)), nil
 }
 
 // applied writes the file behind one command. fsnotify watches directories, so
