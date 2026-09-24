@@ -1021,10 +1021,13 @@ Scope `write`, and the role has to be one that may delete, which a researcher
 is not. A token whose owner may not delete is answered `404`, the same as a
 proposition that is not there. The board, the documents, the links and the
 files go with it, and the record of the deletion is filed with no proposition
-so that it survives the cascade. An archived proposition can be deleted without
-being restored first: deleting and restoring are the two writes an archived one
-still takes. A proposition with recording releases, or with a file still
-uploading, is refused with `409`; finish or cancel the uploads first.
+so that it survives the cascade. A proposition with recording releases, or
+with a file still uploading, is refused with `409`. Finish or cancel the
+uploads first, or wait for the sweep to abandon them after 48 hours without
+progress. An
+archived proposition can otherwise be deleted without being restored first,
+since deleting and restoring are the two writes an archived one still takes;
+its uploads cannot be finished or canceled until it is restored.
 
 ## `POST /api/v1/propositions/{id}/members/{user}`
 

@@ -631,6 +631,11 @@ func TestDeletingAPropositionWaitsForItsUploads(t *testing.T) {
 		VALUES(1,?,'tape.wav','files/1','uploading',0)`, f.prop); err != nil {
 		t.Fatal(err)
 	}
+	// Archived is where the refusal matters most, because the upload cannot be
+	// canceled there; the text says to restore it first.
+	if _, err := f.ArchiveProposition(ctx, f.who["owner"], f.prop); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.DeleteProposition(ctx, f.who["owner"], f.prop); !errors.Is(err, ErrUploading) {
 		t.Fatalf("deleting with an upload in flight gave %v", err)
 	}

@@ -25,7 +25,7 @@ var (
 	ErrEmpty         = errors.New("that needs some text")
 	ErrLegalReleases = errors.New("this proposition has recording releases; archive it to retain signed records")
 	// ErrUploading is deleting a proposition with a file still uploading.
-	ErrUploading = errors.New("this proposition has uploads in progress; finish or cancel uploads first")
+	ErrUploading = errors.New("this proposition has uploads in progress; finish or cancel them first, restoring it if it is archived, or wait for the sweep to abandon them after 48 hours without progress")
 	// ErrArchived is an edit to a proposition that has been put away.
 	ErrArchived = errors.New("that proposition is archived; restore it first")
 	// ErrShow is a mutation of the permanent shared workspace or its membership.
