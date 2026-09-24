@@ -176,3 +176,69 @@ func TestWebVTTCueIdentifiers(t *testing.T) {
 		}
 	}
 }
+
+func TestEvidenceVerificationAndOrphanReview(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	c := core.New(db, core.NewBus())
+	b := board.New(c, func() board.Defaults { return board.Defaults{Status: "idea", Columns: []string{"Research"}} })
+	d := docs.New(c, "", func() string { return "# Script\n\nFirst claim." }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := New(c)
+	actors := map[string]core.Actor{}
+	for _, name := range []string{"ada", "grace", "reviewer"} {
+		id, err := store.CreateUser(ctx, db, &store.User{Handle: name, Email: name + "@example.com", Name: name, Role: "owner", PasswordHash: "x"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		actors[name] = core.Actor{Kind: core.KindUser, ID: id}
+	}
+	p, err := b.CreateProposition(ctx, actors["ada"], "Episode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := s.SaveEvidence(ctx, actors["ada"], Evidence{Proposition: p.EntityID, Title: "Source", Quotation: "Exact", Verified: true})
+	if err != nil || created.Action != "create" {
+		t.Fatalf("create %v %v", created.Action, err)
+	}
+	var e Evidence
+	json.Unmarshal(created.After, &e)
+	for _, tc := range []struct {
+		name, saver, quotation string
+		verified               bool
+		verifier               string
+	}{
+		{"unchanged save keeps the verifier", "grace", "Exact", true, "ada"},
+		{"changed content with verified names the saver", "grace", "Edited", true, "grace"},
+		{"unchanged save by another keeps the verifier", "ada", "Edited", true, "grace"},
+		{"changed content without verified clears it", "ada", "Edited again", false, ""},
+	} {
+		e.Quotation, e.Verified = tc.quotation, tc.verified
+		ev, err := s.SaveEvidence(ctx, actors[tc.saver], e)
+		if err != nil || ev.Action != "edit" {
+			t.Fatalf("%s: %v %v", tc.name, ev.Action, err)
+		}
+		json.Unmarshal(ev.After, &e)
+		if tc.verifier == "" && (e.Verified || e.VerifiedBy != nil) || tc.verifier != "" && (e.VerifiedBy == nil || *e.VerifiedBy != actors[tc.verifier].ID) {
+			t.Fatalf("%s: verified %v by %v", tc.name, e.Verified, e.VerifiedBy)
+		}
+	}
+	doc, err := d.CreateDocument(ctx, actors["ada"], p.EntityID, "Script")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested, err := s.RequestReview(ctx, actors["ada"], doc.EntityID, 0, actors["reviewer"].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var review Review
+	json.Unmarshal(requested.After, &review)
+	if _, err = s.Decide(ctx, actors["ada"], review.ID, 1, "approved", ""); !errors.Is(err, board.ErrNotYours) {
+		t.Fatalf("decided for a present reviewer: %v", err)
+	}
+	if _, err = db.ExecContext(ctx, `DELETE FROM users WHERE id=?`, actors["reviewer"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Decide(ctx, actors["ada"], review.ID, 1, "approved", ""); err != nil {
+		t.Fatalf("review of a deleted reviewer stuck: %v", err)
+	}
+}
