@@ -3,6 +3,8 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -245,6 +247,34 @@ func TestSecretsAreRedactedFromStoredErrors(t *testing.T) {
 	}
 	if f.s.redacted(context.Background(), nil, c) != nil {
 		t.Error("nil became an error")
+	}
+}
+
+// A webhook URL and an ntfy topic are the credential for their destination,
+// and net/http quotes the whole address in a transport error.
+func TestAddressesAreRedactedFromStoredErrors(t *testing.T) {
+	f := newFixture(t)
+	for _, tc := range []struct {
+		name   string
+		c      Channel
+		err    error
+		secret string
+	}{
+		{"a webhook URL", Channel{Kind: KindWebhook, Config: Config{URL: "https://hooks.example.com/services/T0/B1?token=abc"}},
+			fmt.Errorf("webhook: %w", &url.Error{Op: "Post", URL: "https://hooks.example.com/services/T0/B1?token=abc", Err: errors.New("i/o timeout")}),
+			"T0/B1?token=abc"},
+		{"a webhook path alone", Channel{Kind: KindWebhook, Config: Config{URL: "https://hooks.example.com/services/T0/B1?token=abc"}},
+			errors.New(`webhook: redirect to "/services/T0/B1?token=abc" refused`), "T0/B1?token=abc"},
+		{"an ntfy topic", Channel{Kind: KindNtfy, Config: Config{Topic: "tides-4f9a2c"}},
+			fmt.Errorf("ntfy: %w", &url.Error{Op: "Post", URL: "https://ntfy.example.com/tides-4f9a2c", Err: errors.New("i/o timeout")}),
+			"tides-4f9a2c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := f.s.redacted(context.Background(), tc.err, tc.c).Error()
+			if strings.Contains(got, tc.secret) || !strings.Contains(got, "i/o timeout") && !strings.Contains(got, "refused") {
+				t.Fatalf("redacted error = %q", got)
+			}
+		})
 	}
 }
 

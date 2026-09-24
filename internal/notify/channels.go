@@ -86,9 +86,26 @@ func (c Config) SameDestination(other Config) bool {
 // notification in silence.
 func (c Channel) Verified() bool { return c.VerifiedAt > 0 }
 
-// Secrets is what must never appear in a log, a stored error or a page.
+// Secrets is what must never appear in a log, a stored error or a page. A
+// webhook's address and an ntfy topic are credentials too, since whoever holds
+// one can post there or read it, and a transport error quotes the address
+// whole. The longer forms come first, so a URL is taken out before its path.
 func (c Channel) Secrets() []string {
-	return []string{c.Config.UserKey, c.Config.Token, c.Config.Secret}
+	out := []string{c.Config.UserKey, c.Config.Token, c.Config.Secret}
+	switch c.Kind {
+	case KindWebhook:
+		out = append(out, c.Config.URL)
+		if u, err := url.Parse(c.Config.URL); err == nil {
+			out = append(out, u.String())
+			// A path of "/" would redact every slash in the message.
+			if rest := u.RequestURI(); len(rest) > 1 {
+				out = append(out, rest)
+			}
+		}
+	case KindNtfy:
+		out = append(out, c.Config.Topic)
+	}
+	return out
 }
 
 // Label is the one line the channel list prints. Nothing in it is a secret:
