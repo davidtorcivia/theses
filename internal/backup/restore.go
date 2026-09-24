@@ -20,6 +20,7 @@ import (
 
 	"github.com/davidtorcivia/theses/internal/blob"
 	"github.com/davidtorcivia/theses/internal/board"
+	"github.com/davidtorcivia/theses/internal/mail"
 	"github.com/davidtorcivia/theses/internal/settings"
 	"github.com/davidtorcivia/theses/internal/store"
 )
@@ -147,8 +148,17 @@ func (b *Backup) prepare(ctx context.Context, key, dir string) (Manifest, error)
 		check.Close()
 		return Manifest{}, err
 	}
-	// Restoring old credentials would reactivate revoked calendar URLs and API keys.
-	if _, err := check.ExecContext(ctx, `DELETE FROM calendar_subscriptions; DELETE FROM api_tokens`); err != nil {
+	// Restoring old credentials would reactivate revoked calendar URLs, API
+	// keys, sessions, reset links and invitations, so none come back; everyone,
+	// the owner restoring included, signs in again. Mail still queued with one
+	// of those links is abandoned, since the link it carries opens nothing.
+	if _, err := check.ExecContext(ctx, `DELETE FROM calendar_subscriptions; DELETE FROM api_tokens;
+		DELETE FROM sessions; DELETE FROM password_resets; DELETE FROM invitations WHERE accepted_at IS NULL`); err != nil {
+		check.Close()
+		return Manifest{}, err
+	}
+	if _, err := check.ExecContext(ctx, `UPDATE mail_outbox SET expires_at = 0, last_error = ?
+		WHERE sent_at IS NULL AND (ref LIKE 'invitation:%' OR ref LIKE 'reset:%')`, mail.Restored); err != nil {
 		check.Close()
 		return Manifest{}, err
 	}

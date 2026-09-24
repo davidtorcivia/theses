@@ -212,7 +212,7 @@ func (b *Backup) RestoreNow(ctx context.Context, key string, actorID int64) erro
 		defer b.wg.Done()
 		defer b.busy.Store(false)
 		defer cancel()
-		msg := "Restored " + path.Base(key) + "."
+		msg := "Restored " + path.Base(key) + ". Sessions, API keys and calendar links from before it are gone, so everyone signs in again."
 		if err := b.restore(run, key, actorID); err != nil {
 			msg = "The restore failed and nothing was changed: " + err.Error()
 			if errors.Is(err, ErrPartial) {

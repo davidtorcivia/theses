@@ -37,6 +37,7 @@ const (
 	Superseded = "replaced by a newer message for the same thing"
 	Revoked    = "the invitation it carries was revoked"
 	Accepted   = "the invitation it carries had already been accepted"
+	Restored   = "the link it carries was withdrawn by a restore"
 )
 
 // sendable is the part of the WHERE clause that says a row is still worth

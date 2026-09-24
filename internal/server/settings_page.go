@@ -412,7 +412,7 @@ func (s *Server) postRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	s.back(w, r, "/settings#backups", map[string]any{
 		"BackupResult": "Restoring " + strings.TrimPrefix(key, backup.Prefix) +
-			". Changes are refused until it is done, and this page says what happened when it is.",
+			". Changes are refused until it is done. Everyone, you included, then signs in again, and this page says what happened.",
 	})
 }
 
