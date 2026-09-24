@@ -103,7 +103,11 @@ func (c Channel) Secrets() []string {
 			}
 		}
 	case KindNtfy:
-		out = append(out, c.Config.Topic)
+		// A topic of a letter or two would redact that letter everywhere in
+		// the message, and is a guess away whatever the log says.
+		if len(c.Config.Topic) >= 4 {
+			out = append(out, c.Config.Topic)
+		}
 	}
 	return out
 }

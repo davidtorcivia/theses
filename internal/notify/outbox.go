@@ -20,7 +20,9 @@ const (
 	maxRetry   = time.Hour
 	// giveUpAfter is the day the plan gives a webhook, counted from the first
 	// attempt rather than from the enqueue, so a row queued before the channel
-	// worked still gets its full day once it does.
+	// worked still gets its full day once it does. A row waiting on a mail
+	// server nobody has set up counts it from the enqueue instead, since it has
+	// had no attempt to count from.
 	giveUpAfter = 24 * time.Hour
 	batchSize   = 20
 )
