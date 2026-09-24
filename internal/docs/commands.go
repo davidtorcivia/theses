@@ -301,7 +301,7 @@ func (s *Service) createDocumentRow(ctx context.Context, a core.Actor, propositi
 // document is the shape every command on one document has.
 func (s *Service) document(ctx context.Context, a core.Actor, id int64, need, action string,
 	apply func(context.Context, *sql.Tx, Document) error) (core.Event, error) {
-	proposition, err := PropositionOfDocument(ctx, s.DB, id)
+	proposition, err := PropositionOfDocument(ctx, s.Querier(ctx), id)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -463,7 +463,7 @@ func (s *Service) InsertBlock(ctx context.Context, a core.Actor, document, after
 		}
 		text = field
 	}
-	proposition, err := PropositionOfDocument(ctx, s.DB, document)
+	proposition, err := PropositionOfDocument(ctx, s.Querier(ctx), document)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -543,7 +543,7 @@ func (s *Service) insertOne(ctx context.Context, a core.Actor, proposition, docu
 // block is the shape every command on one block has.
 func (s *Service) block(ctx context.Context, a core.Actor, id int64, need, action string,
 	apply func(context.Context, *sql.Tx, Block) error) (core.Event, error) {
-	proposition, err := PropositionOfBlock(ctx, s.DB, id)
+	proposition, err := PropositionOfBlock(ctx, s.Querier(ctx), id)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -609,11 +609,11 @@ func (s *Service) SetBlock(ctx context.Context, a core.Actor, id, base int64, te
 	if len(parts) == 1 {
 		return s.setOne(ctx, a, id, base, parts[0])
 	}
-	proposition, err := PropositionOfBlock(ctx, s.DB, id)
+	proposition, err := PropositionOfBlock(ctx, s.Querier(ctx), id)
 	if err != nil {
 		return core.Event{}, err
 	}
-	document, err := DocumentOfBlock(ctx, s.DB, id)
+	document, err := DocumentOfBlock(ctx, s.Querier(ctx), id)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -744,7 +744,7 @@ func (s *Service) CreateRevision(ctx context.Context, a core.Actor, document int
 	default:
 		return core.Event{}, ErrReason
 	}
-	proposition, err := PropositionOfDocument(ctx, s.DB, document)
+	proposition, err := PropositionOfDocument(ctx, s.Querier(ctx), document)
 	if err != nil {
 		return core.Event{}, err
 	}

@@ -162,8 +162,8 @@ func last(ctx context.Context, tx *sql.Tx, table, scope string, scopeID int64) (
 }
 
 // propositionOf answers which proposition an entity belongs to, which is what
-// the command is authorized against. It runs outside the transaction because
-// nothing ever moves a card or a column to another proposition.
+// the command is authorized against. It runs before the command's transaction
+// because nothing ever moves a card or a column to another proposition.
 func propositionOf(ctx context.Context, q store.Querier, query string, id int64) (int64, error) {
 	var proposition int64
 	err := q.QueryRowContext(ctx, query, id).Scan(&proposition)
@@ -471,7 +471,7 @@ func (s *Service) CreateColumn(ctx context.Context, a core.Actor, proposition in
 
 func (s *Service) column(ctx context.Context, a core.Actor, id int64, need, action string,
 	apply func(context.Context, *sql.Tx, Column) error) (core.Event, error) {
-	proposition, err := propositionOf(ctx, s.DB, columnScope, id)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), columnScope, id)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -577,7 +577,7 @@ func (s *Service) createCard(ctx context.Context, a core.Actor, column int64, ti
 	if len(assignees) > maxAssignees {
 		return core.Event{}, ErrTooLong
 	}
-	proposition, err := propositionOf(ctx, s.DB, columnScope, column)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), columnScope, column)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -623,7 +623,7 @@ func (s *Service) createCard(ctx context.Context, a core.Actor, column int64, ti
 // card is the shape every card command has.
 func (s *Service) card(ctx context.Context, a core.Actor, id int64, need, action string,
 	apply func(context.Context, *sql.Tx, Card) error) (core.Event, error) {
-	proposition, err := propositionOf(ctx, s.DB, cardScope, id)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), cardScope, id)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -814,7 +814,7 @@ func (s *Service) AddChecklistItem(ctx context.Context, a core.Actor, card int64
 	if itemText == "" {
 		return core.Event{}, ErrEmpty
 	}
-	proposition, err := propositionOf(ctx, s.DB, cardScope, card)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), cardScope, card)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -854,7 +854,7 @@ func (s *Service) RemoveChecklistItem(ctx context.Context, a core.Actor, id int6
 
 func (s *Service) checklistItem(ctx context.Context, a core.Actor, id int64, action string,
 	apply func(context.Context, *sql.Tx) error) (core.Event, error) {
-	proposition, err := propositionOf(ctx, s.DB, checklistScope, id)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), checklistScope, id)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -898,7 +898,7 @@ func (s *Service) PostComment(ctx context.Context, a core.Actor, card int64, bod
 	if body == "" {
 		return core.Event{}, ErrEmpty
 	}
-	proposition, err := propositionOf(ctx, s.DB, cardScope, card)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), cardScope, card)
 	if err != nil {
 		return core.Event{}, err
 	}
@@ -930,7 +930,7 @@ func (s *Service) PostComment(ctx context.Context, a core.Actor, card int64, bod
 // DeleteComment removes your own note. Somebody else's stays where it is,
 // whatever the role: the activity panel is a record, not a wall to moderate.
 func (s *Service) DeleteComment(ctx context.Context, a core.Actor, id int64) (core.Event, error) {
-	proposition, err := propositionOf(ctx, s.DB, commentScope, id)
+	proposition, err := propositionOf(ctx, s.Querier(ctx), commentScope, id)
 	if err != nil {
 		return core.Event{}, err
 	}

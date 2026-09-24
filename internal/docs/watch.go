@@ -513,11 +513,11 @@ func (s *Service) Import(ctx context.Context, path string) error {
 
 	var conflicted map[int64]bool
 	err = s.Together(ctx, func(ctx context.Context) error {
-		blocks, err := Blocks(ctx, s.DB, was.document)
+		blocks, err := Blocks(ctx, s.Querier(ctx), was.document)
 		if err != nil {
 			return err
 		}
-		document, err := GetDocument(ctx, s.DB, file.Document)
+		document, err := GetDocument(ctx, s.Querier(ctx), file.Document)
 		if err != nil {
 			return err
 		}

@@ -249,3 +249,70 @@ func TestPublicActorOnlySignsReleases(t *testing.T) {
 		}
 	}
 }
+
+// A read a command makes before its own transaction goes through the group's
+// transaction inside Together. From the pool of four it would wait for a
+// connection held by the three writers queued behind the group's lock, until
+// one of them gave up busy.
+func TestTogetherReadsThroughItsOwnTransaction(t *testing.T) {
+	ctx := context.Background()
+	db := store.OpenTemp(t)
+	s := New(db, NewBus())
+	id, err := store.CreateUser(ctx, db, &store.User{
+		Handle: "ada", Email: "ada@example.com", Name: "Ada Lovelace",
+		Initials: "AL", Colour: "#111", Role: auth.RoleOwner, PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	who := Actor{Kind: KindUser, ID: id, Name: "Ada Lovelace"}
+	write := func(ctx context.Context) error {
+		_, err := s.Do(ctx, who, 0, auth.CanEdit, func(ctx context.Context, tx *sql.Tx) (Change, error) {
+			return Change{Entity: "test", Action: "set", After: map[string]any{"set": true}}, nil
+		})
+		return err
+	}
+
+	const writers = 3
+	errs := make(chan error, writers)
+	done := make(chan error, 1)
+	seen := -1
+	began := time.Now()
+	go func() {
+		done <- s.Together(ctx, func(group context.Context) error {
+			if err := write(group); err != nil {
+				return err
+			}
+			for range writers {
+				go func() { errs <- write(ctx) }()
+			}
+			// Long enough for every writer to take a connection and wait on the lock.
+			time.Sleep(200 * time.Millisecond)
+			return s.Querier(group).QueryRowContext(group, `SELECT count(*) FROM activity`).Scan(&seen)
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run did not finish")
+	}
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("the run took %v", took)
+	}
+	if seen != 1 {
+		t.Errorf("the read inside the run saw %d activity rows, want its own 1", seen)
+	}
+	for range writers {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Errorf("a queued writer failed: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a queued writer did not finish")
+		}
+	}
+}
