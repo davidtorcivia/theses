@@ -21,7 +21,7 @@ import (
 	"github.com/davidtorcivia/theses/internal/store"
 )
 
-// The workspace defaults, which the settings registry holds and legal cannot import.
+// The workspace defaults from the settings registry, which cannot import legal.
 const testSubject = "{title} is now available"
 const testBody = "Hello {name},\n\nThank you for taking part in {brand}. The episode is now available:\n\n{url}\n\nThank you,\n{brand}"
 

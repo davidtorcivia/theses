@@ -140,6 +140,8 @@ func (s *Server) renderLegalPublic(w http.ResponseWriter, r *http.Request, statu
 	s.render(w, r, status, "legal_public.html", s.page(r, release.Title, map[string]any{"Release": release, "People": people, "ReceiptKey": receipt, "Consent": legal.Consent, "Error": message}))
 }
 func (s *Server) legalSign(w http.ResponseWriter, r *http.Request) {
+	// Spent before any read, so a guessed token costs the same as a real one.
+	limited := !s.auth.Allow("legal", s.auth.ClientIP(r))
 	release, err := s.api.Legal.Public(r.Context(), r.PathValue("token"))
 	if err != nil {
 		s.legalError(w, r, err)
@@ -156,7 +158,7 @@ func (s *Server) legalSign(w http.ResponseWriter, r *http.Request) {
 	receipt := r.PostForm.Get("receipt")
 	// The form comes back filled in with the same receipt, so waiting and
 	// sending it again cannot sign twice.
-	if !s.auth.Allow("legal", s.auth.ClientIP(r)) {
+	if limited {
 		w.Header().Set("Retry-After", "60")
 		s.renderLegalPublic(w, r, http.StatusTooManyRequests, release, people, receipt, "Too many submissions. Please wait a minute and try again.")
 		return
